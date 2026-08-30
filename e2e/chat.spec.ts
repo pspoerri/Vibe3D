@@ -538,6 +538,8 @@ test('a pasted image attaches, and pasting text still types', async ({ page }) =
   // clipboard: a synthetic ClipboardEvent is neither trusted nor cancelable, so
   // it can neither be prevented nor perform the default insert, and would read
   // as broken text paste however the handler is written.
+  // grantPermissions for the clipboard is Chromium-only; the suite declares no
+  // other project, so this is the browser it runs on.
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
   await page.evaluate(() => navigator.clipboard.writeText('a 40 mm bracket'))
   await page.locator('.chat-form textarea').focus()
@@ -552,6 +554,116 @@ test('the model dropdown flags which models can read an image', async ({ page })
 
   await page.locator('.chat-meter button').first().click()
   await expect(page.locator('.chat-settings option').first()).toHaveText(/· vision/)
+})
+
+test('an image with no words is a message on its own', async ({ page }) => {
+  await seedKey(page)
+  let posted = ''
+  await page.route(CHAT_URL, (route) => {
+    posted = JSON.stringify(route.request().postDataJSON())
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: sseBody(fenced('cube([13, 13, 13]);')),
+    })
+  })
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await page.locator('.chat-attach input').setInputFiles({
+    name: 'ref.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(PNG_B64, 'base64'),
+  })
+  await expect(page.locator('.chat-thumb')).toHaveCount(1)
+
+  // Two guards that fail silently, and only this test holds them: the tray
+  // alone must enable the button, or the image-only path is unreachable by
+  // mouse; and send() must admit a wordless message, or the click is a no-op.
+  const button = page.getByRole('button', { name: 'Send' })
+  await expect(page.locator('.chat-form textarea')).toHaveValue('')
+  await expect(button).toBeEnabled()
+  await button.click()
+  await expect(page.locator('.msg-user img')).toHaveCount(1)
+
+  await expect(page.locator('.tag', { hasText: '13.0 × 13.0 × 13.0 mm' })).toBeVisible({
+    timeout: 60_000,
+  })
+  const body = JSON.parse(posted) as { messages: { content: unknown }[] }
+  const parts = body.messages.find((m) => Array.isArray(m.content))?.content as
+    | { type: string }[]
+    | undefined
+  // The image travels alone: no empty text part padding it out.
+  expect(parts?.map((part) => part.type)).toEqual(['image_url'])
+})
+
+test('the tray empties when the turn starts, not when it ends', async ({ page }) => {
+  await seedKey(page)
+  // Never-closing stream, so the assertions below all land mid-turn.
+  await stubProgressiveStream(page)
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await page.locator('.chat-attach input').setInputFiles({
+    name: 'ref.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(PNG_B64, 'base64'),
+  })
+  await expect(page.locator('.chat-thumb')).toHaveCount(1)
+
+  await send(page, 'like this bracket')
+
+  // Still streaming — a tray cleared in the finally would sit populated for the
+  // whole turn, inviting a second send that re-bills the same image.
+  await expect(page.locator('.chat-send.stop')).toBeVisible()
+  await expect(page.locator('.chat-thumb')).toHaveCount(0)
+})
+
+test('a command clears the tray instead of carrying it into the next message', async ({ page }) => {
+  await seedKey(page)
+  await page.goto('/')
+  await waitForStarter(page)
+
+  await page.locator('.chat-attach input').setInputFiles({
+    name: 'ref.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(PNG_B64, 'base64'),
+  })
+  await expect(page.locator('.chat-thumb')).toHaveCount(1)
+
+  await send(page, '/clear')
+
+  await expect(page.locator('.chat-note', { hasText: 'Cleared' }).first()).toBeVisible()
+  // The command branch has its own clear: without it the image rides the next
+  // real message, which is a turn the user never attached it to.
+  await expect(page.locator('.chat-thumb')).toHaveCount(0)
+})
+
+test('one unreadable image does not take the rest of the batch with it', async ({ page }) => {
+  await seedKey(page)
+  await page.goto('/')
+  await waitForStarter(page)
+
+  await page.locator('.chat-attach input').setInputFiles([
+    { name: 'ref.png', mimeType: 'image/png', buffer: Buffer.from(PNG_B64, 'base64') },
+    { name: 'broken.png', mimeType: 'image/png', buffer: Buffer.from('not an image at all') },
+  ])
+
+  // Promise.all would reject on the corrupt one and drop the good one too.
+  await expect(page.locator('.chat-thumb')).toHaveCount(1)
+  await expect(page.locator('.chat-note.bad')).toContainText('could not be read')
+})
+
+test('the attach control is reachable from the keyboard and has a name', async ({ page }) => {
+  await page.goto('/')
+  await waitForStarter(page)
+
+  // A `display: none` input is not focusable, which makes the picker mouse-only
+  // — and the label's glyph is aria-hidden, so the name has to be on the input.
+  await page.locator('.chat-form textarea').focus()
+  await page.keyboard.press('Tab')
+  await expect(page.locator('.chat-attach input')).toBeFocused()
+  await expect(page.locator('.chat-attach input')).toHaveAttribute('aria-label', 'Attach images')
 })
 
 test('display units switch without touching the model or the source', async ({ page }) => {
