@@ -459,6 +459,101 @@ test('the composer grows with a long prompt instead of clipping it', async ({ pa
   expect((await field.boundingBox())?.height ?? 0).toBeLessThan(many)
 })
 
+/** A 1x1 transparent PNG. Small enough to inline, real enough to decode. */
+const PNG_B64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+
+test('a picked image reaches the model as a data URL, after the text, exactly once', async ({
+  page,
+}) => {
+  await seedKey(page)
+  let posted = ''
+  await page.route(CHAT_URL, (route) => {
+    posted = JSON.stringify(route.request().postDataJSON())
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: sseBody(fenced('cube([11, 11, 11]);')),
+    })
+  })
+
+  await page.goto('/')
+  await waitForStarter(page)
+
+  await page.locator('.chat-attach input').setInputFiles({
+    name: 'ref.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(PNG_B64, 'base64'),
+  })
+  // The tray is the only signal that normalisation finished before we send.
+  await expect(page.locator('.chat-thumb')).toHaveCount(1)
+
+  await send(page, 'like this bracket')
+  await expect(page.locator('.tag', { hasText: '11.0 × 11.0 × 11.0 mm' })).toBeVisible({
+    timeout: 60_000,
+  })
+
+  const body = JSON.parse(posted) as {
+    messages: { role: string; content: unknown }[]
+  }
+  const parts = body.messages.find((m) => Array.isArray(m.content))?.content as
+    | { type: string; text?: string; image_url?: { url: string } }[]
+    | undefined
+  if (!parts) throw new Error('expected one message to carry content parts')
+
+  // Text first: OpenRouter recommends it, and reversing it degrades the answer
+  // without erroring, so nothing else would catch it.
+  expect(parts[0]).toEqual({ type: 'text', text: 'like this bracket' })
+  expect(parts[1]?.type).toBe('image_url')
+  expect(parts[1]?.image_url?.url.startsWith('data:image/jpeg')).toBe(true)
+  // Normalised, not passed through: the input was a PNG.
+  expect(posted).not.toContain('data:image/png')
+  // Exactly once — a second copy is a doubled bill on every turn.
+  expect(posted.split('data:image/jpeg').length - 1).toBe(1)
+
+  // The tray is emptied by the send, not left staged for a double-send.
+  await expect(page.locator('.chat-thumb')).toHaveCount(0)
+  // And the transcript shows what was sent.
+  await expect(page.locator('.msg-user img')).toHaveCount(1)
+})
+
+test('a pasted image attaches, and pasting text still types', async ({ page }) => {
+  await seedKey(page)
+  await page.goto('/')
+  await waitForStarter(page)
+
+  await page.evaluate((b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+    const data = new DataTransfer()
+    data.items.add(new File([bytes], 'ref.png', { type: 'image/png' }))
+    const field = document.querySelector('.chat-form textarea')
+    // React 19 delegates at the container root, so this must bubble.
+    field?.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }))
+  }, PNG_B64)
+
+  await expect(page.locator('.chat-thumb')).toHaveCount(1)
+
+  // preventDefault must be conditional on an image actually being present, or
+  // ordinary text paste stops working. This half goes through the real
+  // clipboard: a synthetic ClipboardEvent is neither trusted nor cancelable, so
+  // it can neither be prevented nor perform the default insert, and would read
+  // as broken text paste however the handler is written.
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.evaluate(() => navigator.clipboard.writeText('a 40 mm bracket'))
+  await page.locator('.chat-form textarea').focus()
+  await page.keyboard.press('ControlOrMeta+V')
+  await expect(page.locator('.chat-form textarea')).toHaveValue('a 40 mm bracket')
+})
+
+test('the model dropdown flags which models can read an image', async ({ page }) => {
+  await seedKey(page)
+  await page.goto('/')
+  await waitForStarter(page)
+
+  await page.locator('.chat-meter button').first().click()
+  await expect(page.locator('.chat-settings option').first()).toHaveText(/· vision/)
+})
+
 test('display units switch without touching the model or the source', async ({ page }) => {
   await page.goto('/')
   await waitForStarter(page)

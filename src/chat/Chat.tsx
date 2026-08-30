@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Compiler, type CompileResult } from '../kernel/compile'
 import { completePkce, pkceAvailable, revokeUrl, startPkce } from '../llm/auth'
+import { toDataUrl } from '../llm/images'
 import {
   contextLimit, fetchModels, streamChat, type ModelInfo, type Usage,
 } from '../llm/openrouter'
@@ -14,6 +15,9 @@ import type { ChatEvent } from './log'
 import { systemPromptFor } from './prompt'
 
 const REVOKE_HOME = 'https://openrouter.ai/settings/keys'
+/** A plain cap, chosen over reasoning about 413 payload_too_large: OpenRouter
+ *  documents no inline size limit and providers enforce their own. */
+const MAX_IMAGES = 4
 
 export function Chat({
   source,
@@ -37,6 +41,7 @@ export function Chat({
   const [log, setLog] = useState<ChatEvent[]>([])
   const [turn, setTurn] = useState(1)
   const [input, setInput] = useState('')
+  const [attachments, setAttachments] = useState<readonly string[]>([])
   const [busy, setBusy] = useState(false)
   const [thinking, setThinking] = useState(false)
   // The reply as it arrives. Held here rather than in the log because the log
@@ -71,6 +76,31 @@ export function Chat({
   const append = (event: ChatEvent) => setLog((current) => [...current, event])
   const note = (text: string, tone: 'info' | 'error' = 'info') =>
     append({ id: crypto.randomUUID(), ts: Date.now(), turn, kind: 'note', text, tone })
+
+  /**
+   * Normalises at attach time rather than at send time, so the cost of a
+   * 12-megapixel photo is paid once, while the user is still typing, and the
+   * tray doubles as the signal that it finished.
+   */
+  const attach = async (picked: readonly File[]) => {
+    const images = picked.filter((file) => file.type.startsWith('image/'))
+    if (images.length === 0) return
+    const room = MAX_IMAGES - attachments.length
+    if (room <= 0) {
+      note(`Already at ${MAX_IMAGES} images.`, 'error')
+      return
+    }
+    // Silently dropping the overflow looks like the paste failed.
+    if (images.length > room) note(`Attached ${room} — ${MAX_IMAGES} images is the limit.`)
+    try {
+      const urls = await Promise.all(images.slice(0, room).map(toDataUrl))
+      // Re-capped inside the updater, not just against the closure's `room`:
+      // two picks racing each other both read the same stale length otherwise.
+      setAttachments((current) => [...current, ...urls].slice(0, MAX_IMAGES))
+    } catch {
+      note('That image could not be read.', 'error')
+    }
+  }
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ block: 'end' })
@@ -182,11 +212,12 @@ export function Chat({
   const send = async () => {
     if (busyRef.current) return
     const text = input.trim()
-    if (!text) return
+    if (!text && attachments.length === 0) return
 
     const command = parseCommand(text)
     if (command) {
       setInput('')
+      setAttachments([])
       busyRef.current = true
       setBusy(true)
       try {
@@ -205,6 +236,7 @@ export function Chat({
     }
 
     setInput('')
+    setAttachments([])
     setChatError(null)
     onPrompt(text)
     const controller = new AbortController()
@@ -216,7 +248,14 @@ export function Chat({
 
     try {
       const outcome = await runTurn(
-        { userText: text, log: logRef.current, turn, systemPrompt: systemPromptFor(units), source },
+        {
+          userText: text,
+          images: attachments,
+          log: logRef.current,
+          turn,
+          systemPrompt: systemPromptFor(units, attachments.length > 0),
+          source,
+        },
         {
           stream: (messages, signal) =>
             streamChat(messages, signal, {
@@ -311,6 +350,22 @@ export function Chat({
           void send()
         }}
       >
+        {attachments.length > 0 && (
+          <div className="chat-tray">
+            {attachments.map((url, i) => (
+              <button
+                key={i}
+                type="button"
+                className="chat-thumb"
+                title="Remove"
+                disabled={busy}
+                onClick={() => setAttachments((current) => current.filter((_, j) => j !== i))}
+              >
+                <img src={url} alt="" />
+              </button>
+            ))}
+          </div>
+        )}
         <div className="chat-input">
           <textarea
             ref={inputRef}
@@ -319,6 +374,15 @@ export function Chat({
             disabled={busy}
             placeholder="Describe the part, or a change to it…"
             onChange={(e) => setInput(e.target.value)}
+            onPaste={(e) => {
+              const files = [...e.clipboardData.files].filter((f) =>
+                f.type.startsWith('image/'),
+              )
+              // Conditional: an unconditional preventDefault breaks text paste.
+              if (files.length === 0) return
+              e.preventDefault()
+              void attach(files)
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
@@ -326,12 +390,31 @@ export function Chat({
               }
             }}
           />
+          <label className="chat-attach" title="Attach images">
+            <span aria-hidden="true">▣</span>
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              disabled={busy}
+              onChange={(e) => {
+                void attach([...(e.target.files ?? [])])
+                // So the same file can be picked twice in a row.
+                e.target.value = ''
+              }}
+            />
+          </label>
           {busy ? (
             <button type="button" className="chat-send stop" onClick={stop} aria-label="Stop">
               ■
             </button>
           ) : (
-            <button type="submit" className="chat-send" disabled={!input.trim()} aria-label="Send">
+            <button
+              type="submit"
+              className="chat-send"
+              disabled={!input.trim() && attachments.length === 0}
+              aria-label="Send"
+            >
               ↑
             </button>
           )}
@@ -483,7 +566,18 @@ function Markdown({ text, caret }: { text: string; caret?: boolean }) {
 function ChatEventView({ event }: { event: ChatEvent }) {
   switch (event.kind) {
     case 'user':
-      return <div className="msg msg-user">{event.text}</div>
+      return (
+        <div className="msg msg-user">
+          {event.images && event.images.length > 0 && (
+            <div className="msg-images">
+              {event.images.map((url, i) => (
+                <img key={i} src={url} alt="" />
+              ))}
+            </div>
+          )}
+          {event.text}
+        </div>
+      )
     case 'assistant':
       return (
         <div className="msg msg-assistant">
