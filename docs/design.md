@@ -1,4 +1,4 @@
-# vibe3D — design
+# Vibe3D — design
 
 A browser-only 3D modelling tool where an LLM writes and edits OpenSCAD source, you see the
 result in 3D, and everything — state, history, API key — lives in your browser. Static site,

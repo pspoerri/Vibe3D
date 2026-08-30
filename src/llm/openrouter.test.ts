@@ -112,7 +112,7 @@ test('sends exactly the documented request', async () => {
     Authorization: 'Bearer sk-or-v1-test',
     'Content-Type': 'application/json',
     'HTTP-Referer': 'https://app.example/modeller/',
-    'X-OpenRouter-Title': 'vibe3D',
+    'X-OpenRouter-Title': 'Vibe3D',
   })
   // The wildcard ACAO carries no allow-credentials, so 'include' would fail CORS.
   expect(init).not.toHaveProperty('credentials')
@@ -280,7 +280,7 @@ test('contextLimit answers 0 for an unknown id', () => {
 })
 
 const KEY_BODY =
-  '{"data":{"label":"vibe3D","limit":5,"usage":1,"is_free_tier":false,"limit_remaining":4}}'
+  '{"data":{"label":"Vibe3D","limit":5,"usage":1,"is_free_tier":false,"limit_remaining":4}}'
 
 test('checkKey reports the free-tier flag and the remaining limit', async () => {
   stubFetch(() => new Response(KEY_BODY, { status: 200 }))

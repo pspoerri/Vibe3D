@@ -144,7 +144,7 @@ export async function* streamChat(
       Authorization: `Bearer ${options.apiKey}`,
       'Content-Type': 'application/json',
       'HTTP-Referer': location.origin + location.pathname,
-      'X-OpenRouter-Title': 'vibe3D',
+      'X-OpenRouter-Title': 'Vibe3D',
     },
     body: JSON.stringify({ model: options.model, messages, stream: true }),
   })

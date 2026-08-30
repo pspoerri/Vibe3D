@@ -1,4 +1,4 @@
-# vibe3D
+# Vibe3D
 
 **Vibe 3D Models: Bring your own tokens.**
 Leverages your LLM along with OpenSCAD to build your ideas into a 3D Model.
@@ -15,7 +15,7 @@ Everything runs in the browser. There is no backend — the kernel is OpenSCAD c
 WebAssembly, the renderer is three.js, and the only thing that leaves your machine is the chat
 request to the model host you configured.
 
-**Live: <https://pspoerri.github.io/vibe3d/>**
+**Live: <https://pspoerri.github.io/Vibe3D/>**
 
 Design: [docs/design.md](docs/design.md) · Plans: [docs/superpowers/plans](docs/superpowers/plans)
 
