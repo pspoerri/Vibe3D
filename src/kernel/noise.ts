@@ -4,25 +4,41 @@ const NOISE = [/^Could not initialize localization/]
 const HEAD = 50
 const TAIL = 50
 
-/**
- * Cleans kernel stderr for display and, in Milestone 2, for the model.
- *
- * The cap keeps the head and the tail rather than truncating, because the fatal
- * message is usually last and the root-cause include is usually first.
- */
-export function stripKernelNoise(stderr: string): string {
-  const lines = stderr
+/** Drops the kernel's unconditional chatter and blank lines. */
+function dropNoise(stderr: string): string[] {
+  return stderr
     .split('\n')
     .map((line) => line.trimEnd())
     .filter((line) => line.trim() !== '' && !NOISE.some((re) => re.test(line)))
-    // The kernel only ever sees our virtual path; show the user a real name.
-    .map((line) => line.replaceAll('/in.scad', 'model.scad'))
+}
 
+/**
+ * Keeps the head and the tail rather than truncating, because the fatal
+ * message is usually last and the root-cause include is usually first.
+ */
+function capLines(lines: string[]): string {
   if (lines.length <= HEAD + TAIL) return lines.join('\n')
   const omitted = lines.length - HEAD - TAIL
-  return [
-    ...lines.slice(0, HEAD),
-    `... ${omitted} more lines ...`,
-    ...lines.slice(-TAIL),
-  ].join('\n')
+  return [...lines.slice(0, HEAD), `... ${omitted} more lines ...`, ...lines.slice(-TAIL)].join('\n')
+}
+
+/**
+ * Display form. The kernel only ever sees our virtual path, so show the user a
+ * name they recognise.
+ */
+export function stripKernelNoise(stderr: string): string {
+  return capLines(dropNoise(stderr).map((line) => line.replaceAll('/in.scad', 'model.scad')))
+}
+
+/**
+ * Model form, for the compile-retry loop (design.md §5).
+ *
+ * Same noise filter and same cap, but it NEVER rewrites a path or a line
+ * number — the model has to be able to trust the diagnostic against the source
+ * it just wrote. The noise filter still applies: without it every retry message
+ * would open with "Could not initialize localization", which reads to a model
+ * like a first error to repair.
+ */
+export function stderrForModel(stderr: string): string {
+  return capLines(dropNoise(stderr))
 }

@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { stripKernelNoise } from './noise'
+import { stderrForModel, stripKernelNoise } from './noise'
 
 test('strips the localization warning the kernel always prints', () => {
   const raw =
@@ -29,4 +29,27 @@ test('caps runaway output at 100 lines, keeping head and tail', () => {
   expect(out[0]).toBe('line 0')
   expect(out[50]).toBe('... 150 more lines ...')
   expect(out[100]).toBe('line 249')
+})
+
+test('the model form leaves the kernel path and line numbers untouched', () => {
+  const raw =
+    "Could not initialize localization (application path is '/').\n" +
+    'ERROR: Parser error: syntax error in file /in.scad, line 1\n'
+  // design.md §5: the model must be able to trust the diagnostic against the
+  // source it just wrote, so nothing is rewritten — but the unconditional
+  // localization line would read as a first error to repair, so it still goes.
+  expect(stderrForModel(raw)).toBe('ERROR: Parser error: syntax error in file /in.scad, line 1')
+})
+
+test('the model form caps runaway output the same way', () => {
+  const raw = Array.from({ length: 250 }, (_, i) => `line ${i}`).join('\n')
+  const out = stderrForModel(raw).split('\n')
+  expect(out).toHaveLength(101)
+  expect(out[50]).toBe('... 150 more lines ...')
+  expect(out[100]).toBe('line 249')
+})
+
+test('the two forms differ only in the path rewrite', () => {
+  const raw = 'ERROR: something in file /in.scad, line 9\n'
+  expect(stripKernelNoise(raw)).toBe(stderrForModel(raw).replaceAll('/in.scad', 'model.scad'))
 })

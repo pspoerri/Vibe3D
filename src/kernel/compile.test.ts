@@ -18,7 +18,11 @@ class FakeWorker {
     FakeWorker.instances.push(this)
   }
 
-  postMessage(_data: unknown): void {}
+  sent: unknown[] = []
+
+  postMessage(data: unknown): void {
+    this.sent.push(data)
+  }
 
   terminate(): void {
     this.terminateCount++
@@ -114,6 +118,68 @@ test('stderrRaw carries the verbatim kernel stderr; stderr is cleaned', async ()
     expect(settled.stderrRaw).toContain('Could not initialize localization')
     expect(settled.stderr).not.toContain('Could not initialize localization')
     expect(settled.stderr).toContain('a real warning')
+  } finally {
+    compiler.dispose()
+  }
+})
+
+test('forwards -D defines to the worker', async () => {
+  const compiler = new Compiler()
+  try {
+    compiler.compile('a', 'off', { defines: ['wall=2.5', '$fn=16'] })
+    expect(FakeWorker.instances[0]?.sent[0]).toEqual({
+      source: 'a',
+      format: 'off',
+      defines: ['wall=2.5', '$fn=16'],
+    })
+  } finally {
+    compiler.dispose()
+  }
+})
+
+test('omits defines entirely when none are given', () => {
+  const compiler = new Compiler()
+  try {
+    compiler.compile('a')
+    expect(FakeWorker.instances[0]?.sent[0]).toEqual({
+      source: 'a',
+      format: 'off',
+      defines: undefined,
+    })
+  } finally {
+    compiler.dispose()
+  }
+})
+
+test('a timeout is flagged timedOut, so the retry loop can refuse to repair it', async () => {
+  const compiler = new Compiler()
+  try {
+    // stderrRaw here is the synthetic 'Compile timed out after 0.005s.', not a
+    // kernel diagnostic — feeding it to the model would spend a paid attempt
+    // against a fabrication.
+    const result = await compiler.compile('a', 'off', { timeoutMs: 5 })
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.timedOut).toBe(true)
+    expect(result.ok === false && result.cancelled).toBeUndefined()
+  } finally {
+    compiler.dispose()
+  }
+})
+
+test('a worker crash is flagged crashed, with a frequently-empty stderrRaw', async () => {
+  const compiler = new Compiler()
+  try {
+    const pending = compiler.compile('a')
+    const worker = FakeWorker.instances[0]
+    if (!worker) throw new Error('expected a worker to be constructed')
+    worker.onerror?.({ message: '' } as ErrorEvent)
+
+    const result = await pending
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.crashed).toBe(true)
+    expect(result.ok === false && result.stderrRaw).toBe('')
+    // The user still gets something legible even though the model gets nothing.
+    expect(result.stderr).toBe('Kernel worker crashed.')
   } finally {
     compiler.dispose()
   }

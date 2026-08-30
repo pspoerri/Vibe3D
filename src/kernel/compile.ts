@@ -3,11 +3,34 @@ import type { CompileRequest, CompileResponse, ExportFormat } from './protocol'
 
 export type { ExportFormat }
 
-// stderr is the cleaned form for display; stderrRaw is verbatim kernel
-// stderr, untouched — the form Milestone 2 feeds back to the model.
+/**
+ * stderr is the cleaned form for display. stderrRaw is verbatim kernel stderr
+ * on the two worker paths — but SYNTHETIC on the other three settle paths
+ * ('Compile timed out after 60s.', 'Compile cancelled.', and the DOM
+ * ErrorEvent message, which is frequently ''). The three discriminators below
+ * are how the retry loop avoids feeding a fabricated diagnostic to the model
+ * and burning a repair attempt against it; the model form of a real
+ * diagnostic is noise.ts's stderrForModel.
+ */
 export type CompileResult =
   | { ok: true; data: Uint8Array; stderr: string; stderrRaw: string; ms: number }
-  | { ok: false; stderr: string; stderrRaw: string; ms: number; cancelled?: boolean }
+  | {
+      ok: false
+      stderr: string
+      stderrRaw: string
+      ms: number
+      /** Set only by cancel(). Something superseded this compile. */
+      cancelled?: true
+      /** Set only by the timeout path. Not a repairable diagnostic. */
+      timedOut?: true
+      /** Set only by worker.onerror. stderrRaw is a DOM message, often ''. */
+      crashed?: true
+    }
+
+export interface CompileOptions {
+  defines?: readonly string[]
+  timeoutMs?: number
+}
 
 const DEFAULT_TIMEOUT_MS = 60_000
 
@@ -25,8 +48,9 @@ export class Compiler {
   compile(
     source: string,
     format: ExportFormat = 'off',
-    timeoutMs = DEFAULT_TIMEOUT_MS,
+    options: CompileOptions = {},
   ): Promise<CompileResult> {
+    const { defines, timeoutMs = DEFAULT_TIMEOUT_MS } = options
     this.cancel()
 
     const worker = new Worker(new URL('./openscad.worker.ts', import.meta.url), {
@@ -46,7 +70,7 @@ export class Compiler {
 
       const timer = setTimeout(() => {
         const stderr = `Compile timed out after ${timeoutMs / 1000}s.`
-        finish({ ok: false, stderr, stderrRaw: stderr, ms: timeoutMs })
+        finish({ ok: false, stderr, stderrRaw: stderr, ms: timeoutMs, timedOut: true })
       }, timeoutMs)
       // Assigned after `timer` exists — finish() closes over it.
       this.#finish = finish
@@ -73,10 +97,11 @@ export class Compiler {
           stderr: stripKernelNoise(raw) || 'Kernel worker crashed.',
           stderrRaw: raw,
           ms: Math.round(performance.now() - this.#started),
+          crashed: true,
         })
       }
 
-      worker.postMessage({ source, format } satisfies CompileRequest)
+      worker.postMessage({ source, format, defines } satisfies CompileRequest)
     })
   }
 
@@ -84,7 +109,7 @@ export class Compiler {
   cancel(): void {
     this.#finish?.({
       ok: false,
-      cancelled: true,
+      cancelled: true as const,
       stderr: 'Compile cancelled.',
       stderrRaw: 'Compile cancelled.',
       ms: Math.round(performance.now() - this.#started),

@@ -8,7 +8,7 @@ const post = (message: CompileResponse, transfer: Transferable[] = []) =>
   (self as unknown as Worker).postMessage(message, transfer)
 
 self.onmessage = async (event: MessageEvent<CompileRequest>) => {
-  const { source, format } = event.data
+  const { source, format, defines } = event.data
   const started = performance.now()
   let stderr = ''
 
@@ -26,7 +26,16 @@ self.onmessage = async (event: MessageEvent<CompileRequest>) => {
     const outputPath = `/out.${format}`
     // Failure is signalled by a non-zero exit code, for both parse errors and
     // empty top-level geometry. Never infer failure from stderr contents.
-    const code = kernel.callMain(['/in.scad', '-o', outputPath, `--export-format=${format}`])
+    // A fresh array per call: Emscripten's callMain does args.unshift(thisProgram),
+    // mutating the array it is handed, so a reused one grows a leading argument
+    // every compile.
+    const code = kernel.callMain([
+      '/in.scad',
+      '-o',
+      outputPath,
+      `--export-format=${format}`,
+      ...(defines ?? []).flatMap((define) => ['-D', define]),
+    ])
     const ms = Math.round(performance.now() - started)
 
     if (code !== 0) {

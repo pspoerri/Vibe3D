@@ -3,6 +3,13 @@ export type ExportFormat = 'off' | 'binstl' | '3mf'
 export interface CompileRequest {
   source: string
   format: ExportFormat
+  /**
+   * OpenSCAD `-D` overrides, e.g. `wall=2.5`. Each entry becomes its own
+   * `-D <entry>` pair. The text is spliced into the source and parsed, so it is
+   * a code-injection surface: build entries ONLY with defineFor(), never from
+   * free text.
+   */
+  defines?: readonly string[]
 }
 
 export type CompileResponse =
