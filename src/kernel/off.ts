@@ -54,11 +54,23 @@ export function parseOff(text: string): Mesh {
     const parts = nextLine().split(/\s+/)
     const n = Number(parts[0])
     if (!Number.isInteger(n) || n < 3) throw new Error(`degenerate face on OFF line ${cursor}`)
-    // parts[1..n] are the vertex indices; anything after them is per-face
-    // colour, which we discard.
-    const first = Number(parts[1])
+    if (parts.length < n + 1) {
+      throw new Error(`face on OFF line ${cursor} declares ${n} vertices but lists ${parts.length - 1}`)
+    }
+    // Validate before triangulating: an out-of-range index would otherwise reach
+    // BufferGeometry.setIndex and read out of bounds on the GPU, and NaN would be
+    // silently coerced to 0 by Uint32Array.from.
+    const face: number[] = []
+    for (let k = 1; k <= n; k++) {
+      const index = Number(parts[k])
+      if (!Number.isInteger(index) || index < 0 || index >= vertexCount) {
+        throw new Error(`face on OFF line ${cursor} references invalid vertex index ${parts[k]}`)
+      }
+      face.push(index)
+    }
+    // parts beyond index n are the per-face colour, which we still discard.
     for (let k = 1; k <= n - 2; k++) {
-      indices.push(first, Number(parts[1 + k]), Number(parts[2 + k]))
+      indices.push(face[0]!, face[k]!, face[k + 1]!)
     }
   }
 

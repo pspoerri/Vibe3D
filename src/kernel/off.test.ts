@@ -63,3 +63,15 @@ test('rejects data that is not OFF', () => {
 test('rejects a truncated file', () => {
   expect(() => parseOff('OFF\n4 4 0\n0 0 0\n')).toThrow(/unexpected end/)
 })
+
+test('rejects a face that lists fewer indices than it declares', () => {
+  expect(() => parseOff('OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1\n')).toThrow(
+    /declares 3 vertices but lists 2/,
+  )
+})
+
+test('rejects a face referencing a vertex index that does not exist', () => {
+  expect(() => parseOff('OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 99\n')).toThrow(
+    /invalid vertex index 99/,
+  )
+})
