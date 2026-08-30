@@ -1682,24 +1682,42 @@ Add this state and handler inside `App`, after the `stats` line:
 
 ```tsx
   const [exporting, setExporting] = useState<null | 'binstl' | '3mf'>(null)
+  // Kept separate from `error`: an export failure must not mark the still-valid
+  // preview's HUD stats stale, nor masquerade as a problem with the model.
+  const [exportError, setExportError] = useState<string | null>(null)
 
   // Export runs its own compile so the exported bytes always match the current
   // source, and never reuses the viewport's OFF.
   const exportAs = async (format: 'binstl' | '3mf') => {
     setExporting(format)
+    setExportError(null)
     const exporter = new Compiler()
     try {
       const result = await exporter.compile(source, format)
       if (result.ok) {
         downloadBlob(result.data, format === '3mf' ? 'model.3mf' : 'model.stl', MIME[format])
       } else {
-        setError(result.stderr)
+        setExportError(result.stderr)
       }
     } finally {
       exporter.dispose()
       setExporting(null)
     }
   }
+```
+
+Derive the displayed error just above the `return`, so the stale marker stays driven by preview
+state alone:
+
+```tsx
+  // The preview's error marks the HUD stale; an export's error must not.
+  const shownError = error ?? exportError
+```
+
+and change the error panel to render it:
+
+```tsx
+        {shownError && <pre className="error">{shownError}</pre>}
 ```
 
 Add this block inside the `.view` section, immediately after `<Viewport ... />`:
