@@ -4,7 +4,9 @@ A browser-only 3D modelling tool where an LLM writes and edits OpenSCAD source, 
 result in 3D, and everything — state, history, API key — lives in your browser. Static site,
 no backend, bring your own API key.
 
-Status: **design approved, not yet implemented.**
+Status: **Milestone 1 shipped** (kernel, viewport, editor, export). Milestone 2 in progress
+(agent loop, OpenRouter client, Customizer sliders). Milestones 3–4 not started.
+Plans: `docs/superpowers/plans/`.
 Date: 2026-08-30. License: **GPL-3.0**.
 
 ---
@@ -111,27 +113,44 @@ The kernel loads lazily on first compile, keeping it off the first-paint budget.
 ```
 src/
   kernel/
+    vendor/              pinned openscad.js + openscad.wasm, never edited
+    protocol.ts          worker message types, incl. -D defines
     openscad.worker.ts   fresh Worker per compile; terminate() to cancel
-    compile.ts           compile(src) → { geometry, stderr, ms } | { error, stderr }
-    off.ts               OFF → BufferGeometry (~90 lines)
-    stats.ts             bbox, volume, tri count, manifold check
+    compile.ts           Compiler — worker lifecycle, cancel, timeout
+    off.ts               OFF → Mesh
+    stats.ts             bbox, volume, tri count, watertightness
+    noise.ts             stripKernelNoise (display) + stderrForModel (model)
   viewer/
-    Viewport.tsx         WebGLRenderer, OrbitControls, 256³ build plate
-    capture.ts           2nd offscreen renderer — 768², ortho, NoToneMapping
-    inspect.ts           change inspection (§6)
+    Viewport.tsx         WebGLRenderer, OrbitControls, adaptive grid
+    camera.ts            pure fit / grid-spacing / standard-view maths
+    ViewCube.ts          orientation widget
+    capture.ts           M4 — 2nd offscreen renderer, 768², ortho
+    inspect.ts           M4 — change inspection (§6)
+  llm/
+    sse.ts               SSE reader (hand-rolled, see below)
+    openrouter.ts        streamChat, model catalogue, error normalisation
+    auth.ts              OAuth PKCE
   chat/
-    loop.ts              the deterministic controller (§5)
-    llm.ts               fetch → OpenRouter, SSE
+    controller.ts        runTurn / runCompact — the deterministic loop (§5)
+    log.ts               append-only ChatEvent[] + buildWindow (§10)
+    fence.ts             fenced-source extraction, fence stubbing
     prompt.ts            system prompt
-    commands.ts          /clear /compact /undo /export /model /key
+    commands.ts          /clear /compact /export /model /key
+    Chat.tsx             the chat pane
   editor/
     Editor.tsx           CodeMirror 6 + StreamLanguage OpenSCAD mode
+    openscad-mode.ts     the StreamLanguage tokenizer
     params.ts            Customizer annotations → sliders
+    Params.tsx           the slider strip
   state/
-    project.ts           zustand → IndexedDB (versions, chat)
-    settings.ts          zustand → localStorage (key, model, baseUrl)
-  export/index.ts        native 3MF + binary STL from the kernel
+    settings.ts          localStorage: baseUrl, model
+    key.ts               localStorage: the API key, ALONE (see §7)
+    project.ts           M3 — versions + chat, IndexedDB
+  export/download.ts     bytes → file download
 ```
+
+**No state library.** §2 once implied `zustand`; plain React state carries Milestone 2, and a
+store is Milestone 3's problem, when a persisted version timeline gives it something to own.
 
 Single route, no router — that keeps `base: './'` valid, which is what makes one build artifact
 deploy unchanged to a GitHub Pages subpath, a custom domain, or anywhere else.
@@ -144,12 +163,12 @@ A **deterministic controller**. The model does not decide when to stop.
 
 ```
 user turn
-  → LLM returns COMPLETE source (one tool, one string field)
+  → LLM returns COMPLETE source (ONE fenced code block — see §9)
   → compile
       error → resend raw stderr verbatim, capped 100 lines (head-50 + tail-50)
               MAX 2 retries, then surface to the user
-      ok    → deterministic checks + inspection sheet
-              MAX 2 vision-refine rounds → answer
+      ok    → deterministic checks → answer
+              (vision-refine rounds are Milestone 4, not Milestone 2)
   hard cap ~8 tool calls per user turn
 ```
 
@@ -159,7 +178,10 @@ of one frontier model and 1.5 out of another — model-decided stopping is unrel
 directions. With a user-supplied key we cannot control which model runs, so the controller must
 impose the iteration budget.
 
-**Error feedback is raw stderr, verbatim.** Do not paraphrase, do not rewrite line numbers, do
+**Error feedback is `stderrForModel(stderrRaw)`.** That drops only the kernel's unconditional
+localization line and applies the head-50 + tail-50 cap; it never rewrites a path or a line
+number, and it is a different function from the display form, which does rewrite `/in.scad`.
+Do not paraphrase, do not rewrite line numbers, do
 not re-attach the source — the model already has the source it just wrote, and resending it
 doubles cost for zero information. Head-50 + tail-50 because the fatal message is usually last
 and the root-cause include is usually first.
@@ -337,8 +359,13 @@ regenerate on import:
   "name": "...", "head": "...", "versions": [...], "chat": [...], "settings": {...} }
 ```
 
-Never an `apiKey` field. Enforce with a type-level `SecretSettings` / `PortableSettings` split
-rather than spread-and-delete — one forgotten field turns "share my project" into "share my key".
+Never an `apiKey` field. The type system **cannot** enforce this: structural typing makes
+`{baseUrl, model, apiKey}` assignable to a `PortableSettings` parameter, and a branded key type is
+assignable to any `string` field, so the `SecretSettings` split this section once specified would
+have been reassuring and inert. The mechanism is physical instead — the key lives in its own
+module (`state/key.ts`) and its own localStorage record, no type in the app holds both, and the
+project-export path never imports it. One forgotten field otherwise turns "share my project" into
+"share my key".
 If `schemaVersion` exceeds ours, refuse with a specific error rather than best-effort parsing.
 
 ---
@@ -364,9 +391,14 @@ same part is 198 KB as 3MF versus 8.03 MB as faceted STEP.
 
 ## 9. LLM client
 
-One `fetch` to `https://openrouter.ai/api/v1/chat/completions` plus `eventsource-parser` for the
-stream. No OpenAI SDK, no Vercel AI SDK — roughly 100 lines, and it avoids shipping an SDK whose
-browser mode is explicitly named "dangerous".
+One `fetch` to `https://openrouter.ai/api/v1/chat/completions` plus a 22-line hand-rolled SSE
+reader. No OpenAI SDK, no Vercel AI SDK — roughly 100 lines, and it avoids shipping an SDK whose
+browser mode is explicitly named "dangerous". This section once specified `eventsource-parser`;
+it was dropped after measurement, because that library consumes *strings*, so the one genuinely
+hard trap — multi-byte UTF-8 torn across a chunk boundary — is solved by the native
+`TextDecoderStream` both options must call anyway, leaving the dependency selling ~8 lines of
+line-splitting in the one module that handles the user's API key. This section's own
+"keeping dependencies few" ruling below already argued against its opening sentence.
 
 Verified live: OpenRouter answers CORS preflight with `Access-Control-Allow-Origin: *` and
 allow-lists `Authorization`, `HTTP-Referer`, `X-Title`. `GET /api/v1/models` needs **no auth**, so
@@ -375,14 +407,20 @@ can browse models before entering a key.
 
 **Auth: OAuth PKCE as the primary path**, paste-a-key as fallback. The user mints a revocable
 per-app key instead of handing over their account key. (The app cannot set a spend cap on it —
-that is a manual step in the user's OpenRouter settings.) PKCE needs a real HTTPS callback, so
-paste-a-key stays permanently as the local-dev path.
+that is a manual step in the user's OpenRouter settings.) **Correction, verified live:** PKCE
+does *not* need an HTTPS callback — a `http://localhost` callback on any port is accepted, so the
+flow works against `pnpm dev`. Paste-a-key stays permanently, for different reasons: offline
+development, a key the user already has, a failed exchange, and a non-secure origin such as a LAN
+IP, where `crypto.subtle` is undefined and PKCE cannot run at all.
 
 Model returns source in a **fenced code block**, not `json_schema`: it works on every model, it
 streams straight into the editor for live preview, and it avoids escaping source through JSON.
 Only 194 of 396 models support both vision and structured outputs, and support is per-*provider*
-while OpenRouter load-balances providers — so without `provider: {require_parameters: true}` the
-same request can succeed and fail on consecutive calls, which reads to a user as model flakiness.
+while OpenRouter load-balances providers. This once argued for `provider: {require_parameters:
+true}`; **that is now obsolete** — default routing already applies a soft provider preference for
+`tools` / `response_format` / structured outputs, and setting the flag can only narrow routing to
+a 503, which reads to a user as a broken app. Milestone 2 sends `{model, messages, stream}` and
+nothing else.
 
 Images: downscale to ≤1568 px longest edge, JPEG q0.85, `image_url` with a `data:` URL. One
 normalization path that satisfies every upstream.
@@ -458,7 +496,7 @@ Skip component tests and Vitest browser mode at MVP.
 
 | Risk | Mitigation |
 |---|---|
-| **Unbounded context.** Full source every turn + a render sheet per iteration ≈ 80k tokens of mostly-dead content over 10 revisions. | Stub superseded sources out of history; keep only the current one verbatim. This is the default failure of this architecture. |
+| **Unbounded context.** Full source every turn + a render sheet per iteration ≈ 80k tokens of mostly-dead content over 10 revisions. | Stub superseded sources out of history; keep only the current one verbatim. Implemented in `chat/log.ts`'s `buildWindow`, which stubs the fenced block of every assistant message except the current turn's, drops earlier turns' compile diagnostics entirely, and appends the source exactly once. This is the default failure of this architecture. |
 | **Naive vision feedback is a measured regression** (−20% compile rate). | Structured verification questions, always. Never ship the bare "does this look right" formulation. |
 | **Over-trusting the VLM.** IoU 0.07–0.09 will confidently ship wrong dimensions. | Deterministic checks gate completion, not the model's opinion. |
 | **Non-manifold geometry that compiles fine.** OpenSCAD warns rather than fails; preview can look right while Bambu rejects it. | Printability gate is a post-export mesh check, not a compiler check. |
