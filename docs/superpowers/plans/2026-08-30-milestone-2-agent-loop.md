@@ -1587,3 +1587,91 @@ verifier len 43 true                                          # RFC 7636 charset
 Existing-code signatures in §3.1 were copied from `src/kernel/compile.ts:8-10,25-29,47-50,69-77`,
 `src/kernel/protocol.ts:1-10`, `src/kernel/noise.ts:13`, `src/editor/Editor.tsx:13-19,45-46,62-68`,
 `src/App.tsx:26,41-75,84-99,102,112-118` and `src/index.css:5-7`.
+
+---
+
+## 9. Amendments made during implementation
+
+Nine things in the contract above turned out to be wrong, contradictory or
+unbuildable. Each is recorded here rather than silently edited into §1–§8, so
+the frozen contract stays readable as what was decided and this stays readable
+as what survived contact with the compiler.
+
+**A1 — §2's file table cannot be built on a case-insensitive filesystem.**
+It mandates both `src/editor/params.ts` and `src/editor/Params.tsx`. On macOS
+TypeScript resolves `./editor/Params` to `params.ts` and fails with TS2724 plus
+TS1261, and Vite's `resolve.extensions` orders `.ts` before `.tsx`, so the
+browser build would have imported the scanner and rendered `undefined`. The
+component is `src/editor/ParamsPanel.tsx`, exporting `ParamsPanel`.
+
+**A2 — §4.1 PHASE 2's check order contradicts §3.3 and Task 9.** Taken
+literally, a prose-only reply is an error, because `extractSource` reports it as
+`{source: null, complete: false}` — identical to a reply truncated on its
+opening fence. §3.3's own `TurnOutcome` comment and Task 9's test strategy both
+say prose is `answered`. The implemented order: a reply with no fence at all is
+`answered`; `finish_reason: 'length'`, an unclosed fence, or a fence that opened
+and produced nothing usable is an error; a reply echoing the input is `answered`.
+
+**A3 — §4.3 gives four invariants no owner.** I1, I2 and I3 are caller
+invariants and I10 exercises `contextLimit`, which `controller.ts` does not
+import. They belong to Task 11 and `e2e/chat.spec.ts`, not `controller.test.ts`.
+
+**A4 — §2 and §3.2 disagree about `readChunk`.** The same table row calls it
+module-private and says its tests import it. §3.2 is the exact contract, so it
+stays unexported and is tested through `streamChat`.
+
+**A5 — §3.2's "memoised in a module-level promise" is wrong for a parameterised
+fetch.** `fetchModels` takes a `baseUrl` the settings panel can edit, so one
+promise would serve the previous host's catalogue forever. It is a Map keyed by
+`baseUrl`, evicted on failure.
+
+**A6 — §3.4's `ParamRange` cannot represent Task 10's bare-number step.**
+`{min, max, step}` has no min/max-free form, so `wall = 2.4; // 0.1` cannot be
+expressed. Task 10's "or a bare number as the step" is struck; a bare number
+carries no bounds and renders as a plain number input.
+
+**A7 — Task 12 test 1 does not catch what it claims.** The plan calls the
+compile counter "the only assertion that catches either the Editor feedback loop
+or an `appliedKeyRef` regression". Verified false, twice: with the identity guard
+deleted the test still passed, because the duplicate compile fires on the 600 ms
+debounce *after* the assertion runs; and no `route.fulfill` test can catch the
+feedback loop at all, because it delivers the whole body as one chunk, so no
+partial ever differs from the committed source. The counter now waits out the
+debounce, and the feedback loop is caught by a separate test that patches
+`fetch` to stream progressively and asserts a stopped turn restores the pre-turn
+document. Both were re-run against their own bugs to confirm they fail.
+
+**A8 — `controller.ts` cannot have only an `import type` from the kernel.**
+§4.1 step 4 requires calling `stderrForModel`, which is a value import from
+`noise.ts`. The intended rule is: nothing from the kernel *runtime*.
+
+**A9 — §4.4's "and a visible note" on `/compact` belongs to the caller.** Same
+as its `/clear` bullet. `runCompact` appends only the summary event.
+
+### Defects found by review, fixed before the milestone closed
+
+Adversarial review of the implemented modules found eight real bugs. The five
+that could corrupt or break a session:
+
+- `setParam` wrote a numeric enum back as a quoted string and its own re-scan
+  guard passed, because the guard compared the written value's type to the
+  *requested* type rather than to the *original parameter's*. `n = 1;` committed
+  from a `<select>` became `n = "2";` — silent document corruption of exactly
+  the kind the guard exists to prevent.
+- The scanner accepted names `defineFor` rejects (`$` anywhere versus leading
+  only), so one slider touch on a source containing `a$b = 1;` threw from a
+  pointer handler.
+- `\d+\.?\d*` in the literal and number patterns backtracks quadratically:
+  40,000 digits took over two seconds, on a path that runs on every keystroke
+  and on model-written source.
+- An assistant event with empty text — what a Stop before the first delta
+  leaves — was replayed on every later request, and both Anthropic and Google
+  reject an empty content block with a 400.
+- `completePkce` read `sessionStorage` before its `!code` early return, so a
+  browser blocking site data rejected it on every ordinary page load.
+
+Also fixed: a closed-but-empty fenced block committed a blank document over the
+user's part; `stubFences` left an unterminated block's fence dangling on the
+wire; a chunk that is not JSON escaped `streamChat` as a raw `SyntaxError`
+rather than a `ChatError`; and an unresolvable `/compact` boundary sent the
+summary *and* everything it covered.
