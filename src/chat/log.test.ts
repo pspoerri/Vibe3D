@@ -268,6 +268,19 @@ test('an earlier turn keeps its words and loses its images', () => {
 })
 
 /**
+ * The other half of that degradation. An image-only message has no words to
+ * keep, so once its images are gone it is an empty content block — which
+ * Anthropic and Google both 400 on, poisoning every later request of the
+ * session exactly as an early Stop's empty assistant event would.
+ */
+test('an image-only message from an earlier turn is dropped, not sent empty', () => {
+  const messages = win([user(1, '', [PNG]), user(2, 'taller')], 2)
+  expect(messages.some((m) => m.content === '')).toBe(false)
+  expect(texts(messages)).toEqual([SYS, 'taller', expect.stringContaining(SRC)])
+  expect(JSON.stringify(messages)).not.toContain(PNG)
+})
+
+/**
  * runCompact's caller closes over the turn that just ran, so without this flag a
  * summarisation would re-bill the images of a turn it considers live — and
  * auto-compact fires unattended, so nobody would see the request that did it.
