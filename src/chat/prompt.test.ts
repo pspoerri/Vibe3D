@@ -23,3 +23,22 @@ test('imperial tells the model how to read the user, not what to emit', () => {
 test('the compact prompt never asks for the source to be summarised', () => {
   expect(COMPACT_PROMPT).toMatch(/source/i)
 })
+
+test('a text-only turn gets byte-identical prompts to before images existed', () => {
+  // The prefix is the cacheable part. Adding a clause unconditionally would
+  // move it for every user who never attaches anything.
+  expect(systemPromptFor('mm', false)).toBe(systemPromptFor('mm'))
+  expect(systemPromptFor('mm')).toBe(SYSTEM_PROMPT)
+})
+
+test('an image turn is told to read layout from the picture and dimensions from the words', () => {
+  const prompt = systemPromptFor('mm', true)
+  expect(prompt.startsWith(SYSTEM_PROMPT)).toBe(true)
+  expect(prompt).toContain('Do NOT read dimensions')
+})
+
+test('the image clause composes with imperial rather than replacing it', () => {
+  const prompt = systemPromptFor('in', true)
+  expect(prompt).toContain('1 in = 25.4 mm')
+  expect(prompt).toContain('Do NOT read dimensions')
+})
