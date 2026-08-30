@@ -967,14 +967,14 @@ test('a pasted image attaches, and pasting text still types', async ({ page }) =
   await expect(page.locator('.chat-thumb')).toHaveCount(1)
 
   // preventDefault must be conditional on an image actually being present, or
-  // ordinary text paste stops working.
-  await page.evaluate(() => {
-    const data = new DataTransfer()
-    data.setData('text/plain', 'a 40 mm bracket')
-    const field = document.querySelector('.chat-form textarea') as HTMLTextAreaElement
-    field.focus()
-    field.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }))
-  })
+  // ordinary text paste stops working. This half goes through the real
+  // clipboard: a synthetic ClipboardEvent is neither trusted nor cancelable, so
+  // it can neither be prevented nor perform the default insert, and would read
+  // as broken text paste however the handler is written.
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.evaluate(() => navigator.clipboard.writeText('a 40 mm bracket'))
+  await page.locator('.chat-form textarea').focus()
+  await page.keyboard.press('ControlOrMeta+V')
   await expect(page.locator('.chat-form textarea')).toHaveValue('a 40 mm bracket')
 })
 
