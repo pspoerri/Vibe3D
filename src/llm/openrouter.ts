@@ -4,14 +4,25 @@ export const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1'
 /** One named constant: the catalogue moves and this is the only line to change. */
 export const DEFAULT_MODEL = 'google/gemini-3.7-flash'
 
+/**
+ * One part of a multimodal message. `image_url.url` takes a `data:` URL exactly
+ * as it takes an `https:` one — the field's own schema says "data: URLs
+ * supported" — so normalisation can inline the bytes and nothing has to host a
+ * file. No `detail`: the enum is undocumented in the prose guide, and one
+ * normalisation path means there is nothing for it to select between.
+ */
+export type ContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } }
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
   /**
-   * Always a plain string today. Milestone 4 widens this to
-   * `| Array<{type:'text';text:string} | {type:'image_url';…}>` without
-   * touching a call site.
+   * A plain string for every text-only message, so a session that attaches
+   * nothing puts byte-identical bytes on the wire — and keeps a byte-identical
+   * prompt-cache prefix — as it did before images existed.
    */
-  content: string
+  content: string | ContentPart[]
 }
 
 export interface Usage {

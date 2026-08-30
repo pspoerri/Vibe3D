@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../llm/openrouter'
+import type { ChatMessage, ContentPart } from '../llm/openrouter'
 import { stubFences } from './fence'
 
 /**
@@ -11,7 +11,24 @@ import { stubFences } from './fence'
  * it, so a boundary can reference an id that is stable forever.
  */
 export type ChatEvent =
-  | { id: string; ts: number; turn: number; kind: 'user'; text: string }
+  | {
+      id: string
+      ts: number
+      turn: number
+      kind: 'user'
+      text: string
+      /**
+       * Normalised data URLs, live for this turn only (see buildWindow). Held
+       * here rather than in a store because the log itself is not persisted:
+       * design.md §7's "never base64 in the store" binds the store, and this
+       * never reaches it.
+       *
+       * ponytail: revisit the day the log IS persisted — that is the point at
+       * which these must become blob ids and buildWindow must be handed a
+       * pre-resolved id → data URL map rather than being made async.
+       */
+      images?: readonly string[]
+    }
   | { id: string; ts: number; turn: number; kind: 'assistant'; text: string; stopped?: true }
   | {
       id: string
@@ -35,6 +52,12 @@ export interface WindowInput {
   readonly systemPrompt: string
   /** The committed document. Never a streamed partial, never a retry candidate. */
   readonly source: string
+  /**
+   * False strips image parts from every message, live turn included. Exists for
+   * exactly one caller — runCompact — whose window is built for the turn that
+   * just ran and would otherwise re-bill its images unattended.
+   */
+  readonly images?: boolean
 }
 
 /**
@@ -44,7 +67,13 @@ export interface WindowInput {
  * Both backwards scans are plain reverse loops: Array.prototype.findLastIndex
  * does not exist under this project's lib (ES2022) and fails to compile.
  */
-export function buildWindow({ log, turn, systemPrompt, source }: WindowInput): ChatMessage[] {
+export function buildWindow({
+  log,
+  turn,
+  systemPrompt,
+  source,
+  images = true,
+}: WindowInput): ChatMessage[] {
   const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }]
 
   let start = 0
@@ -76,9 +105,22 @@ export function buildWindow({ log, turn, systemPrompt, source }: WindowInput): C
   for (let i = start; i < log.length; i++) {
     const event = log[i]!
     switch (event.kind) {
-      case 'user':
-        messages.push({ role: 'user', content: event.text })
+      case 'user': {
+        // Bound to a local so the array narrows: `event.images?.length` as the
+        // test leaves `event.images` possibly-undefined at the use site.
+        const attached = images && event.turn === turn ? event.images : undefined
+        if (!attached?.length) {
+          messages.push({ role: 'user', content: event.text })
+          break
+        }
+        // Text first — OpenRouter recommends it explicitly, and getting it
+        // backwards degrades the answer without erroring. No empty text part:
+        // Anthropic and Google both 400 on an empty content block.
+        const parts: ContentPart[] = event.text ? [{ type: 'text', text: event.text }] : []
+        for (const url of attached) parts.push({ type: 'image_url', image_url: { url } })
+        messages.push({ role: 'user', content: parts })
         break
+      }
       case 'assistant':
         // A turn stopped before its first delta leaves an empty assistant
         // event. It is in the log forever, and Anthropic and Google both 400

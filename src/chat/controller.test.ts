@@ -131,7 +131,12 @@ const turnInput = (userText = 'a box', log: ChatEvent[] = []): TurnInput => ({
 })
 
 const kinds = (appended: readonly ChatEvent[]): string[] => appended.map((e) => e.kind)
-const contents = (messages: readonly ChatMessage[]): string[] => messages.map((m) => m.content)
+const contents = (messages: readonly ChatMessage[]): string[] =>
+  messages.map((m) =>
+    typeof m.content === 'string'
+      ? m.content
+      : m.content.map((p) => (p.type === 'text' ? p.text : '')).join(''),
+  )
 const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1
 
 test('a reply that compiles commits on the first attempt', async () => {
