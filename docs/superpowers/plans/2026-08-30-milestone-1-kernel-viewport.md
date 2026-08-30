@@ -1349,8 +1349,10 @@ export const openscadMode = StreamLanguage.define<ModeState>({
     return null
   },
   languageData: {
+    // commentTokens is live — @codemirror/commands' comment keybindings read it.
+    // No closeBrackets entry: the extension that reads it lives in
+    // @codemirror/autocomplete, which we deliberately do not install.
     commentTokens: { line: '//', block: { open: '/*', close: '*/' } },
-    closeBrackets: { brackets: ['(', '[', '{', '"'] },
   },
 })
 
@@ -1361,7 +1363,12 @@ export const openscad = () => new LanguageSupport(openscadMode)
 
 ```tsx
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
-import { bracketMatching, indentOnInput } from '@codemirror/language'
+import {
+  bracketMatching,
+  defaultHighlightStyle,
+  indentOnInput,
+  syntaxHighlighting,
+} from '@codemirror/language'
 import { EditorState } from '@codemirror/state'
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view'
 import { useEffect, useRef } from 'react'
@@ -1396,6 +1403,8 @@ export function Editor({
           highlightActiveLine(),
           keymap.of([...defaultKeymap, ...historyKeymap]),
           openscad(),
+          // A StreamLanguage only tags tokens; without this nothing styles them.
+          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
           EditorView.theme({ '&': { height: '100%' }, '.cm-scroller': { fontFamily: 'ui-monospace, monospace' } }),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) onChangeRef.current(update.state.doc.toString())
