@@ -1,8 +1,7 @@
 {
   "name": "ai-modeller",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json && vite build",
@@ -11,8 +10,6 @@
     "test:watch": "vitest",
     "e2e": "tsc --noEmit -p tsconfig.e2e.json && playwright test"
   },
-  "keywords": [],
-  "author": "",
   "license": "GPL-3.0-or-later",
   "type": "module",
   "dependencies": {

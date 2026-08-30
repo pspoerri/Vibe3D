@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { expect, test } from '@playwright/test'
 
 test('compiles the starter model and reports its size', async ({ page }) => {
@@ -38,5 +39,12 @@ test('exports a 3MF', async ({ page }) => {
 
   const download = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Export 3MF' }).click()
+  const file = await (await download).path()
   expect((await download).suggestedFilename()).toBe('model.3mf')
+
+  const buf = await readFile(file)
+  expect(buf.subarray(0, 2).toString()).toBe('PK') // it is a zip
+  const text = buf.toString('latin1')
+  expect(text).toContain('3D/3dmodel.model') // the StartPart target
+  expect(text).toContain('_rels/.rels') // what Bambu Studio hard-fails without
 })
