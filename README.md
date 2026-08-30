@@ -47,6 +47,15 @@ The source, the kernel and the exported file are always millimetres — that is 
 speaks. The metric/imperial toggle changes the readout, and it tells the model how to read *you*:
 in imperial, "a two inch knob" means 50.8 mm in the source it writes.
 
+## Reference images
+
+Paste an image into the composer, or pick one with the button beside it — up to four per message.
+They carry layout, proportion and intent; **the dimensions still have to come from your words**,
+because models read sizes off pixels badly, and the model dropdown marks which models can read an
+image at all. An image is sent with the turn you attach it to and with no later turn, so you pay
+for it once — across that turn's repair attempts, and never again. Nothing is saved: the images go
+on reload and when you switch documents, exactly like the conversation.
+
 ## Licensing
 
 GPL-3.0-or-later. This project bundles the OpenSCAD WebAssembly build, which is
