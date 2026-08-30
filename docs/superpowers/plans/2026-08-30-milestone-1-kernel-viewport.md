@@ -48,7 +48,7 @@ Tasks 3, 4 and the pure half of 5 are dependency-free and fully unit-tested. Tas
 ### Task 1: Project scaffold
 
 **Files:**
-- Create: `package.json`, `vite.config.ts`, `tsconfig.json`, `tsconfig.node.json`, `index.html`, `src/main.tsx`, `src/App.tsx`, `src/index.css`, `LICENSE`, `README.md`
+- Create: `package.json`, `vite.config.ts`, `tsconfig.json`, `index.html`, `src/main.tsx`, `src/App.tsx`, `src/index.css`, `LICENSE`, `README.md`
 - Test: `src/smoke.test.ts`
 
 **Interfaces:**
@@ -76,7 +76,7 @@ Replace the `"scripts"` block in `package.json` with:
   "license": "GPL-3.0-or-later",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -88,7 +88,8 @@ Replace the `"scripts"` block in `package.json` with:
 - [ ] **Step 3: Write `vite.config.ts`**
 
 ```ts
-import { defineConfig } from 'vite'
+// vitest/config, not vite — Vite's own defineConfig has no `test` key.
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
 export default defineConfig({
@@ -764,7 +765,8 @@ test('strips the localization warning the kernel always prints', () => {
   const raw =
     "Could not initialize localization (application path is '/').\n" +
     'ERROR: Parser error: syntax error in file /in.scad, line 1\n'
-  expect(stripKernelNoise(raw)).toBe('ERROR: Parser error: syntax error in file /in.scad, line 1')
+  // The virtual path is rewritten too — see the next test.
+  expect(stripKernelNoise(raw)).toBe('ERROR: Parser error: syntax error in file model.scad, line 1')
 })
 
 test('rewrites the kernel virtual path to something a user recognises', () => {
@@ -989,13 +991,10 @@ export class Compiler {
 pnpm build && pnpm test
 ```
 
-Expected: build succeeds and all tests PASS. Confirm the kernel is **not** in the main chunk:
+Expected: build succeeds and all tests PASS.
 
-```bash
-ls -la dist/assets/ | grep -i wasm
-```
-
-Expected: a hashed `openscad-*.wasm` of about 10.7 MB emitted as its own asset.
+Do **not** expect an emitted `.wasm` yet — nothing imports the worker until Task 8, so Vite has no
+reason to emit it. That assertion belongs to Task 8.
 
 - [ ] **Step 9: Commit**
 
@@ -1551,7 +1550,20 @@ Check each of these in the browser:
 5. Replacing the whole body with `x = 1;` shows `Current top level object is empty.`
 6. Fixing the error clears the panel and re-renders.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Confirm the kernel is lazy-loaded, not in the main chunk**
+
+```bash
+pnpm build
+ls -la dist/assets/ | grep -i wasm
+grep -l "openscad" dist/assets/*.js | head
+```
+
+Expected: a hashed `openscad-*.wasm` of about 10.7 MB emitted as its own asset, referenced from a
+worker chunk rather than the entry chunk. If the wasm is missing entirely, the `?url` import is not
+reaching the bundler; if the entry chunk references it, the worker boundary has been lost and first
+paint now costs 3.1 MB gz.
+
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/App.tsx src/index.css
