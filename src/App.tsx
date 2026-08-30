@@ -4,6 +4,7 @@ import { parseOff, type Mesh } from './kernel/off'
 import { meshStats } from './kernel/stats'
 import { Editor } from './editor/Editor'
 import { Viewport } from './viewer/Viewport'
+import { downloadBlob, MIME } from './export/download'
 
 const STARTER = `// A mounting plate. Drag the numbers, or edit freely.
 $fn = 64;
@@ -65,6 +66,26 @@ export function App() {
 
   const stats = mesh ? meshStats(mesh) : null
 
+  const [exporting, setExporting] = useState<null | 'binstl' | '3mf'>(null)
+
+  // Export runs its own compile so the exported bytes always match the current
+  // source, and never reuses the viewport's OFF.
+  const exportAs = async (format: 'binstl' | '3mf') => {
+    setExporting(format)
+    const exporter = new Compiler()
+    try {
+      const result = await exporter.compile(source, format)
+      if (result.ok) {
+        downloadBlob(result.data, format === '3mf' ? 'model.3mf' : 'model.stl', MIME[format])
+      } else {
+        setError(result.stderr)
+      }
+    } finally {
+      exporter.dispose()
+      setExporting(null)
+    }
+  }
+
   return (
     <div className="app">
       <section className="pane">
@@ -72,6 +93,14 @@ export function App() {
       </section>
       <section className="pane view">
         <Viewport mesh={mesh} />
+        <div className="actions">
+          <button onClick={() => exportAs('3mf')} disabled={!mesh || exporting !== null}>
+            {exporting === '3mf' ? 'Exporting…' : 'Export 3MF'}
+          </button>
+          <button onClick={() => exportAs('binstl')} disabled={!mesh || exporting !== null}>
+            {exporting === 'binstl' ? 'Exporting…' : 'Export STL'}
+          </button>
+        </div>
         <div className="hud">
           {busy && <span className="tag busy">compiling…</span>}
           {!busy && ms !== null && <span className="tag">{ms} ms</span>}
