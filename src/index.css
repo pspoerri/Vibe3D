@@ -164,6 +164,31 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
 .chat-send:disabled { opacity: .4; cursor: default; }
 .chat-send.stop { border-color: #b8860b; color: #b8860b; }
 
+/* Staged images sit above the field rather than inside it: a thumbnail row in
+   the flex line would fight the textarea for the width it grows into. */
+.chat-tray { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.chat-thumb {
+  flex: none; width: 42px; height: 42px; padding: 0; cursor: pointer; overflow: hidden;
+  border: 1px solid #c8ccc4; border-radius: 3px; background: #fff;
+}
+.chat-thumb:hover:not(:disabled) { border-color: #a8256b; }
+.chat-thumb:disabled { opacity: .5; cursor: default; }
+.chat-attach {
+  flex: none; width: 26px; height: 26px; border-radius: 2px; cursor: pointer;
+  border: 1px solid #c8ccc4; background: #fff; color: #414741;
+  display: grid; place-items: center; font: 600 12px/1 system-ui, sans-serif;
+}
+.chat-attach:hover { border-color: #b8860b; color: #b8860b; }
+.chat-attach:has(input:disabled) { opacity: .4; cursor: default; }
+/* The control is the label; the input is only the file dialog behind it. */
+.chat-attach input { display: none; }
+
+/* .msg-user is pre-wrap, so the thumbnails need a block of their own or the
+   surrounding whitespace becomes visible text between them. */
+.msg-images { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.msg-images img { width: 88px; height: 88px; object-fit: cover; border-radius: 2px; display: block; }
+.chat-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
 /* Session readout. The model name doubles as the settings toggle, so the pane
    carries one control here instead of two. */
 .chat-meter {
