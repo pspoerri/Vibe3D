@@ -18,6 +18,10 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
 }
 .tag.busy { border-color: #b8860b; color: #b8860b; }
 
+/* Figures describing the last good compile, shown while the current source fails. */
+.stats { display: contents; }
+.stats.stale .tag { opacity: .45; font-style: italic; }
+
 .error {
   position: absolute; left: 10px; right: 10px; bottom: 10px; margin: 0; max-height: 42%;
   overflow: auto; font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap;
