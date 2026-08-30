@@ -50,7 +50,9 @@ async function seedKey(page: Page): Promise<void> {
 const compiles = async (page: Page): Promise<number> =>
   Number(await page.locator('.app').getAttribute('data-compiles'))
 
+/** The launcher is the entry point, so every test opens a document first. */
 async function waitForStarter(page: Page): Promise<void> {
+  await page.locator('.start-open').first().click({ timeout: 90_000 })
   await expect(page.locator('.tag', { hasText: '60.0 × 40.0 × 3.0 mm' })).toBeVisible({
     timeout: 90_000,
   })
@@ -487,7 +489,7 @@ test('a document survives a reload, and its name comes from the prompt', async (
     timeout: 60_000,
   })
   // The prompt titles the document; the asking is stripped off the front.
-  await expect(page.locator('.docbar select')).toContainText('Knurled knob')
+  await expect(page.locator('.menubar-doc')).toContainText('Knurled knob')
 
   // Assert the guarantee itself before reloading, rather than racing the save
   // debounce: the source must actually be in IndexedDB.
@@ -512,23 +514,25 @@ test('a document survives a reload, and its name comes from the prompt', async (
 
   // The whole point: reopen and the latest code is still there.
   await page.reload()
+  // Back at the launcher, with the work listed and openable.
+  await expect(page.locator('.start-name').first()).toHaveText('Knurled knob')
+  await page.locator('.start-open').first().click()
   await expect(page.locator('.cm-content')).toContainText('cube([21, 21, 21]);', {
     timeout: 90_000,
   })
-  await expect(page.locator('.docbar select')).toContainText('Knurled knob')
 })
 
-test('a new version keeps the old one openable', async ({ page }) => {
+test('a new version becomes the current document and leaves the old one intact', async ({
+  page,
+}) => {
   await page.goto('/')
   await waitForStarter(page)
 
   await page.getByRole('button', { name: 'Version' }).click()
-  const picker = page.locator('.docbar select')
-  await expect(picker.locator('option')).toHaveCount(2)
-  await expect(picker.locator('option').first()).toContainText('v1')
-  await expect(picker.locator('option').nth(1)).toContainText('v2')
+  // The fork is what you are editing from the next keystroke on.
+  await expect(page.locator('.menubar-doc')).toContainText('v2')
 
-  // Edit v2, then go back to v1 and find it exactly as it was.
+  // Typing in the editor updates the viewport, and only this version's source.
   await page.locator('.cm-content').click()
   await page.keyboard.press('ControlOrMeta+a')
   await page.keyboard.type('cube([8, 8, 8]);')
@@ -536,7 +540,11 @@ test('a new version keeps the old one openable', async ({ page }) => {
     timeout: 60_000,
   })
 
-  await picker.selectOption({ index: 0 })
+  // v1 is still openable, exactly as it was.
+  await page.getByRole('button', { name: 'Open', exact: true }).click()
+  const rows = page.locator('.start-open')
+  await expect(rows).toHaveCount(2)
+  await rows.filter({ hasText: 'v1' }).click()
   await expect(page.locator('.cm-content')).toContainText('plate_x = 60')
   await expect(page.locator('.tag', { hasText: '60.0 × 40.0 × 3.0 mm' })).toBeVisible({
     timeout: 60_000,

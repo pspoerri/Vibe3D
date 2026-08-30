@@ -6,6 +6,7 @@ test('compiles the starter model and reports its size', async ({ page }) => {
   page.on('pageerror', (e) => errors.push(e.message))
 
   await page.goto('/')
+  await page.locator('.start-open').first().click({ timeout: 90_000 })
   // 60 x 40 x 3 mm starter plate.
   await expect(page.locator('.tag', { hasText: '60.0 × 40.0 × 3.0 mm' })).toBeVisible({
     timeout: 90_000,
@@ -16,6 +17,7 @@ test('compiles the starter model and reports its size', async ({ page }) => {
 
 test('surfaces a compile error and recovers from it', async ({ page }) => {
   await page.goto('/')
+  await page.locator('.start-open').first().click({ timeout: 90_000 })
   await expect(page.locator('.tag', { hasText: 'mm' })).toBeVisible({ timeout: 90_000 })
 
   await page.locator('.cm-content').click()
@@ -35,6 +37,7 @@ test('surfaces a compile error and recovers from it', async ({ page }) => {
 
 test('exports a 3MF', async ({ page }) => {
   await page.goto('/')
+  await page.locator('.start-open').first().click({ timeout: 90_000 })
   await expect(page.locator('.tag', { hasText: 'mm' })).toBeVisible({ timeout: 90_000 })
 
   const download = page.waitForEvent('download')
@@ -58,6 +61,7 @@ test.describe('on a retina display', () => {
 
   test('the canvases lay out at their CSS size, not their backing size', async ({ page }) => {
     await page.goto('/')
+    await page.locator('.start-open').first().click({ timeout: 90_000 })
     await expect(page.locator('.tag', { hasText: 'mm' }).first()).toBeVisible({ timeout: 90_000 })
 
     const box = async (selector: string) => {

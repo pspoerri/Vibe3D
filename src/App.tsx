@@ -12,7 +12,7 @@ import {
 } from './state/units'
 import {
   currentDoc, deleteDoc, forkDoc, nameFromFirstPrompt, newDoc, renameDoc, reviveSession,
-  selectDoc, updateSource, versionNumbers, type Session,
+  selectDoc, updateSource, UNTITLED, versionNumbers, type Session,
 } from './state/documents'
 import { loadAll, persistRequested, saveSession } from './state/store'
 
@@ -68,6 +68,8 @@ export function App() {
   const [compiles, setCompiles] = useState(0)
   const [fitToken, setFitToken] = useState(0)
   const [units, setUnits] = useState(loadUnits)
+  // The launcher is the entry point: nothing is open until a document is picked.
+  const [open, setOpen] = useState(false)
 
   const compiler = useMemo(() => new Compiler(), [])
   useEffect(() => () => compiler.dispose(), [compiler])
@@ -211,17 +213,31 @@ export function App() {
   return (
     <div className="app" data-compiles={compiles} data-working={working}>
       <div className="working" aria-hidden={!working} />
+
+      <MenuBar
+        session={session}
+        onChange={(next) => {
+          setSession(next)
+          setFitToken((n) => n + 1)
+        }}
+        onOpen={() => setOpen(false)}
+      />
+
+      {session && !open && (
+        <StartWindow
+          session={session}
+          onOpen={(id) => {
+            setSession(selectDoc(session, id))
+            setFitToken((n) => n + 1)
+            setOpen(true)
+          }}
+          onChange={setSession}
+        />
+      )}
+
+      <div className="panes">
       <section className="pane">
         <div className="editor-pane">
-          {session && (
-            <DocBar
-              session={session}
-              onChange={(next) => {
-                setSession(next)
-                setFitToken((n) => n + 1)
-              }}
-            />
-          )}
           <div className="editor-host">
             <Editor value={streamSource ?? source} onChange={setSource} editable={!chatBusy} />
           </div>
@@ -302,68 +318,82 @@ export function App() {
           onBusyChange={setChatBusy}
         />
       </section>
+      </div>
     </div>
   )
 }
 
+/** "5 minutes ago" from a timestamp, via the platform's own formatter. */
+const STEPS: [number, Intl.RelativeTimeFormatUnit][] = [
+  [60_000, 'minute'],
+  [3_600_000, 'hour'],
+  [86_400_000, 'day'],
+]
+const RELATIVE = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+function whenEdited(ts: number): string {
+  const ago = Date.now() - ts
+  if (ago < 60_000) return 'just now'
+  for (const [size, unit] of STEPS) {
+    if (ago < size * 60 || unit === 'day') return RELATIVE.format(-Math.floor(ago / size), unit)
+  }
+  return 'a while ago'
+}
+
 /**
- * Documents, and versions of them. A version IS a document that records its
- * parent (design.md §7), so switching to an older one opens its source — which
- * is the whole recovery guarantee, and why there is no separate timeline.
+ * New / Open / Rename / Delete, and the name of what is open. Open returns to
+ * the start window, which is the document list — one screen rather than a
+ * picker plus a launcher that would both list the same rows.
  */
-function DocBar({
+function MenuBar({
   session,
   onChange,
+  onOpen,
 }: {
-  session: Session
+  session: Session | null
   onChange: (next: Session) => void
+  onOpen: () => void
 }) {
-  const doc = currentDoc(session)
-  const now = () => Date.now()
-  // Once for the list, not once per row: per-row numbering is what made this
-  // O(n^3) and 130 ms at 200 versions.
-  const versions = versionNumbers(session)
+  const doc = session ? currentDoc(session) : null
+  const version = session && doc ? versionNumbers(session).get(doc.id) : undefined
 
   return (
-    <div className="docbar">
-      <select
-        aria-label="Document"
-        value={session.currentId}
-        onChange={(e) => onChange(selectDoc(session, e.target.value))}
-      >
-        {session.docs.map((d) => {
-          const version = versions.get(d.id)
-          return (
-            <option key={d.id} value={d.id}>
-              {d.name}
-              {version === undefined ? '' : ` · v${version}`}
-            </option>
-          )
-        })}
-      </select>
+    <div className="menubar">
+      <span className="brand">Vibe3D</span>
       <button
         type="button"
-        title="Start a new, empty document"
-        onClick={() =>
+        disabled={!session}
+        onClick={() => {
+          if (!session) return
+          const id = crypto.randomUUID()
           onChange({
-            docs: [...session.docs, newDoc('Untitled', '', crypto.randomUUID(), now())],
-            currentId: session.docs[session.docs.length - 1]?.id ?? session.currentId,
+            docs: [...session.docs, newDoc(UNTITLED, '', id, Date.now())],
+            currentId: id,
           })
-        }
+        }}
       >
         New
       </button>
+      <button type="button" onClick={onOpen} disabled={!session}>
+        Open
+      </button>
       <button
         type="button"
-        title="Copy this document as a new version, leaving this one untouched"
-        onClick={() => onChange(forkDoc(session, doc.id, crypto.randomUUID(), now()))}
+        title="Copy this document as a new version and switch to it, leaving this one untouched"
+        disabled={!session || !doc}
+        onClick={() => {
+          if (!session || !doc) return
+          // forkDoc selects the copy, so the new version IS what you are editing
+          // from the next keystroke on.
+          onChange(forkDoc(session, doc.id, crypto.randomUUID(), Date.now()))
+        }}
       >
         Version
       </button>
       <button
         type="button"
-        title="Rename this document"
+        disabled={!session || !doc}
         onClick={() => {
+          if (!session || !doc) return
           // ponytail: the platform's own dialog. A rename popover is UI to
           // maintain for something done once per document.
           const name = window.prompt('Name this document', doc.name)
@@ -374,14 +404,91 @@ function DocBar({
       </button>
       <button
         type="button"
-        title="Delete this document"
+        disabled={!session || !doc}
         onClick={() => {
+          if (!session || !doc) return
           if (!window.confirm(`Delete "${doc.name}"? This cannot be undone.`)) return
-          onChange(deleteDoc(session, doc.id, crypto.randomUUID(), now()))
+          onChange(deleteDoc(session, doc.id, crypto.randomUUID(), Date.now()))
         }}
       >
         Delete
       </button>
+      {doc && (
+        <span className="menubar-doc">
+          {doc.name}
+          {version === undefined ? '' : ` · v${version}`}
+        </span>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The launcher. Documents, most recently edited first, because the top row is
+ * almost always the thing you were in the middle of.
+ */
+function StartWindow({
+  session,
+  onOpen,
+  onChange,
+}: {
+  session: Session
+  onOpen: (id: string) => void
+  onChange: (next: Session) => void
+}) {
+  const versions = versionNumbers(session)
+  const rows = [...session.docs].sort((a, b) => b.updatedAt - a.updatedAt)
+
+  return (
+    <div className="start">
+      <div className="start-card">
+        <h1>Vibe3D</h1>
+        <p className="start-tag">
+          Vibe 3D Models: Bring your own tokens. Leverages your LLM along with OpenSCAD to build
+          your ideas into a 3D Model.
+        </p>
+
+        <ul className="start-list">
+          {rows.map((d) => {
+            const version = versions.get(d.id)
+            return (
+              <li key={d.id}>
+                <button type="button" className="start-open" onClick={() => onOpen(d.id)}>
+                  <span className="start-name">{d.name}</span>
+                  {version !== undefined && <span className="start-ver">v{version}</span>}
+                  <span className="start-when">{whenEdited(d.updatedAt)}</span>
+                </button>
+                <button
+                  type="button"
+                  className="start-del"
+                  aria-label={`Delete ${d.name}`}
+                  onClick={() => {
+                    if (!window.confirm(`Delete "${d.name}"? This cannot be undone.`)) return
+                    onChange(deleteDoc(session, d.id, crypto.randomUUID(), Date.now()))
+                  }}
+                >
+                  ×
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+
+        <button
+          type="button"
+          className="start-new"
+          onClick={() => {
+            const id = crypto.randomUUID()
+            onChange({
+              docs: [...session.docs, newDoc(UNTITLED, '', id, Date.now())],
+              currentId: id,
+            })
+            onOpen(id)
+          }}
+        >
+          New document
+        </button>
+      </div>
     </div>
   )
 }
