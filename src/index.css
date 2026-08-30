@@ -37,3 +37,21 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
 .actions button:hover:not(:disabled) { border-color: #b8860b; color: #b8860b; }
 .actions button:disabled { opacity: .5; cursor: default; }
 .actions button:focus-visible { outline: 2px solid #b8860b; outline-offset: 1px; }
+
+.viewport { position: relative; width: 100%; height: 100%; }
+.viewport-canvas { width: 100%; height: 100%; }
+.viewport-canvas canvas { display: block; }
+
+/* Sits under the export buttons, which own the top-right corner. */
+.view-cube {
+  position: absolute; top: 52px; right: 10px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.view-cube canvas { display: block; cursor: pointer; }
+.view-cube button {
+  font: 500 10px/1 ui-monospace, monospace; letter-spacing: .06em;
+  padding: 4px 10px; cursor: pointer; color: #414741;
+  background: rgba(255, 255, 255, .9); border: 1px solid #c8ccc4; border-radius: 2px;
+}
+.view-cube button:hover { border-color: #b8860b; color: #b8860b; }
+.view-cube button:focus-visible { outline: 2px solid #b8860b; outline-offset: 1px; }
