@@ -16,6 +16,10 @@
   "license": "GPL-3.0-or-later",
   "type": "module",
   "dependencies": {
+    "@codemirror/commands": "6.11.0",
+    "@codemirror/language": "6.12.4",
+    "@codemirror/state": "6.7.1",
+    "@codemirror/view": "6.43.9",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "three": "0.185.1"
