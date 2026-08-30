@@ -5,7 +5,8 @@ result in 3D, and everything — state, history, API key — lives in your brows
 no backend, bring your own API key.
 
 Status: **Milestone 1 shipped** (kernel, viewport, editor, export). Milestone 2 in progress
-(agent loop, OpenRouter client, Customizer sliders). Milestones 3–4 not started.
+(agent loop, OpenRouter client, Customizer sliders). **Milestone 3 shipped** (document store,
+version timeline, launcher). Milestone 4 not started.
 Plans: `docs/superpowers/plans/`.
 Date: 2026-08-30. License: **GPL-3.0**.
 
@@ -130,6 +131,7 @@ src/
     sse.ts               SSE reader (hand-rolled, see below)
     openrouter.ts        streamChat, model catalogue, error normalisation
     auth.ts              OAuth PKCE
+    images.ts            fit + toDataUrl — ≤1568 px JPEG data: URL (§9)
   chat/
     controller.ts        runTurn / runCompact — the deterministic loop (§5)
     log.ts               append-only ChatEvent[] + buildWindow (§10)
@@ -145,12 +147,14 @@ src/
   state/
     settings.ts          localStorage: baseUrl, model
     key.ts               localStorage: the API key, ALONE (see §7)
-    project.ts           M3 — versions + chat, IndexedDB
+    documents.ts         Doc, Session — pure data, no IndexedDB call (§7)
+    store.ts             idb-keyval, one named database, atomic write (§7)
   export/download.ts     bytes → file download
 ```
 
-**No state library.** §2 once implied `zustand`; plain React state carries Milestone 2, and a
-store is Milestone 3's problem, when a persisted version timeline gives it something to own.
+**No state library.** §2 once implied `zustand`; plain React state carried Milestone 2, and
+Milestone 3's persisted version timeline gave the store something to own — without reaching for
+one: `documents.ts` and `store.ts` are plain functions over `useState`, not a library.
 
 Single route, no router — that keeps `base: './'` valid, which is what makes one build artifact
 deploy unchanged to a GitHub Pages subpath, a custom domain, or anywhere else.
@@ -424,6 +428,34 @@ nothing else.
 
 Images: downscale to ≤1568 px longest edge, JPEG q0.85, `image_url` with a `data:` URL. One
 normalization path that satisfies every upstream.
+
+### Reference images
+
+A user-attached reference image is **input**, not the vision-refine loop of §6 or §12's
+"naive vision feedback" risk. §6's −20% compile-rate finding and its non-negotiable
+structured-verification rule are about the app screenshotting its own mesh and feeding that
+render back to the model for correction — Milestone 4's loop, not built. A photo the user pastes
+or picks before typing a prompt is not that: nothing renders it back, and no verification-question
+protocol applies to it. Nothing in this work implements or presumes §6.
+
+Paste or file picker, up to 4 images per message, normalised once at attach time to the
+≤1568 px JPEG `data:` URL above — the one path this section already specifies, not a second one.
+They travel as `{type:'image_url', image_url:{url}}` content parts, with the text part always
+first: OpenRouter's own recommendation, and reversing it degrades the answer without erroring.
+
+**Live for their own turn only**, including that turn's repair attempts; every later turn degrades
+to plain text. That is what keeps §12's unbounded-context risk from applying here — the images
+never accumulate. `runCompact` strips them explicitly, because its caller closes over the turn
+that just ran (so that turn's user event is still "live" when compaction sees it) and auto-compact
+fires unattended at 60% of context, where nobody is present to notice a re-billed image.
+
+**Never persisted.** They die with the conversation, exactly as the transcript already does on
+reload and on every document switch. §7's "never base64 in the store" is not violated — the log
+they live in is not in the store — and that constraint binds again the day the log is.
+
+The catalogue's vision flag (`architecture.input_modalities`) is **a hint, not a gate**: nothing
+is filtered, hidden or disabled on it, because support is per-provider while OpenRouter
+load-balances providers.
 
 Config stays `{baseUrl, apiKey, model}` so OpenAI, Groq, Mistral, DeepSeek and Gemini's compat
 endpoint work unchanged — but no provider abstraction layer is built for a v1 with one host.
