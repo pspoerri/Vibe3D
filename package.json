@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "playwright test"
+    "e2e": "tsc --noEmit -p tsconfig.e2e.json && playwright test"
   },
   "keywords": [],
   "author": "",
