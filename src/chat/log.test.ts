@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest'
+import type { ChatMessage } from '../llm/openrouter'
 import { buildWindow, type ChatEvent } from './log'
 
 const SYS = 'system prompt'
@@ -7,12 +8,13 @@ const SRC = 'wall = 2;\ncube([10, 10, wall]);'
 let seq = 0
 const nextId = (): string => `e${++seq}`
 
-const user = (turn: number, text: string): ChatEvent => ({
+const user = (turn: number, text: string, images?: readonly string[]): ChatEvent => ({
   id: nextId(),
   ts: 0,
   turn,
   kind: 'user',
   text,
+  ...(images ? { images } : {}),
 })
 const assistant = (turn: number, text: string): ChatEvent => ({
   id: nextId(),
@@ -56,6 +58,11 @@ const win = (log: readonly ChatEvent[], turn: number, source = SRC) =>
 
 const count = (haystack: string, needle: string): number => haystack.split(needle).length - 1
 
+/** content is no longer always a string, and several assertions do string work. */
+const text = (content: ChatMessage['content']): string =>
+  typeof content === 'string' ? content : content.map((p) => (p.type === 'text' ? p.text : '')).join('')
+const texts = (messages: readonly ChatMessage[]): string[] => messages.map((m) => text(m.content))
+
 test('an empty log is the system prompt plus the current source', () => {
   const messages = win([], 1)
   expect(messages).toHaveLength(2)
@@ -72,11 +79,7 @@ test('a clear cuts every event before it', () => {
     note(2, 'History cleared.'),
     user(2, 'a cylinder'),
   ]
-  expect(win(log, 2).map((m) => m.content)).toEqual([
-    SYS,
-    'a cylinder',
-    expect.stringContaining(SRC),
-  ])
+  expect(texts(win(log, 2))).toEqual([SYS, 'a cylinder', expect.stringContaining(SRC)])
 })
 
 test('a summary replays as one user message and skips everything it covers', () => {
@@ -90,7 +93,7 @@ test('a summary replays as one user message and skips everything it covers', () 
     summary(3, 'The user asked for a box, then a taller one.', last1.id),
     user(3, 'now round it'),
   ]
-  expect(win(log, 3).map((m) => m.content)).toEqual([
+  expect(texts(win(log, 3))).toEqual([
     SYS,
     'The user asked for a box, then a taller one.',
     'taller',
@@ -113,7 +116,7 @@ test('a summary reaching back past a clear is clamped to the clear', () => {
     summary(3, 'stale summary', before.id),
     user(3, 'wider'),
   ]
-  const contents = win(log, 3).map((m) => m.content)
+  const contents = texts(win(log, 3))
   expect(contents).toEqual([
     SYS,
     'stale summary',
@@ -128,7 +131,7 @@ test("the current turn's assistant text is verbatim, earlier turns are stubbed",
   const old = reply('cube(1);')
   const live = reply('cube(2);')
   const log = [user(1, 'a box'), assistant(1, old), user(2, 'taller'), assistant(2, live)]
-  const contents = win(log, 2).map((m) => m.content)
+  const contents = texts(win(log, 2))
   expect(contents).toContain(live)
   expect(contents).not.toContain(old)
   expect(contents.join('\n')).not.toContain('cube(1);')
@@ -139,7 +142,7 @@ test('the tail source message is dropped once the current turn has an assistant 
   const log = [user(1, 'a box'), assistant(1, text), compiled(1, false, 'ERROR: x')]
   // §5: on a retry the model already has the source it just wrote, so the
   // document still crosses the wire exactly once — as the model's own reply.
-  expect(win(log, 1).map((m) => m.content)).toEqual([SYS, 'a box', text, 'ERROR: x'])
+  expect(texts(win(log, 1))).toEqual([SYS, 'a box', text, 'ERROR: x'])
 })
 
 test("a failed compile in the current turn crosses the wire byte-identical", () => {
@@ -159,7 +162,7 @@ test('successful compiles and compiles from earlier turns are dropped', () => {
     assistant(2, reply('cube(2);')),
     compiled(2, false, 'ERROR: turn two'),
   ]
-  const contents = win(log, 2).map((m) => m.content)
+  const contents = texts(win(log, 2))
   expect(contents.filter((c) => c.startsWith('ERROR:'))).toEqual(['ERROR: turn two'])
 })
 
@@ -172,20 +175,18 @@ test('one stderr message survives across a three-turn log with a failure in each
     log.push(assistant(turn, reply(`cube(${turn}.5);`)))
     log.push(compiled(turn, true, ''))
   }
-  const contents = win(log, 3).map((m) => m.content)
+  const contents = texts(win(log, 3))
   expect(contents.filter((c) => c.startsWith('ERROR:'))).toEqual(['ERROR: turn 3'])
 })
 
 test('notes never reach the wire', () => {
   const log = [note(1, 'Compile timed out.'), user(1, 'a box'), note(1, 'Stopped.')]
-  expect(win(log, 1).map((m) => m.content)).toEqual([SYS, 'a box', expect.stringContaining(SRC)])
+  expect(texts(win(log, 1))).toEqual([SYS, 'a box', expect.stringContaining(SRC)])
 })
 
 test('the source text appears exactly once, in a fenced block', () => {
   const log = [user(1, 'a box'), assistant(1, reply(SRC)), user(2, 'taller')]
-  const joined = win(log, 2)
-    .map((m) => m.content)
-    .join('\n')
+  const joined = texts(win(log, 2)).join('\n')
   expect(count(joined, SRC)).toBe(1)
   expect(joined).toContain(`\`\`\`openscad\n${SRC}\n\`\`\``)
 })
@@ -194,7 +195,7 @@ test('only the most recent summary is replayed', () => {
   const a = user(1, 'first')
   const b = user(2, 'second')
   const log = [a, b, summary(3, 'older', a.id), user(3, 'third'), summary(4, 'newer', b.id)]
-  const contents = win(log, 4).map((m) => m.content)
+  const contents = texts(win(log, 4))
   expect(contents).toEqual([SYS, 'newer', 'third', expect.stringContaining(SRC)])
 })
 
@@ -228,4 +229,56 @@ test('a clear as the final event leaves exactly the system prompt and the source
   expect(messages).toHaveLength(2)
   expect(messages[0]?.role).toBe('system')
   expect(messages[1]?.content).toContain(SRC)
+})
+
+const PNG = 'data:image/jpeg;base64,AAAA'
+const PNG2 = 'data:image/jpeg;base64,BBBB'
+
+test('the live turn sends its images as parts, with the text part first', () => {
+  const messages = win([user(1, 'like this bracket', [PNG, PNG2])], 1)
+  expect(messages[1]).toEqual({
+    role: 'user',
+    content: [
+      { type: 'text', text: 'like this bracket' },
+      { type: 'image_url', image_url: { url: PNG } },
+      { type: 'image_url', image_url: { url: PNG2 } },
+    ],
+  })
+})
+
+// Anthropic and Google both 400 on an empty content block — the same hazard the
+// empty-assistant guard exists for.
+test('an image with no words emits no empty text part', () => {
+  const messages = win([user(1, '', [PNG])], 1)
+  expect(messages[1]).toEqual({
+    role: 'user',
+    content: [{ type: 'image_url', image_url: { url: PNG } }],
+  })
+})
+
+/**
+ * The bill test. An image that rode turn 1 must not ride turn 2, or a long
+ * session re-pays for every reference photo on every turn — design.md:499's
+ * "default failure of this architecture", and it fails silently.
+ */
+test('an earlier turn keeps its words and loses its images', () => {
+  const messages = win([user(1, 'like this', [PNG]), user(2, 'taller')], 2)
+  expect(messages[1]).toEqual({ role: 'user', content: 'like this' })
+  expect(JSON.stringify(messages)).not.toContain(PNG)
+})
+
+/**
+ * runCompact's caller closes over the turn that just ran, so without this flag a
+ * summarisation would re-bill the images of a turn it considers live — and
+ * auto-compact fires unattended, so nobody would see the request that did it.
+ */
+test('images: false strips them even from the live turn', () => {
+  const messages = buildWindow({
+    log: [user(1, 'like this', [PNG])],
+    turn: 1,
+    systemPrompt: SYS,
+    source: SRC,
+    images: false,
+  })
+  expect(messages[1]).toEqual({ role: 'user', content: 'like this' })
 })
