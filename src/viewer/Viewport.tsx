@@ -33,7 +33,15 @@ interface ViewportApi {
   fit(): void
 }
 
-export function Viewport({ mesh }: { mesh: Mesh | null }) {
+export function Viewport({
+  mesh,
+  fitToken = 0,
+}: {
+  mesh: Mesh | null
+  /** Bump to re-frame. A turn replaces the whole part, so the camera the user
+   *  left pointing at the last one is almost never the right one. */
+  fitToken?: number
+}) {
   const hostRef = useRef<HTMLDivElement>(null)
   const cubeHostRef = useRef<HTMLDivElement>(null)
   const apiRef = useRef<ViewportApi | null>(null)
@@ -266,6 +274,11 @@ export function Viewport({ mesh }: { mesh: Mesh | null }) {
   useEffect(() => {
     apiRef.current?.setMesh(mesh)
   }, [mesh])
+
+  // Declared after the mesh effect so modelBox is already the new part's.
+  useEffect(() => {
+    if (fitToken > 0) apiRef.current?.fit()
+  }, [fitToken])
 
   return (
     <div className="viewport">

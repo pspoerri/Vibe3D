@@ -141,7 +141,7 @@ src/
     Editor.tsx           CodeMirror 6 + StreamLanguage OpenSCAD mode
     openscad-mode.ts     the StreamLanguage tokenizer
     params.ts            Customizer annotations → sliders
-    Params.tsx           the slider strip
+    ParamsPanel.tsx      the slider strip (named to avoid a case collision with params.ts)
   state/
     settings.ts          localStorage: baseUrl, model
     key.ts               localStorage: the API key, ALONE (see §7)
