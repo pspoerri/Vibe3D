@@ -42,17 +42,27 @@ export function App() {
     const runId = ++runIdRef.current
     setBusy(true)
     const timer = setTimeout(async () => {
-      const result = await compiler.compile(source, 'off')
+      let result
+      try {
+        result = await compiler.compile(source, 'off')
+      } catch (e) {
+        if (runIdRef.current !== runId) return // superseded
+        setBusy(false)
+        setError(e instanceof Error ? e.message : String(e))
+        return
+      }
       if (runIdRef.current !== runId) return // superseded
       // A cancelled compile is not a failure the user should see.
       if (!result.ok && result.cancelled) return
       setBusy(false)
       if (result.ok) {
-        // ms updates only on success, so every HUD figure describes the same mesh.
-        setMs(result.ms)
         try {
           setMesh(parseOff(new TextDecoder().decode(result.data)))
+          // ms updates only once the mesh has actually been replaced, so every
+          // HUD figure describes the same mesh.
+          setMs(result.ms)
           setError(null)
+          setExportError(null)
         } catch (e) {
           setError(e instanceof Error ? e.message : String(e))
         }
@@ -64,7 +74,7 @@ export function App() {
     return () => clearTimeout(timer)
   }, [source, compiler])
 
-  const stats = mesh ? meshStats(mesh) : null
+  const stats = useMemo(() => (mesh ? meshStats(mesh) : null), [mesh])
 
   const [exporting, setExporting] = useState<null | 'binstl' | '3mf'>(null)
   const [exportError, setExportError] = useState<string | null>(null)
@@ -99,10 +109,13 @@ export function App() {
       <section className="pane view">
         <Viewport mesh={mesh} />
         <div className="actions">
-          <button onClick={() => exportAs('3mf')} disabled={!mesh || exporting !== null}>
+          <button onClick={() => exportAs('3mf')} disabled={!mesh || !!error || exporting !== null}>
             {exporting === '3mf' ? 'Exporting…' : 'Export 3MF'}
           </button>
-          <button onClick={() => exportAs('binstl')} disabled={!mesh || exporting !== null}>
+          <button
+            onClick={() => exportAs('binstl')}
+            disabled={!mesh || !!error || exporting !== null}
+          >
             {exporting === 'binstl' ? 'Exporting…' : 'Export STL'}
           </button>
         </div>

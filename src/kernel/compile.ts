@@ -62,7 +62,7 @@ export class Compiler {
       worker.onerror = (event) =>
         finish({
           ok: false,
-          stderr: stripKernelNoise(event.message) || 'Kernel worker crashed.',
+          stderr: stripKernelNoise(event.message ?? '') || 'Kernel worker crashed.',
           ms: Math.round(performance.now() - this.#started),
         })
 
