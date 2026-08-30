@@ -1898,6 +1898,10 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
+      - run: pnpm exec playwright install --with-deps chromium
+      # Builds dist/ and smoke-tests the real artifact — the only check that
+      # catches base-path, worker-bundling and wasm-URL regressions.
+      - run: pnpm e2e
       - run: pnpm build
       - uses: actions/upload-pages-artifact@v5
         with: { path: dist }
