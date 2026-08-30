@@ -110,6 +110,15 @@ export function buildWindow({
         // test leaves `event.images` possibly-undefined at the use site.
         const attached = images && event.turn === turn ? event.images : undefined
         if (!attached?.length) {
+          // An image-only message is entirely its images, so degradation leaves
+          // it with nothing at all — pushing it anyway puts an empty content
+          // block on the wire, which Anthropic and Google both 400 on. Same
+          // hazard, same shape and same consequence as the empty-assistant
+          // guard below: one such message poisons every later request of the
+          // session. The guard has to live HERE, inside the degraded branch,
+          // and not ahead of the image check — a live image-only message is
+          // legitimate and must still reach the model.
+          if (event.text === '') break
           messages.push({ role: 'user', content: event.text })
           break
         }

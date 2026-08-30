@@ -297,6 +297,14 @@ export function Chat({
         },
       )
 
+      // Bumped before the outcome is handled, so nothing between here and the
+      // next message can skip it: a throw out of onApply would leave the next
+      // user event carrying this same turn number, and buildWindow would then
+      // read BOTH as live — re-sending this turn's images and its verbatim
+      // assistant source on a turn that does not own them.
+      const finished = turn
+      setTurn(finished + 1)
+
       // Commit on final failure too: the user has to see the code to fix it,
       // and CodeMirror's history makes the whole-document replace undoable.
       if (outcome.status === 'committed' || outcome.status === 'failed') {
@@ -304,9 +312,6 @@ export function Chat({
       } else if (outcome.status === 'error') {
         setChatError(outcome.message)
       }
-
-      const finished = turn
-      setTurn(finished + 1)
 
       const limit = contextLimit(models, settings.model)
       const used = usageRef.current?.total_tokens ?? 0
@@ -375,6 +380,7 @@ export function Chat({
                 type="button"
                 className="chat-thumb"
                 title="Remove"
+                aria-label="Remove image"
                 disabled={busy}
                 onClick={() => setAttachments((current) => current.filter((_, j) => j !== i))}
               >
