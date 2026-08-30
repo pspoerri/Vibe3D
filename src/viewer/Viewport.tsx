@@ -186,7 +186,7 @@ export function Viewport({ mesh }: { mesh: Mesh | null }) {
     const resize = () => {
       const { clientWidth: w, clientHeight: h } = host
       if (w === 0 || h === 0) return
-      renderer.setSize(w, h, false)
+      renderer.setSize(w, h)
       camera.aspect = w / h
       camera.updateProjectionMatrix()
       draw()

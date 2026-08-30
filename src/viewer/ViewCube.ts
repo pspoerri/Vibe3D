@@ -53,7 +53,7 @@ export interface ViewCube {
 export function createViewCube(host: HTMLElement, onPick: (view: StandardView) => void): ViewCube {
   const renderer = new WebGLRenderer({ antialias: true, alpha: true })
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
-  renderer.setSize(SIZE_PX, SIZE_PX, false)
+  renderer.setSize(SIZE_PX, SIZE_PX)
   host.appendChild(renderer.domElement)
 
   const scene = new Scene()

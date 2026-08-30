@@ -48,3 +48,25 @@ test('exports a 3MF', async ({ page }) => {
   expect(text).toContain('3D/3dmodel.model') // the StartPart target
   expect(text).toContain('_rels/.rels') // what Bambu Studio hard-fails without
 })
+
+// three's setSize(w, h, false) leaves canvas.style unset, so the canvas lays
+// out at its dpr-scaled backing size. OrbitControls converts drag pixels to
+// radians with element.clientHeight, so an oversized canvas silently halves
+// the rotation per pixel on a retina display — invisible at the default dpr 1.
+test.describe('on a retina display', () => {
+  test.use({ deviceScaleFactor: 2 })
+
+  test('the canvases lay out at their CSS size, not their backing size', async ({ page }) => {
+    await page.goto('/')
+    await expect(page.locator('.tag', { hasText: 'mm' }).first()).toBeVisible({ timeout: 90_000 })
+
+    const box = async (selector: string) => {
+      const rect = await page.locator(selector).boundingBox()
+      return rect ? { w: Math.round(rect.width), h: Math.round(rect.height) } : null
+    }
+    expect(await box('.viewport-canvas canvas')).toEqual(await box('.viewport-canvas'))
+    expect(await box('.view-cube canvas')).toEqual({ w: 84, h: 84 })
+    // An oversized canvas also pushes the document wider than the viewport.
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(1280)
+  })
+})
