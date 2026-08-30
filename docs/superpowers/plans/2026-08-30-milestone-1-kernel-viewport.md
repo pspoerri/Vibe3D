@@ -1514,8 +1514,9 @@ export function App() {
       // A cancelled compile is not a failure the user should see.
       if (!result.ok && result.cancelled) return
       setBusy(false)
-      setMs(result.ms)
       if (result.ok) {
+        // ms updates only on success, so every HUD figure describes the same mesh.
+        setMs(result.ms)
         try {
           setMesh(parseOff(new TextDecoder().decode(result.data)))
           setError(null)
@@ -1543,7 +1544,7 @@ export function App() {
           {busy && <span className="tag busy">compiling…</span>}
           {!busy && ms !== null && <span className="tag">{ms} ms</span>}
           {stats && (
-            <>
+            <span className={error ? 'stats stale' : 'stats'}>
               <span className="tag">
                 {stats.size.map((n) => n.toFixed(1)).join(' × ')} mm
               </span>
@@ -1553,7 +1554,7 @@ export function App() {
                   ? 'not watertight'
                   : `${(stats.volume / 1000).toFixed(2)} cm³`}
               </span>
-            </>
+            </span>
           )}
         </div>
         {error && <pre className="error">{error}</pre>}
@@ -1585,6 +1586,10 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
   padding: 5px 7px; color: #414741;
 }
 .tag.busy { border-color: #b8860b; color: #b8860b; }
+
+/* Figures describing the last good compile, shown while the current source fails. */
+.stats { display: contents; }
+.stats.stale .tag { opacity: .45; font-style: italic; }
 
 .error {
   position: absolute; left: 10px; right: 10px; bottom: 10px; margin: 0; max-height: 42%;
