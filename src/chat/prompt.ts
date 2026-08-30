@@ -101,15 +101,32 @@ Do NOT reproduce, quote or describe the OpenSCAD source. It is attached verbatim
 every turn; restating it wastes exactly the context this summary is meant to free.`
 
 /**
+ * design.md:193-200 measured models reading dimensions off pixels at 0.07-0.09
+ * IoU — this is a known failure being headed off, not a speculative one. The
+ * clause is appended only when a turn actually carries images, so a text-only
+ * user's cacheable prefix stays byte-identical.
+ */
+const IMAGE_CLAUSE = `## Reference images
+
+The user has attached one or more images. Read them for layout, proportion, part
+count and intent — what the thing is, and how its features sit relative to each
+other. Do NOT read dimensions off them: measured size from a picture is
+unreliable, and a confidently wrong number is worse than an absent one. Every
+dimension comes from the user's words or from an assumption you name. Say in one
+line what you took from the image, then build to it.`
+
+/**
  * OpenSCAD source is ALWAYS millimetres — the kernel, the exported 3MF and
  * every `-D` override are metric, and a part authored in inches would be a
  * different program. What the display unit changes is how to read the user:
  * someone working in imperial says "a two inch knob" and means 50.8 mm, and
  * without this clause the model writes `knob_d = 2;`.
  */
-export function systemPromptFor(units: 'mm' | 'in'): string {
-  if (units === 'mm') return SYSTEM_PROMPT
-  return `${SYSTEM_PROMPT}
+export function systemPromptFor(units: 'mm' | 'in', images = false): string {
+  const base =
+    units === 'mm'
+      ? SYSTEM_PROMPT
+      : `${SYSTEM_PROMPT}
 
 ## Units
 
@@ -118,4 +135,5 @@ inches, and convert: 1 in = 25.4 mm. The source you write stays in millimetres
 like all OpenSCAD — do not write inch values into it, and do not add a scale
 factor. Where you name a dimension back to the user in prose, give the inch
 figure they asked for, with the millimetre value in brackets.`
+  return images ? `${base}\n\n${IMAGE_CLAUSE}` : base
 }
