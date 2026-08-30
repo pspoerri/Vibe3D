@@ -2,6 +2,9 @@
  * Line-based, not one regex over the whole reply: a single pattern cannot tell
  * an opening fence from a closing one, and a bare ``` is both.
  */
+// A lone \r has to go too, not just the \r\n pair: a stream boundary can land
+// between the two, and `[^\n]*$` then swallows the orphan so the fence never
+// opens and the code body prints into the transcript as prose.
 const OPEN_FENCE = /^```[^\n]*$/
 const CLOSE_FENCE = /^```\s*$/
 
@@ -25,7 +28,7 @@ export function extractSource(text: string): { source: string | null; complete: 
   let complete = false
   let body: string[] | null = null
 
-  for (const line of text.replaceAll('\r\n', '\n').split('\n')) {
+  for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
     if (body === null) {
       if (OPEN_FENCE.test(line)) body = []
     } else if (CLOSE_FENCE.test(line)) {

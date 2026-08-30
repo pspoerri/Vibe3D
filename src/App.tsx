@@ -10,6 +10,11 @@ import { downloadBlob, MIME } from './export/download'
 import {
   formatLength, formatVolume, lengthLabel, loadUnits, saveUnits, volumeLabel,
 } from './state/units'
+import {
+  currentDoc, deleteDoc, forkDoc, nameFromFirstPrompt, newDoc, renameDoc, reviveSession,
+  selectDoc, updateSource, versionNumber, type Session,
+} from './state/documents'
+import { loadLastSource, loadSession, persistRequested, saveLastSource, saveSession } from './state/store'
 
 const STARTER = `// A mounting plate. Drag the numbers, or edit freely.
 $fn = 64;
@@ -43,8 +48,16 @@ const NO_DEFINES: readonly string[] = []
 const compileKey = (source: string, defines: readonly string[]): string =>
   defines.join('\f') + '\f' + source
 
+/** Long enough to coalesce a burst of typing, short enough to survive a crash. */
+const SAVE_DEBOUNCE_MS = 400
+
 export function App() {
-  const [source, setSource] = useState(STARTER)
+  // null until IndexedDB answers. Nothing compiles before then, so the starter
+  // is never compiled and thrown away one frame later.
+  const [session, setSession] = useState<Session | null>(null)
+  const source = session ? currentDoc(session).source : STARTER
+  const setSource = (next: string) =>
+    setSession((s) => (s ? updateSource(s, next, Date.now()) : s))
   const [mesh, setMesh] = useState<Mesh | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -58,6 +71,57 @@ export function App() {
 
   const compiler = useMemo(() => new Compiler(), [])
   useEffect(() => () => compiler.dispose(), [compiler])
+
+  useEffect(() => {
+    let live = true
+    void (async () => {
+      const [raw, lastSource] = await Promise.all([loadSession(), loadLastSource()])
+      if (!live) return
+      // lastSource is the fallback, not the starter: if the session structure is
+      // unreadable the user still gets the code they were last working on.
+      setSession(reviveSession(raw, lastSource ?? STARTER, crypto.randomUUID(), Date.now()))
+      // design.md §7: WebKit drops script-writable storage after 7 days without
+      // interaction, and this is silently denied when heuristics are unmet.
+      void persistRequested()
+    })()
+    return () => {
+      live = false
+    }
+  }, [])
+
+  // The debounce is what makes typing cheap; it is also a window in which the
+  // last edit exists only in memory. A tab that goes away never runs its
+  // pending timeout, so the hidden/unload path writes immediately instead.
+  const sessionRef = useRef<Session | null>(null)
+  sessionRef.current = session
+  useEffect(() => {
+    const flush = () => {
+      const current = sessionRef.current
+      if (!current) return
+      void saveSession(current)
+      void saveLastSource(currentDoc(current).source)
+    }
+    const onHidden = () => {
+      if (document.visibilityState === 'hidden') flush()
+    }
+    window.addEventListener('pagehide', flush)
+    document.addEventListener('visibilitychange', onHidden)
+    return () => {
+      window.removeEventListener('pagehide', flush)
+      document.removeEventListener('visibilitychange', onHidden)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!session) return
+    const timer = setTimeout(() => {
+      void saveSession(session)
+      // Written separately and on the same beat. See store.ts: losing the
+      // document list is an inconvenience, losing the source is losing the work.
+      void saveLastSource(currentDoc(session).source)
+    }, SAVE_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [session])
 
   // Guards against an earlier compile resolving after a later one.
   const runIdRef = useRef(0)
@@ -89,6 +153,7 @@ export function App() {
   }
 
   useEffect(() => {
+    if (!session) return
     const key = compileKey(source, previewDefines)
     // FIRST statement, before the run id and before setBusy: a turn commits its
     // source together with the result it already paid for, and recompiling it
@@ -118,7 +183,7 @@ export function App() {
     )
 
     return () => clearTimeout(timer)
-  }, [source, previewDefines, compiler])
+  }, [source, previewDefines, compiler, session])
 
   const stats = useMemo(() => (mesh ? meshStats(mesh) : null), [mesh])
 
@@ -152,6 +217,15 @@ export function App() {
       <div className="working" aria-hidden={!working} />
       <section className="pane">
         <div className="editor-pane">
+          {session && (
+            <DocBar
+              session={session}
+              onChange={(next) => {
+                setSession(next)
+                setFitToken((n) => n + 1)
+              }}
+            />
+          )}
           <div className="editor-host">
             <Editor value={streamSource ?? source} onChange={setSource} editable={!chatBusy} />
           </div>
@@ -214,8 +288,14 @@ export function App() {
 
       <section className="pane">
         <Chat
+          // Remounts on a document switch: the conversation was about the part
+          // that just left the screen.
+          key={session?.currentId ?? 'boot'}
           source={source}
           units={units}
+          onPrompt={(text) =>
+            setSession((s) => (s ? nameFromFirstPrompt(s, text, Date.now()) : s))
+          }
           onStreamSource={setStreamSource}
           onApply={(next, result) => {
             setSource(next)
@@ -226,6 +306,83 @@ export function App() {
           onBusyChange={setChatBusy}
         />
       </section>
+    </div>
+  )
+}
+
+/**
+ * Documents, and versions of them. A version IS a document that records its
+ * parent (design.md §7), so switching to an older one opens its source — which
+ * is the whole recovery guarantee, and why there is no separate timeline.
+ */
+function DocBar({
+  session,
+  onChange,
+}: {
+  session: Session
+  onChange: (next: Session) => void
+}) {
+  const doc = currentDoc(session)
+  const now = () => Date.now()
+
+  return (
+    <div className="docbar">
+      <select
+        aria-label="Document"
+        value={session.currentId}
+        onChange={(e) => onChange(selectDoc(session, e.target.value))}
+      >
+        {session.docs.map((d) => {
+          const version = versionNumber(session, d.id)
+          return (
+            <option key={d.id} value={d.id}>
+              {d.name}
+              {version > 0 ? ` · v${version}` : ''}
+            </option>
+          )
+        })}
+      </select>
+      <button
+        type="button"
+        title="Start a new, empty document"
+        onClick={() =>
+          onChange({
+            docs: [...session.docs, newDoc('Untitled', '', crypto.randomUUID(), now())],
+            currentId: session.docs[session.docs.length - 1]?.id ?? session.currentId,
+          })
+        }
+      >
+        New
+      </button>
+      <button
+        type="button"
+        title="Copy this document as a new version, leaving this one untouched"
+        onClick={() => onChange(forkDoc(session, doc.id, crypto.randomUUID(), now()))}
+      >
+        Version
+      </button>
+      <button
+        type="button"
+        title="Rename this document"
+        onClick={() => {
+          // ponytail: the platform's own dialog. A rename popover is UI to
+          // maintain for something done once per document.
+          const name = window.prompt('Name this document', doc.name)
+          if (name !== null) onChange(renameDoc(session, doc.id, name))
+        }}
+      >
+        Rename
+      </button>
+      <button
+        type="button"
+        title="Delete this document"
+        onClick={() => {
+          if (!window.confirm(`Delete "${doc.name}"? This cannot be undone.`)) return
+          onChange(deleteDoc(session, doc.id, crypto.randomUUID(), now()))
+        }}
+      >
+        Delete
+      </button>
     </div>
   )
 }

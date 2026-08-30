@@ -220,3 +220,12 @@ test('pathological input cannot freeze the tab', () => {
   }
   expect(Date.now() - start).toBeLessThan(500)
 })
+
+test('a lone carriage return does not turn a code block into prose', () => {
+  // A stream boundary can land between \r and \n. The orphan \r is matched by
+  // `[^\n]*$`, so the fence silently fails to open and the body — the one thing
+  // this module exists to keep out of the transcript — prints as a paragraph.
+  const blocks = parseMarkdown('Here:\r\n```openscad\rwall = 2;\r\ncube();\r\n```')
+  expect(blocks.some((b) => b.kind === 'code')).toBe(true)
+  expect(JSON.stringify(blocks)).not.toContain('wall = 2')
+})

@@ -7,6 +7,9 @@ export type Block =
   | { kind: 'code'; lang: string; lines: number }
 
 /** Column-anchored, like fence.ts: an indented ``` is body text, not a fence. */
+// A lone \r has to go too, not just the \r\n pair: a stream boundary can land
+// between the two, and `[^\n]*$` then swallows the orphan so the fence never
+// opens and the code body prints into the transcript as prose.
 const OPEN_FENCE = /^```(.*)$/
 const CLOSE_FENCE = /^```\s*$/
 /** One to three, which is all a chat reply emits; a deeper run stays prose. */
@@ -81,7 +84,7 @@ export function parseMarkdown(text: string): Block[] {
     list = null
   }
 
-  const lines = text.replaceAll('\r\n', '\n').split('\n')
+  const lines = text.replace(/\r\n?/g, '\n').split('\n')
   // Only the last line can be half-written, and only when no newline follows it.
   if (PENDING_ITEM.test(lines[lines.length - 1] ?? '')) lines.pop()
 

@@ -468,3 +468,97 @@ test('display units switch without touching the model or the source', async ({ p
   await page.reload()
   await expect(page.locator('.tag', { hasText: 'in' }).first()).toBeVisible({ timeout: 90_000 })
 })
+
+test('a document survives a reload, and its name comes from the prompt', async ({ page }) => {
+  await seedKey(page)
+  await page.route(CHAT_URL, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: sseBody(fenced('cube([21, 21, 21]);')),
+    }),
+  )
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await send(page, 'make me a knurled knob')
+
+  await expect(page.locator('.tag', { hasText: '21.0 × 21.0 × 21.0 mm' })).toBeVisible({
+    timeout: 60_000,
+  })
+  // The prompt titles the document; the asking is stripped off the front.
+  await expect(page.locator('.docbar select')).toContainText('Knurled knob')
+
+  // Assert the guarantee itself before reloading, rather than racing the save
+  // debounce: the source must actually be in IndexedDB.
+  await expect
+    .poll(
+      () =>
+        page.evaluate(
+          () =>
+            new Promise<string>((resolve) => {
+              const open = indexedDB.open('vibe3d')
+              open.onerror = () => resolve('')
+              open.onsuccess = () => {
+                const read = open.result.transaction('state').objectStore('state').get('lastSource')
+                read.onerror = () => resolve('')
+                read.onsuccess = () => resolve(String(read.result ?? ''))
+              }
+            }),
+        ),
+      { timeout: 10_000 },
+    )
+    .toContain('cube([21, 21, 21]);')
+
+  // The whole point: reopen and the latest code is still there.
+  await page.reload()
+  await expect(page.locator('.cm-content')).toContainText('cube([21, 21, 21]);', {
+    timeout: 90_000,
+  })
+  await expect(page.locator('.docbar select')).toContainText('Knurled knob')
+})
+
+test('a new version keeps the old one openable', async ({ page }) => {
+  await page.goto('/')
+  await waitForStarter(page)
+
+  await page.getByRole('button', { name: 'Version' }).click()
+  const picker = page.locator('.docbar select')
+  await expect(picker.locator('option')).toHaveCount(2)
+  await expect(picker.locator('option').first()).toContainText('v1')
+  await expect(picker.locator('option').nth(1)).toContainText('v2')
+
+  // Edit v2, then go back to v1 and find it exactly as it was.
+  await page.locator('.cm-content').click()
+  await page.keyboard.press('ControlOrMeta+a')
+  await page.keyboard.type('cube([8, 8, 8]);')
+  await expect(page.locator('.tag', { hasText: '8.0 × 8.0 × 8.0 mm' })).toBeVisible({
+    timeout: 60_000,
+  })
+
+  await picker.selectOption({ index: 0 })
+  await expect(page.locator('.cm-content')).toContainText('plate_x = 60')
+  await expect(page.locator('.tag', { hasText: '60.0 × 40.0 × 3.0 mm' })).toBeVisible({
+    timeout: 60_000,
+  })
+})
+
+test('a corrupt session still restores the last source', async ({ page }) => {
+  // The recovery lane: the structured record is unreadable, so revive refuses
+  // it — and the user must still get their code back, not the starter.
+  await page.addInitScript(() => {
+    const open = indexedDB.open('vibe3d')
+    open.onupgradeneeded = () => open.result.createObjectStore('state')
+    open.onsuccess = () => {
+      const tx = open.result.transaction('state', 'readwrite')
+      tx.objectStore('state').put({ docs: 'not an array' }, 'session')
+      tx.objectStore('state').put('cube([33, 33, 33]);', 'lastSource')
+    }
+  })
+
+  await page.goto('/')
+  await expect(page.locator('.tag', { hasText: '33.0 × 33.0 × 33.0 mm' })).toBeVisible({
+    timeout: 90_000,
+  })
+  await expect(page.locator('.cm-content')).toContainText('cube([33, 33, 33]);')
+})

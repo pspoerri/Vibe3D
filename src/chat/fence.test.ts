@@ -151,3 +151,9 @@ test('stubbing closes a block the reply never closed', () => {
   expect(stubbed.match(/```/g)).toHaveLength(2)
   expect(stubbed).not.toContain('cube(1);')
 })
+
+test('a lone carriage return still yields a usable source', () => {
+  const { source, complete } = extractSource('```openscad\rcube(1);\r\n```')
+  expect(complete).toBe(true)
+  expect(source).toBe('cube(1);')
+})

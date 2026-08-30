@@ -240,3 +240,23 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
 
 .app { position: relative; }
 @media (prefers-reduced-motion: reduce) { .working::after { animation: none; width: 100%; } }
+
+/* Documents, above the editor. A version is another document that records its
+   parent, so this one control covers both switching and version history. */
+.docbar {
+  display: flex; gap: 5px; align-items: center; padding: 7px 8px;
+  border-bottom: 1px solid #c8ccc4; background: #eef0ea;
+}
+.docbar select {
+  flex: 1; min-width: 0; font: 12px/1.3 system-ui, sans-serif; padding: 5px 6px;
+  border: 1px solid #c8ccc4; border-radius: 2px; background: #fff; color: #16181c;
+}
+.docbar button {
+  flex: none; font: 500 10px/1 ui-monospace, monospace; letter-spacing: .06em;
+  text-transform: uppercase; padding: 6px 7px; cursor: pointer; color: #414741;
+  background: #fff; border: 1px solid #c8ccc4; border-radius: 2px;
+}
+.docbar button:hover { border-color: #b8860b; color: #b8860b; }
+.docbar select:focus-visible, .docbar button:focus-visible {
+  outline: 2px solid #b8860b; outline-offset: 1px;
+}

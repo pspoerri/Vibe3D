@@ -22,6 +22,7 @@ export function Chat({
   onApply,
   onExport,
   onBusyChange,
+  onPrompt,
 }: {
   source: string
   /** Display units. The source stays metric; this is how to READ the user. */
@@ -30,6 +31,8 @@ export function Chat({
   onApply: (next: string, result: CompileResult) => void
   onExport: (format: 'binstl' | '3mf') => void
   onBusyChange: (busy: boolean) => void
+  /** The user's words for the part. The document takes its name from the first. */
+  onPrompt: (text: string) => void
 }) {
   const [log, setLog] = useState<ChatEvent[]>([])
   const [turn, setTurn] = useState(1)
@@ -203,6 +206,7 @@ export function Chat({
 
     setInput('')
     setChatError(null)
+    onPrompt(text)
     const controller = new AbortController()
     abortRef.current = controller
     busyRef.current = true
