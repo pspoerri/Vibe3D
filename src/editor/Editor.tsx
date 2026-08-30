@@ -1,5 +1,10 @@
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
-import { bracketMatching, indentOnInput } from '@codemirror/language'
+import {
+  bracketMatching,
+  defaultHighlightStyle,
+  indentOnInput,
+  syntaxHighlighting,
+} from '@codemirror/language'
 import { EditorState } from '@codemirror/state'
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view'
 import { useEffect, useRef } from 'react'
@@ -34,6 +39,8 @@ export function Editor({
           highlightActiveLine(),
           keymap.of([...defaultKeymap, ...historyKeymap]),
           openscad(),
+          // A StreamLanguage only tags tokens; without this nothing styles them.
+          syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
           EditorView.theme({ '&': { height: '100%' }, '.cm-scroller': { fontFamily: 'ui-monospace, monospace' } }),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) onChangeRef.current(update.state.doc.toString())

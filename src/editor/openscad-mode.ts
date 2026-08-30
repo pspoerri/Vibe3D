@@ -61,7 +61,6 @@ export const openscadMode = StreamLanguage.define<ModeState>({
   },
   languageData: {
     commentTokens: { line: '//', block: { open: '/*', close: '*/' } },
-    closeBrackets: { brackets: ['(', '[', '{', '"'] },
   },
 })
 
