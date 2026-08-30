@@ -1129,6 +1129,9 @@ Inside `<div className="chat-input">`, before the send button:
               type="file"
               accept="image/png,image/jpeg,image/webp,image/gif"
               multiple
+              // The label's `title` names the LABEL, not the input, so without
+              // this the control has no accessible name at all.
+              aria-label="Attach images"
               disabled={busy}
               onChange={(e) => {
                 void attach([...(e.target.files ?? [])])
@@ -1189,8 +1192,16 @@ Append to the composer block in `src/index.css`, after `.chat-send.stop`:
 }
 .chat-attach:hover { border-color: #b8860b; color: #b8860b; }
 .chat-attach:has(input:disabled) { opacity: .4; cursor: default; }
-/* The control is the label; the input is only the file dialog behind it. */
-.chat-attach input { display: none; }
+/* The control is the label; the input is only the file dialog behind it — but
+   `display: none` would make it unfocusable and Tab would skip the control
+   entirely, so it is clipped rather than removed. */
+.chat-attach input {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+/* The focus ring has to be drawn on the label, because the thing that takes
+   focus is a 1px clipped input nobody can see. */
+.chat-attach:has(input:focus-visible) { border-color: #b8860b; box-shadow: 0 0 0 2px #faf3e0; }
 
 /* .msg-user is pre-wrap, so the thumbnails need a block of their own or the
    surrounding whitespace becomes visible text between them. */
