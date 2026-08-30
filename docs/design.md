@@ -446,7 +446,9 @@ Testing — the minimum that catches real breakage:
    the kernel writes the 3MF, but still the cheapest proof it is loadable.
 3. **One Playwright smoke test** against `vite preview` of the real `dist/`: load, compile, assert
    a mesh appears and the STL download fires. This is the only test that sees base-path, worker
-   bundling and wasm-URL regressions — precisely the bugs this stack produces.
+   bundling and wasm-URL regressions — precisely the bugs this stack produces. Pin an uncommon port
+   with `--strictPort` and leave `reuseExistingServer` off: Vite's default 4173 is frequently
+   already in use, and a silent fallback means testing a different application entirely.
 
 Skip component tests and Vitest browser mode at MVP.
 
