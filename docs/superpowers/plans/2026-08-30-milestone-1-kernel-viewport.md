@@ -431,6 +431,18 @@ test('rejects data that is not OFF', () => {
 test('rejects a truncated file', () => {
   expect(() => parseOff('OFF\n4 4 0\n0 0 0\n')).toThrow(/unexpected end/)
 })
+
+test('rejects a face that lists fewer indices than it declares', () => {
+  expect(() => parseOff('OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1\n')).toThrow(
+    /declares 3 vertices but lists 2/,
+  )
+})
+
+test('rejects a face referencing a vertex index that does not exist', () => {
+  expect(() => parseOff('OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 99\n')).toThrow(
+    /invalid vertex index 99/,
+  )
+})
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -502,11 +514,23 @@ export function parseOff(text: string): Mesh {
     const parts = nextLine().split(/\s+/)
     const n = Number(parts[0])
     if (!Number.isInteger(n) || n < 3) throw new Error(`degenerate face on OFF line ${cursor}`)
-    // parts[1..n] are the vertex indices; anything after them is per-face
-    // colour, which we discard.
-    const first = Number(parts[1])
+    if (parts.length < n + 1) {
+      throw new Error(`face on OFF line ${cursor} declares ${n} vertices but lists ${parts.length - 1}`)
+    }
+    // Validate before triangulating: an out-of-range index would otherwise reach
+    // BufferGeometry.setIndex and read out of bounds on the GPU, and NaN would be
+    // silently coerced to 0 by Uint32Array.from.
+    const face: number[] = []
+    for (let k = 1; k <= n; k++) {
+      const index = Number(parts[k])
+      if (!Number.isInteger(index) || index < 0 || index >= vertexCount) {
+        throw new Error(`face on OFF line ${cursor} references invalid vertex index ${parts[k]}`)
+      }
+      face.push(index)
+    }
+    // parts beyond index n are the per-face colour, which we discard.
     for (let k = 1; k <= n - 2; k++) {
-      indices.push(first, Number(parts[1 + k]), Number(parts[2 + k]))
+      indices.push(face[0]!, face[k]!, face[k + 1]!)
     }
   }
 
@@ -525,7 +549,7 @@ export function parseOff(text: string): Mesh {
 pnpm test src/kernel/off
 ```
 
-Expected: all 7 tests PASS.
+Expected: all 9 tests PASS.
 
 - [ ] **Step 5: Commit**
 
