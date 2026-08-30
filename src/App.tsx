@@ -7,6 +7,9 @@ import { Editor } from './editor/Editor'
 import { ParamsPanel } from './editor/ParamsPanel'
 import { Viewport } from './viewer/Viewport'
 import { downloadBlob, MIME } from './export/download'
+import {
+  formatLength, formatVolume, lengthLabel, loadUnits, saveUnits, volumeLabel,
+} from './state/units'
 
 const STARTER = `// A mounting plate. Drag the numbers, or edit freely.
 $fn = 64;
@@ -51,6 +54,7 @@ export function App() {
   const [chatBusy, setChatBusy] = useState(false)
   const [compiles, setCompiles] = useState(0)
   const [fitToken, setFitToken] = useState(0)
+  const [units, setUnits] = useState(loadUnits)
 
   const compiler = useMemo(() => new Compiler(), [])
   useEffect(() => () => compiler.dispose(), [compiler])
@@ -140,9 +144,12 @@ export function App() {
   // The preview's error marks the HUD stale; an export's error must not. A chat
   // failure reaches neither - it says nothing about the geometry.
   const shownError = error ?? exportError
+  // One place that answers "is anything happening", whichever pane started it.
+  const working = busy || chatBusy || exporting !== null
 
   return (
-    <div className="app" data-compiles={compiles}>
+    <div className="app" data-compiles={compiles} data-working={working}>
+      <div className="working" aria-hidden={!working} />
       <section className="pane">
         <div className="editor-pane">
           <div className="editor-host">
@@ -171,16 +178,33 @@ export function App() {
           </button>
         </div>
         <div className="hud">
+          {/* Display only: the model, the source and the exported file stay
+              metric whatever this says. Deliberately not a .tag — a second
+              element whose text contains "mm" resolves the e2e locators to two. */}
+          <button
+            type="button"
+            className="unit-toggle"
+            title="Switch display units. The model itself is always millimetres."
+            onClick={() => {
+              const next = units === 'mm' ? 'in' : 'mm'
+              setUnits(next)
+              saveUnits(next)
+            }}
+          >
+            {units === 'mm' ? 'metric' : 'imperial'}
+          </button>
           {busy && <span className="tag busy">compiling…</span>}
           {!busy && ms !== null && <span className="tag">{ms} ms</span>}
           {stats && (
             <span className={error ? 'stats stale' : 'stats'}>
-              <span className="tag">{stats.size.map((n) => n.toFixed(1)).join(' × ')} mm</span>
+              <span className="tag">
+                {stats.size.map((n) => formatLength(n, units)).join(' × ')} {lengthLabel(units)}
+              </span>
               <span className="tag">{stats.triangles.toLocaleString()} tris</span>
               <span className="tag">
                 {stats.volume === null
                   ? 'not watertight'
-                  : `${(stats.volume / 1000).toFixed(2)} cm³`}
+                  : `${formatVolume(stats.volume, units)} ${volumeLabel(units)}`}
               </span>
             </span>
           )}
@@ -191,6 +215,7 @@ export function App() {
       <section className="pane">
         <Chat
           source={source}
+          units={units}
           onStreamSource={setStreamSource}
           onApply={(next, result) => {
             setSource(next)

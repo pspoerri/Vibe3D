@@ -8,20 +8,24 @@ import { loadKey, saveKey } from '../state/key'
 import { loadSettings, saveSettings } from '../state/settings'
 import { parseCommand, type Command } from './commands'
 import { COMPACT_AT, runCompact, runTurn } from './controller'
-import { stubFences } from './fence'
+import { addUsage, formatTokens, formatUsd, ZERO_SPEND, type Spend } from './cost'
+import { parseMarkdown, type Inline } from './markdown'
 import type { ChatEvent } from './log'
-import { SYSTEM_PROMPT } from './prompt'
+import { systemPromptFor } from './prompt'
 
 const REVOKE_HOME = 'https://openrouter.ai/settings/keys'
 
 export function Chat({
   source,
+  units,
   onStreamSource,
   onApply,
   onExport,
   onBusyChange,
 }: {
   source: string
+  /** Display units. The source stays metric; this is how to READ the user. */
+  units: 'mm' | 'in'
   onStreamSource: (partial: string | null) => void
   onApply: (next: string, result: CompileResult) => void
   onExport: (format: 'binstl' | '3mf') => void
@@ -42,6 +46,7 @@ export function Chat({
   const [models, setModels] = useState<readonly ModelInfo[]>([])
   const [showSettings, setShowSettings] = useState(() => loadKey() === '')
   const [revoke, setRevoke] = useState(REVOKE_HOME)
+  const [spend, setSpend] = useState<Spend>(ZERO_SPEND)
 
   // Refs, not state, wherever a value is read inside an async turn: the turn
   // closes over its render's values, and a stale log would re-send history.
@@ -52,6 +57,7 @@ export function Chat({
   const compactedRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
   const logEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   // The turn gets its OWN compiler. compile() calls cancel() as its first
   // statement, so sharing the preview's instance would let a stray recompile
@@ -65,7 +71,16 @@ export function Chat({
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ block: 'end' })
-  }, [log, thinking])
+  }, [log, thinking, liveText, liveReasoning])
+
+  // Grow to the content, capped in CSS. Reset to auto first or scrollHeight
+  // only ever reports the taller of the two and the box can never shrink back.
+  useEffect(() => {
+    const field = inputRef.current
+    if (!field) return
+    field.style.height = 'auto'
+    field.style.height = `${field.scrollHeight}px`
+  }, [input])
 
   // Finish an OAuth round trip, if this load is the redirect back.
   useEffect(() => {
@@ -83,11 +98,11 @@ export function Chat({
   // the only place a key can be entered, so the catalogue is loaded by the
   // time a turn could need contextLimit for auto-compact.
   useEffect(() => {
-    if (!showSettings) return
+    if (!showSettings && !apiKey) return
     fetchModels(settings.baseUrl)
       .then(setModels)
       .catch(() => setModels([]))
-  }, [showSettings, settings.baseUrl])
+  }, [showSettings, apiKey, settings.baseUrl])
 
   useEffect(() => {
     if (!apiKey) return setRevoke(REVOKE_HOME)
@@ -141,7 +156,7 @@ export function Chat({
     const controller = new AbortController()
     abortRef.current = controller
     const outcome = await runCompact(
-      { log: logRef.current, turn, systemPrompt: SYSTEM_PROMPT, source },
+      { log: logRef.current, turn, systemPrompt: systemPromptFor(units), source },
       {
         stream: (messages, signal) =>
           streamChat(messages, signal, {
@@ -197,7 +212,7 @@ export function Chat({
 
     try {
       const outcome = await runTurn(
-        { userText: text, log: logRef.current, turn, systemPrompt: SYSTEM_PROMPT, source },
+        { userText: text, log: logRef.current, turn, systemPrompt: systemPromptFor(units), source },
         {
           stream: (messages, signal) =>
             streamChat(messages, signal, {
@@ -212,6 +227,9 @@ export function Chat({
           onReasoning: setLiveReasoning,
           onUsage: (usage) => {
             usageRef.current = usage
+            setSpend((current) =>
+              addUsage(current, usage, models.find((m) => m.id === settings.model)?.pricing),
+            )
           },
           now: () => performance.now(),
           newId: () => crypto.randomUUID(),
@@ -268,10 +286,14 @@ export function Chat({
             {/* Reasoning only until real content starts: it is the answer to
                 "why is nothing happening", not part of the reply. */}
             {!liveText && <div className="chat-reasoning">{liveReasoning}</div>}
-            {stubFences(liveText)}
+            <Markdown text={liveText} caret />
           </div>
         ) : (
-          thinking && <div className="chat-note">thinking…</div>
+          thinking && (
+            <div className="chat-note">
+              thinking<span className="caret" />
+            </div>
+          )
         )}
         <div ref={logEndRef} />
       </div>
@@ -285,39 +307,52 @@ export function Chat({
           void send()
         }}
       >
-        <textarea
-          rows={2}
-          value={input}
-          disabled={busy}
-          placeholder="a 40 mm knob with a 6 mm D-shaft…"
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              void send()
-            }
-          }}
-        />
-        {busy ? (
-          <button type="button" onClick={stop}>
-            Stop
-          </button>
-        ) : (
-          <button type="submit" disabled={!input.trim()}>
-            Send
-          </button>
-        )}
+        <div className="chat-input">
+          <textarea
+            ref={inputRef}
+            rows={1}
+            value={input}
+            disabled={busy}
+            placeholder="Describe the part, or a change to it…"
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                void send()
+              }
+            }}
+          />
+          {busy ? (
+            <button type="button" className="chat-send stop" onClick={stop} aria-label="Stop">
+              ■
+            </button>
+          ) : (
+            <button type="submit" className="chat-send" disabled={!input.trim()} aria-label="Send">
+              ↑
+            </button>
+          )}
+        </div>
       </form>
 
-      <div className="chat-settings">
-        <div className="row">
-          <button type="button" onClick={() => setShowSettings((open) => !open)}>
-            {showSettings ? 'Hide settings' : 'Settings'}
-          </button>
-          <span className="chat-hint">{settings.model}</span>
-        </div>
+      <div className="chat-meter">
+        <button type="button" onClick={() => setShowSettings((open) => !open)}>
+          {settings.model}
+        </button>
+        <span className="sep">·</span>
+        <span title="Prompt + completion tokens this session">
+          {formatTokens(spend.prompt + spend.completion)} tok
+        </span>
+        <span className="sep">·</span>
+        {/* Blank rather than a partial figure: usd goes null for the whole
+            session the moment one turn goes unpriced, and a number that has
+            silently stopped counting is worse than none. */}
+        <span title="Spent this session, at the model's list price">
+          {spend.usd === null ? 'cost unknown' : formatUsd(spend.usd)}
+        </span>
+      </div>
 
-        {showSettings && (
+      {showSettings && (
+        <div className="chat-settings">
           <>
             {pkceAvailable() && (
               <div className="row">
@@ -373,9 +408,70 @@ export function Chat({
               cannot set a spend cap — that is a manual step in your OpenRouter settings.
             </p>
           </>
-        )}
-      </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+function Spans({ spans }: { spans: readonly Inline[] }) {
+  return (
+    <>
+      {spans.map((span, i) => {
+        if (span.code) return <code key={i}>{span.text}</code>
+        if (span.strong) return <strong key={i}>{span.text}</strong>
+        if (span.em) return <em key={i}>{span.text}</em>
+        return <span key={i}>{span.text}</span>
+      })}
+    </>
+  )
+}
+
+/**
+ * A reply, rendered. The code block collapses to a chip carrying only its size:
+ * the source is one pane to the left, and repeating forty lines here pushes the
+ * sentence explaining them off screen.
+ */
+function Markdown({ text, caret }: { text: string; caret?: boolean }) {
+  const blocks = useMemo(() => parseMarkdown(text), [text])
+  return (
+    <>
+      {blocks.map((block, i) => {
+        // The caret belongs on the last block only, and never on a chip.
+        const tail = caret && i === blocks.length - 1 && block.kind !== 'code'
+        switch (block.kind) {
+          case 'heading':
+            return (
+              <h4 key={i}>
+                <Spans spans={block.spans} />
+                {tail && <span className="caret" />}
+              </h4>
+            )
+          case 'paragraph':
+            return (
+              <p key={i}>
+                <Spans spans={block.spans} />
+                {tail && <span className="caret" />}
+              </p>
+            )
+          case 'list': {
+            const items = block.items.map((item, j) => (
+              <li key={j}>
+                <Spans spans={item} />
+              </li>
+            ))
+            return block.ordered ? <ol key={i}>{items}</ol> : <ul key={i}>{items}</ul>
+          }
+          case 'code':
+            return (
+              <span key={i} className="chip">
+                <b>{block.lang || 'openscad'}</b>
+                {block.lines} ln
+              </span>
+            )
+        }
+      })}
+    </>
   )
 }
 
@@ -386,25 +482,23 @@ function ChatEventView({ event }: { event: ChatEvent }) {
     case 'assistant':
       return (
         <div className="msg msg-assistant">
-          {/* The source itself is in the editor; repeating it here just pushes
-              the prose that explains it off screen. */}
-          {stubFences(event.text)}
-          {event.stopped && <span className="chat-note"> (stopped)</span>}
+          <Markdown text={event.text} />
+          {event.stopped && <span className="chat-note">stopped</span>}
         </div>
       )
     case 'compile':
       // Raw stderr, exactly what the model was handed — if the loop is
       // repairing against a bad diagnostic, the user should be able to see it.
       return event.ok ? (
-        <div className="chat-note">compiled in {event.ms} ms</div>
+        <span className="chip ok">compiled · {event.ms} ms</span>
       ) : (
         <pre className="chat-stderr">{event.stderr}</pre>
       )
     case 'note':
       return <div className={event.tone === 'error' ? 'chat-note bad' : 'chat-note'}>{event.text}</div>
     case 'clear':
-      return <div className="chat-note">— cleared —</div>
+      return <div className="chat-rule">cleared</div>
     case 'summary':
-      return <div className="chat-note">— compacted —</div>
+      return <div className="chat-rule">compacted</div>
   }
 }

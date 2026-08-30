@@ -27,6 +27,24 @@ async function seedKey(page: Page): Promise<void> {
   await page.addInitScript((key) => {
     window.localStorage.setItem('aimodeller.key', key)
   }, KEY)
+  // The pane loads the catalogue as soon as a key exists, because that is what
+  // prices a turn. No test may reach the real endpoint for it.
+  await page.route('**/api/v1/models', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: [
+          {
+            id: 'google/gemini-3.7-flash',
+            name: 'Gemini 3.7 Flash',
+            context_length: 1048576,
+            pricing: { prompt: '0.00000075', completion: '0.00000375' },
+          },
+        ],
+      }),
+    }),
+  )
 }
 
 const compiles = async (page: Page): Promise<number> =>
@@ -395,4 +413,58 @@ test('the reply text appears in the transcript before the turn settles', async (
 
   await expect(page.locator('.msg-assistant')).toContainText('Making a plate for you.')
   await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible()
+})
+
+test('the session meter reports tokens and what they cost', async ({ page }) => {
+  await seedKey(page)
+  await page.route(CHAT_URL, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: sseBody(fenced('cube([5, 5, 5]);')),
+    }),
+  )
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await expect(page.locator('.chat-meter')).toContainText('0 tok')
+
+  await send(page, 'a cube')
+  await expect(page.locator('.tag', { hasText: '5.0 × 5.0 × 5.0 mm' })).toBeVisible({
+    timeout: 60_000,
+  })
+
+  // sseBody bills 10 prompt + 20 completion at the stubbed catalogue's prices:
+  // 10 * 7.5e-7 + 20 * 3.75e-6 = 0.0000825, which rounds to $0.0001.
+  await expect(page.locator('.chat-meter')).toContainText('30 tok')
+  await expect(page.locator('.chat-meter')).toContainText('$0.0001')
+})
+
+test('the composer grows with a long prompt instead of clipping it', async ({ page }) => {
+  await page.goto('/')
+  await waitForStarter(page)
+
+  const field = page.locator('.chat-form textarea')
+  const oneLine = (await field.boundingBox())?.height ?? 0
+  await field.fill(Array.from({ length: 12 }, (_, i) => `line ${i} of a long prompt`).join('\n'))
+  const many = (await field.boundingBox())?.height ?? 0
+
+  expect(many).toBeGreaterThan(oneLine * 3)
+  // And it shrinks back, which it cannot do if scrollHeight is read without
+  // resetting the height first.
+  await field.fill('short')
+  expect((await field.boundingBox())?.height ?? 0).toBeLessThan(many)
+})
+
+test('display units switch without touching the model or the source', async ({ page }) => {
+  await page.goto('/')
+  await waitForStarter(page)
+
+  await page.getByRole('button', { name: /metric/i }).click()
+  await expect(page.locator('.tag', { hasText: '2.362 × 1.575 × 0.118 in' })).toBeVisible()
+  // The source stays metric: it is what the kernel and the 3MF are written in.
+  await expect(page.locator('.cm-content')).toContainText('plate_x = 60')
+
+  await page.reload()
+  await expect(page.locator('.tag', { hasText: 'in' }).first()).toBeVisible({ timeout: 90_000 })
 })

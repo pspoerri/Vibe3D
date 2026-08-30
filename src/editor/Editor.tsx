@@ -68,7 +68,17 @@ export function Editor({
           editableConf.of(editableExtensions(editableRef.current)),
           // A StreamLanguage only tags tokens; without this nothing styles them.
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-          EditorView.theme({ '&': { height: '100%' }, '.cm-scroller': { fontFamily: 'ui-monospace, monospace' } }),
+          EditorView.theme({
+            '&': { height: '100%' },
+            // Tighter than CodeMirror's default: this pane is read as a whole
+            // part, so lines per screen matters more than comfortable prose
+            // leading, and the model writes 40-line documents.
+            '.cm-scroller': { fontFamily: 'ui-monospace, monospace', lineHeight: '1.38' },
+            '.cm-content': { fontSize: '12.5px' },
+            '.cm-gutters': { fontSize: '11px', background: 'transparent', border: 'none', color: '#a8ada6' },
+            '.cm-activeLine': { background: '#00000006' },
+            '.cm-activeLineGutter': { background: 'transparent', color: '#6a706a' },
+          }),
           EditorView.updateListener.of((update) => {
             if (!update.docChanged) return
             if (update.transactions.some((tr) => tr.annotation(External) === true)) return

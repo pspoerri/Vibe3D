@@ -99,3 +99,23 @@ sign-off, no headings.
 
 Do NOT reproduce, quote or describe the OpenSCAD source. It is attached verbatim on
 every turn; restating it wastes exactly the context this summary is meant to free.`
+
+/**
+ * OpenSCAD source is ALWAYS millimetres — the kernel, the exported 3MF and
+ * every `-D` override are metric, and a part authored in inches would be a
+ * different program. What the display unit changes is how to read the user:
+ * someone working in imperial says "a two inch knob" and means 50.8 mm, and
+ * without this clause the model writes `knob_d = 2;`.
+ */
+export function systemPromptFor(units: 'mm' | 'in'): string {
+  if (units === 'mm') return SYSTEM_PROMPT
+  return `${SYSTEM_PROMPT}
+
+## Units
+
+This user works in inches. Read every unqualified dimension they give you as
+inches, and convert: 1 in = 25.4 mm. The source you write stays in millimetres
+like all OpenSCAD — do not write inch values into it, and do not add a scale
+factor. Where you name a dimension back to the user in prose, give the inch
+figure they asked for, with the millimetre value in brackets.`
+}
