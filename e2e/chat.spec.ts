@@ -39,6 +39,7 @@ async function seedKey(page: Page): Promise<void> {
             id: 'google/gemini-3.7-flash',
             name: 'Gemini 3.7 Flash',
             context_length: 1048576,
+            architecture: { input_modalities: ['text', 'image'] },
             pricing: { prompt: '0.00000075', completion: '0.00000375' },
           },
         ],
