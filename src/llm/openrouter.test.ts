@@ -205,7 +205,7 @@ const CATALOGUE = {
       name: 'Google: Gemini 3.7 Flash',
       created: 1756000000,
       context_length: 1048576,
-      architecture: { modality: 'text+image->text' },
+      architecture: { modality: 'text+image->text', input_modalities: ['text', 'image'] },
       pricing: { prompt: '0.00000075', completion: '0.00000375', image: '0' },
       top_provider: { context_length: null },
     },
@@ -246,13 +246,30 @@ test('keeps aliases and :free, drops :batch and openrouter/*, and memoises', asy
     '~anthropic/claude-sonnet-5',
     'meta-llama/llama-4-scout:free',
   ])
-  // Only the four declared fields survive the parse; pricing passes through whole.
-  expect(Object.keys(models[0] ?? {})).toEqual(['id', 'name', 'context_length', 'pricing'])
+  // Only the declared fields survive the parse; pricing passes through whole.
+  expect(Object.keys(models[0] ?? {})).toEqual([
+    'id',
+    'name',
+    'context_length',
+    'pricing',
+    'vision',
+  ])
   expect(models[0]?.context_length).toBe(1048576)
   expect(models[0]?.pricing.prompt).toBe('0.00000075')
 
   await fetchModels('https://catalogue.example/v1')
   expect(calls).toHaveLength(1)
+})
+
+test('vision is flagged from input_modalities, and absent means unknown not no', async () => {
+  stubFetch(() => new Response(JSON.stringify(CATALOGUE), { status: 200 }))
+  const models = await fetchModels('https://vision.example/v1')
+
+  expect(models[0]?.vision).toBe(true)
+  // The alias entry declares no architecture at all. That is "we cannot tell",
+  // and it must never hide or disable the model — support is per-provider while
+  // OpenRouter load-balances providers, so the flag is a hint either way.
+  expect(models[1]?.vision).toBe(false)
 })
 
 test('degrades to an empty catalogue when data is not an array', async () => {
@@ -273,7 +290,13 @@ test('does not memoise a failed catalogue load', async () => {
 
 test('contextLimit answers 0 for an unknown id', () => {
   const models: readonly ModelInfo[] = [
-    { id: 'a/b', name: 'B', context_length: 8192, pricing: { prompt: '0', completion: '0' } },
+    {
+      id: 'a/b',
+      name: 'B',
+      context_length: 8192,
+      pricing: { prompt: '0', completion: '0' },
+      vision: false,
+    },
   ]
   expect(contextLimit(models, 'a/b')).toBe(8192)
   expect(contextLimit(models, 'nope/nope')).toBe(0)

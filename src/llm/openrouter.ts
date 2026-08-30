@@ -207,6 +207,14 @@ export interface ModelInfo {
   context_length: number
   /** USD per TOKEN, as decimal strings. Multiply by 1e6 to display $/M. */
   pricing: { prompt: string; completion: string }
+  /**
+   * True only where the catalogue explicitly lists image input. False means
+   * "not flagged", NEVER "cannot" — vision support is per-provider while
+   * OpenRouter load-balances providers, so this is a hint in both directions,
+   * and a model served from a custom base URL may not be in the catalogue at
+   * all. Nothing is hidden, disabled or blocked on it.
+   */
+  vision: boolean
 }
 
 /**
@@ -230,17 +238,39 @@ export function fetchModels(baseUrl: string): Promise<readonly ModelInfo[]> {
   return pending
 }
 
+/** What the catalogue actually sends. Every field is a claim, not a fact. */
+interface RawModel {
+  id: string
+  name: string
+  context_length: number
+  pricing: { prompt: string; completion: string }
+  architecture?: { input_modalities?: string[] }
+}
+
 async function loadModels(baseUrl: string): Promise<readonly ModelInfo[]> {
   const response = await fetch(`${baseUrl}/models`)
   const data = ((await response.json()) as { data?: unknown } | null)?.data
-  const models: readonly ModelInfo[] = Array.isArray(data) ? data : []
+  const models: readonly RawModel[] = Array.isArray(data) ? data : []
   return (
     models
       // `openrouter/*` prices itself with the -1 variable-pricing sentinel,
       // which corrupts any sort; `:batch` ids are async duplicates. `:free`
       // stays, and an id may legitimately start with `~` or contain `/`.
       .filter(({ id }) => !id.endsWith(':batch') && !id.startsWith('openrouter/'))
-      .map(({ id, name, context_length, pricing }) => ({ id, name, context_length, pricing }))
+      .map(({ id, name, context_length, pricing, architecture }) => {
+        // Bound first: `Array.isArray(architecture?.input_modalities)` narrows
+        // the property but not `architecture` itself, so the inline form is a
+        // type error. And the isArray check is not ceremony — a bare
+        // `?.includes('image')` on a string field would substring-match.
+        const modalities = architecture?.input_modalities
+        return {
+          id,
+          name,
+          context_length,
+          pricing,
+          vision: Array.isArray(modalities) && modalities.includes('image'),
+        }
+      })
   )
 }
 
