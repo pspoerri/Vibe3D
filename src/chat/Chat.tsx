@@ -42,6 +42,10 @@ export function Chat({
   const [turn, setTurn] = useState(1)
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<readonly string[]>([])
+  // Slots claimed by a normalisation still in flight. Reserved synchronously,
+  // in the event handler, so a second pick cannot claim the same room — and so
+  // sending cannot outrun a decode and push the image onto the NEXT turn.
+  const [pending, setPending] = useState(0)
   const [busy, setBusy] = useState(false)
   const [thinking, setThinking] = useState(false)
   // The reply as it arrives. Held here rather than in the log because the log
@@ -85,20 +89,30 @@ export function Chat({
   const attach = async (picked: readonly File[]) => {
     const images = picked.filter((file) => file.type.startsWith('image/'))
     if (images.length === 0) return
-    const room = MAX_IMAGES - attachments.length
+    // Counting `pending` is what makes `room` — and therefore the note below —
+    // true: without it two picks in a row both measure the same empty tray,
+    // and the second one's overflow is dropped by the cap without a word.
+    const room = MAX_IMAGES - attachments.length - pending
     if (room <= 0) {
       note(`Already at ${MAX_IMAGES} images.`, 'error')
       return
     }
+    const taking = images.slice(0, room)
     // Silently dropping the overflow looks like the paste failed.
-    if (images.length > room) note(`Attached ${room} — ${MAX_IMAGES} images is the limit.`)
+    if (images.length > room) note(`Attaching ${room} — ${MAX_IMAGES} images is the limit.`)
+    setPending((count) => count + taking.length)
     try {
-      const urls = await Promise.all(images.slice(0, room).map(toDataUrl))
-      // Re-capped inside the updater, not just against the closure's `room`:
-      // two picks racing each other both read the same stale length otherwise.
-      setAttachments((current) => [...current, ...urls].slice(0, MAX_IMAGES))
-    } catch {
-      note('That image could not be read.', 'error')
+      // allSettled, not all: one undecodable file must not take the rest of the
+      // batch down with it, which is the whole of a four-image pick.
+      const settled = await Promise.allSettled(taking.map(toDataUrl))
+      const urls = settled.flatMap((one) => (one.status === 'fulfilled' ? [one.value] : []))
+      if (urls.length > 0) setAttachments((current) => [...current, ...urls])
+      const unreadable = taking.length - urls.length
+      if (unreadable > 0) {
+        note(`${unreadable} ${unreadable === 1 ? 'image' : 'images'} could not be read.`, 'error')
+      }
+    } finally {
+      setPending((count) => count - taking.length)
     }
   }
 
@@ -211,6 +225,9 @@ export function Chat({
 
   const send = async () => {
     if (busyRef.current) return
+    // An image still normalising is not in the tray yet, so sending now would
+    // silently move it to the next turn. The button is disabled for this too.
+    if (pending > 0) return
     const text = input.trim()
     if (!text && attachments.length === 0) return
 
@@ -392,8 +409,12 @@ export function Chat({
           />
           <label className="chat-attach" title="Attach images">
             <span aria-hidden="true">▣</span>
+            {/* The label's only content is a decorative glyph, so aria-label is
+                what gives the control a name; the input stays focusable in CSS
+                rather than display:none, or Tab skips it entirely. */}
             <input
               type="file"
+              aria-label="Attach images"
               accept="image/png,image/jpeg,image/webp,image/gif"
               multiple
               disabled={busy}
@@ -412,7 +433,7 @@ export function Chat({
             <button
               type="submit"
               className="chat-send"
-              disabled={!input.trim() && attachments.length === 0}
+              disabled={(!input.trim() && attachments.length === 0) || pending > 0}
               aria-label="Send"
             >
               ↑

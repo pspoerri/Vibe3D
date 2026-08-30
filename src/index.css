@@ -174,14 +174,25 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
 .chat-thumb:hover:not(:disabled) { border-color: #a8256b; }
 .chat-thumb:disabled { opacity: .5; cursor: default; }
 .chat-attach {
+  position: relative;
   flex: none; width: 26px; height: 26px; border-radius: 2px; cursor: pointer;
   border: 1px solid #c8ccc4; background: #fff; color: #414741;
   display: grid; place-items: center; font: 600 12px/1 system-ui, sans-serif;
 }
 .chat-attach:hover { border-color: #b8860b; color: #b8860b; }
 .chat-attach:has(input:disabled) { opacity: .4; cursor: default; }
-/* The control is the label; the input is only the file dialog behind it. */
-.chat-attach input { display: none; }
+/* The input is what takes focus, so the ring has to be drawn on the label that
+   stands in for it. Same treatment as the field's own focus, deliberately. */
+.chat-attach:has(input:focus-visible) {
+  border-color: #b8860b; color: #b8860b; box-shadow: 0 0 0 2px #faf3e0;
+}
+/* The control is the label; the input is only the file dialog behind it — but
+   hidden with clip rather than display:none, which would drop it out of the tab
+   order and make the whole control mouse-only. */
+.chat-attach input {
+  position: absolute; width: 1px; height: 1px; padding: 0; border: 0;
+  clip-path: inset(50%); overflow: hidden; white-space: nowrap;
+}
 
 /* .msg-user is pre-wrap, so the thumbnails need a block of their own or the
    surrounding whitespace becomes visible text between them. */
