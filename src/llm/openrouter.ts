@@ -1,0 +1,246 @@
+import { sseData } from './sse'
+
+export const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1'
+/** One named constant: the catalogue moves and this is the only line to change. */
+export const DEFAULT_MODEL = 'google/gemini-3.7-flash'
+
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant'
+  /**
+   * Always a plain string today. Milestone 4 widens this to
+   * `| Array<{type:'text';text:string} | {type:'image_url';…}>` without
+   * touching a call site.
+   */
+  content: string
+}
+
+export interface Usage {
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+}
+
+export type StreamEvent =
+  | { type: 'delta'; text: string }
+  | { type: 'usage'; usage: Usage }
+  | { type: 'finish'; reason: string }
+
+export class ChatError extends Error {
+  constructor(
+    message: string,
+    /** HTTP status, or null for an in-band error under HTTP 200. */
+    readonly status: number | null,
+    /** error.metadata.error_type. The stable vocabulary — branch on this, never on a code. */
+    readonly errorType: string | null,
+  ) {
+    super(message)
+    this.name = 'ChatError'
+  }
+}
+
+export interface ChatOptions {
+  readonly baseUrl: string
+  readonly apiKey: string
+  readonly model: string
+}
+
+/** JSON.parse that answers null instead of throwing. Every body here is untrusted. */
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * One streamed chunk. Every field is optional because this is network JSON that
+ * nothing validates. `error.code` is `integer` in the OpenAPI and the string
+ * `"server_error"` in the prose example, which is why nothing displays it — the
+ * branchable vocabulary is `metadata.error_type`.
+ */
+interface ChatChunk {
+  choices?: { delta?: { content?: string }; finish_reason?: string | null }[]
+  usage?: Usage
+  error?: { message?: string; code?: number | string; metadata?: { error_type?: string } }
+}
+
+/**
+ * One `data:` payload → the events it carries.
+ *
+ * `choices?.[0]` is guarded because the API really sends `choices: []` frames,
+ * and OpenRouter's own doc snippet (`parsed.choices[0].delta.content`) throws on
+ * them.
+ */
+function readChunk(payload: string): StreamEvent[] {
+  // The one untrusted body that used to bypass parseJson: a non-JSON data:
+  // frame escaped as a bare SyntaxError rather than a ChatError.
+  const chunk = parseJson(payload) as ChatChunk | null
+  if (!chunk) return []
+  if (chunk.error) {
+    throw new ChatError(
+      chunk.error.message ?? 'The model host reported an error.',
+      null,
+      chunk.error.metadata?.error_type ?? null,
+    )
+  }
+
+  const events: StreamEvent[] = []
+  const choice = chunk.choices?.[0]
+  if (choice?.delta?.content) events.push({ type: 'delta', text: choice.delta.content })
+  if (chunk.usage) events.push({ type: 'usage', usage: chunk.usage })
+  if (choice?.finish_reason) events.push({ type: 'finish', reason: choice.finish_reason })
+  return events
+}
+
+/**
+ * POST {baseUrl}/chat/completions.
+ *
+ * The body is `{ model, messages, stream: true }` and nothing else. No
+ * `provider: {require_parameters}` — it filters on request-body parameters we
+ * do not send and can only produce a 503. No `usage: {include:true}` and no
+ * `stream_options` — both are documented no-ops, and usage arrives on the
+ * accounting frame regardless. No `credentials` — the wildcard ACAO carries no
+ * allow-credentials header, so `'include'` would fail CORS.
+ *
+ * Runs to `[DONE]` rather than stopping at the first non-null finish_reason:
+ * that accounting frame repeats finish_reason, and /compact's trigger needs the
+ * usage it carries.
+ *
+ * An AbortError is left to propagate — the caller is the one that aborted.
+ */
+export async function* streamChat(
+  messages: readonly ChatMessage[],
+  signal: AbortSignal,
+  options: ChatOptions,
+): AsyncGenerator<StreamEvent, void, undefined> {
+  const response = await fetch(`${options.baseUrl}/chat/completions`, {
+    method: 'POST',
+    signal,
+    headers: {
+      Authorization: `Bearer ${options.apiKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': location.origin + location.pathname,
+      'X-OpenRouter-Title': 'ai-modeller',
+    },
+    body: JSON.stringify({ model: options.model, messages, stream: true }),
+  })
+
+  // Checked before response.body is touched: a stream:true request that fails
+  // before the stream opens answers with application/json, not SSE, so handing
+  // the body to the SSE reader would throw away the only message there is.
+  if (!response.ok) {
+    const body = await response.text()
+    throw new ChatError(errorMessage(body), response.status, errorTypeOf(body))
+  }
+  if (!response.body) {
+    throw new ChatError('The model host sent no response body.', response.status, null)
+  }
+
+  for await (const payload of sseData(response.body)) yield* readChunk(payload)
+}
+
+/**
+ * Normalises the three structurally incompatible error bodies this API emits.
+ * Always call it on `await res.text()`, never on a bare `res.json()`: one of the
+ * three is `text/plain` and would throw.
+ */
+export function errorMessage(bodyText: string): string {
+  const fallback = bodyText.trim() || 'The request failed with no message.'
+  const body = parseJson(bodyText) as { error?: { name?: string; message?: string } } | null
+  const message = body?.error?.message
+  if (typeof message !== 'string') return fallback
+  if (body?.error?.name !== 'ZodError') return message
+
+  // The ZodError envelope hides a JSON array of issues inside `message`. The raw
+  // array is unreadable to a user; the first issue's own message is the line.
+  const first = (parseJson(message) as { message?: string }[] | null)?.[0]
+  return first?.message ?? 'The request was rejected as invalid.'
+}
+
+function errorTypeOf(bodyText: string): string | null {
+  const body = parseJson(bodyText) as { error?: { metadata?: { error_type?: string } } } | null
+  return body?.error?.metadata?.error_type ?? null
+}
+
+export interface ModelInfo {
+  id: string
+  name: string
+  /**
+   * The TOP-LEVEL field, not top_provider.context_length: that one is null on a
+   * handful of models and lower than the truth on dozens more.
+   */
+  context_length: number
+  /** USD per TOKEN, as decimal strings. Multiply by 1e6 to display $/M. */
+  pricing: { prompt: string; completion: string }
+}
+
+/**
+ * Keyed by baseUrl, lazily. No cache layer beyond this: the endpoint is served
+ * `max-age=300, stale-while-revalidate=3600` and gzips to ~71 KB, so the
+ * browser's own HTTP cache is the cache.
+ */
+const catalogue = new Map<string, Promise<readonly ModelInfo[]>>()
+
+export function fetchModels(baseUrl: string): Promise<readonly ModelInfo[]> {
+  let pending = catalogue.get(baseUrl)
+  if (!pending) {
+    // A failure is not memoised: one blip would otherwise leave the model list
+    // empty until the page is reloaded.
+    pending = loadModels(baseUrl).catch(() => {
+      catalogue.delete(baseUrl)
+      return []
+    })
+    catalogue.set(baseUrl, pending)
+  }
+  return pending
+}
+
+async function loadModels(baseUrl: string): Promise<readonly ModelInfo[]> {
+  const response = await fetch(`${baseUrl}/models`)
+  const data = ((await response.json()) as { data?: unknown } | null)?.data
+  const models: readonly ModelInfo[] = Array.isArray(data) ? data : []
+  return (
+    models
+      // `openrouter/*` prices itself with the -1 variable-pricing sentinel,
+      // which corrupts any sort; `:batch` ids are async duplicates. `:free`
+      // stays, and an id may legitimately start with `~` or contain `/`.
+      .filter(({ id }) => !id.endsWith(':batch') && !id.startsWith('openrouter/'))
+      .map(({ id, name, context_length, pricing }) => ({ id, name, context_length, pricing }))
+  )
+}
+
+/** 0 when the id is unknown. Callers MUST guard `> 0` before dividing. */
+export function contextLimit(models: readonly ModelInfo[], id: string): number {
+  return models.find((model) => model.id === id)?.context_length ?? 0
+}
+
+/**
+ * GET {baseUrl}/key — validates a pasted key at paste time instead of on the
+ * first message. Advisory only, and it never blocks saving: a host that is not
+ * OpenRouter need not serve /key at all, so anything other than a 200 means
+ * "could not validate", never "invalid key".
+ */
+export async function checkKey(
+  baseUrl: string,
+  key: string,
+): Promise<
+  { ok: true; limitRemaining: number | null; isFreeTier: boolean } | { ok: false; message: string }
+> {
+  try {
+    const response = await fetch(`${baseUrl}/key`, { headers: { Authorization: `Bearer ${key}` } })
+    if (!response.ok) return { ok: false, message: 'could not validate' }
+    const data = (
+      (await response.json()) as {
+        data?: { limit_remaining?: number | null; is_free_tier?: boolean }
+      } | null
+    )?.data
+    return {
+      ok: true,
+      limitRemaining: typeof data?.limit_remaining === 'number' ? data.limit_remaining : null,
+      isFreeTier: data?.is_free_tier === true,
+    }
+  } catch {
+    return { ok: false, message: 'could not validate' }
+  }
+}
