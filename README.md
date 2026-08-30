@@ -1,7 +1,7 @@
 # vibe3D
 
 **Vibe 3D Models: Bring your own tokens.**
-Leverages LLM along with OpenSCAD to build your ideas into a 3D Model.
+Leverages your LLM along with OpenSCAD to build your ideas into a 3D Model.
 
 Describe a part. The model writes OpenSCAD, your browser compiles it, and you get a mesh you can
 orbit and export as STL or 3MF. You can also just write the OpenSCAD yourself, or drag the sliders
