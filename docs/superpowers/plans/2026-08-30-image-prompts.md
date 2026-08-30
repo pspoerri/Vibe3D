@@ -478,16 +478,30 @@ test('a repair turn shows the model its image on every attempt', async () => {
 test('a compaction never re-sends the images of the turn it is summarising', async () => {
   const h = harness({ replies: [says('A bracket, 40 mm wide.')] })
   const log: ChatEvent[] = [
-    { id: 'u1', ts: 0, turn: 1, kind: 'user', text: 'like this', images: [IMG] },
-    { id: 'a1', ts: 0, turn: 1, kind: 'assistant', text: says(fenced('cube(3);')) },
+    // Old enough (turn <= 3 - 2) that runCompact finds something to cover.
+    { id: 'u0', ts: 0, turn: 1, kind: 'user', text: 'a box' },
+    { id: 'a0', ts: 0, turn: 1, kind: 'assistant', text: fenced('cube(1);') },
+    // THE POINT: same turn number runCompact is called with, because Chat's
+    // compact() closes over the pre-bump turn. buildWindow reads this as live,
+    // so without `images: false` the image IS in the window and this fails.
+    { id: 'u1', ts: 0, turn: 3, kind: 'user', text: 'like this', images: [IMG] },
+    { id: 'a1', ts: 0, turn: 3, kind: 'assistant', text: fenced('cube(3);') },
   ]
 
-  // turn 3 so there is something older than turn-2 to cover.
   await runCompact({ log, turn: 3, systemPrompt: SYS, source: SRC }, h.deps)
 
   expect(h.windows).toHaveLength(1)
   expect(JSON.stringify(h.windows[0])).not.toContain(IMG)
 })
+```
+
+**The turn numbers are the whole test.** Put the image-bearing event on a turn
+*older* than the compaction turn and it is not live, so `buildWindow` strips the
+image whether or not the flag exists — the test passes against unmodified code
+and asserts nothing. `assistant.text` is a `string`, so it takes `fenced(…)`
+directly, not `says(fenced(…))`.
+
+```
 ```
 
 If `runCompact` is not already imported in this file, add it to the existing `./controller` import. If the `harness` helper's `deps` does not already satisfy `runCompact`'s `Pick<TurnDeps, …>`, pass `h.deps` as-is — `runCompact` takes a subset.
