@@ -1656,7 +1656,9 @@ export const MIME = {
 } as const
 
 export function downloadBlob(data: Uint8Array, filename: string, mime: string): void {
-  const url = URL.createObjectURL(new Blob([data], { type: mime }))
+  // Copy into a fresh ArrayBuffer-backed view: TS 7 will not accept a
+  // Uint8Array<ArrayBufferLike> as a BlobPart directly.
+  const url = URL.createObjectURL(new Blob([new Uint8Array(data)], { type: mime }))
   const anchor = document.createElement('a')
   anchor.href = url
   anchor.download = filename
