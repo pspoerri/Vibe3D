@@ -15,6 +15,7 @@ import { COMPACT_PROMPT } from './prompt'
 
 const SYS = 'You write OpenSCAD.'
 const SRC = 'wall = 2;\ncube([10, 10, wall]);'
+const IMG = 'data:image/jpeg;base64,AAAA'
 const fenced = (body: string, prose = 'Here you go.'): string =>
   `${prose}\n\n\`\`\`openscad\n${body}\n\`\`\``
 
@@ -122,12 +123,17 @@ function harness(options: {
   }
 }
 
-const turnInput = (userText = 'a box', log: ChatEvent[] = []): TurnInput => ({
+const turnInput = (
+  userText = 'a box',
+  log: ChatEvent[] = [],
+  images?: readonly string[],
+): TurnInput => ({
   userText,
   log,
   turn: 1,
   systemPrompt: SYS,
   source: SRC,
+  ...(images ? { images } : {}),
 })
 
 const kinds = (appended: readonly ChatEvent[]): string[] => appended.map((e) => e.kind)
@@ -613,4 +619,38 @@ test('the reply text is pushed as it arrives, not only at the end', async () => 
 
   expect(h.texts.length).toBeGreaterThan(0)
   expect(h.texts.at(-1)).toContain('cube(3);')
+})
+
+test('a repair turn shows the model its image on every attempt', async () => {
+  const h = harness({
+    replies: [says(fenced('cube(')), says(fenced('cube(3);'))],
+    compiles: [failResult('ERROR: one'), okResult()],
+  })
+  await runTurn(turnInput('like this', [], [IMG]), h.deps)
+
+  // The model has to be repairing against what it was actually shown; dropping
+  // the image on the retry changes the problem mid-turn.
+  expect(h.windows).toHaveLength(2)
+  for (const window of h.windows) {
+    expect(JSON.stringify(window)).toContain(IMG)
+  }
+  expect(h.appended[0]).toMatchObject({ kind: 'user', text: 'like this', images: [IMG] })
+})
+
+test('a compaction never re-sends the images of the turn it is summarising', async () => {
+  const h = harness({ replies: [says('A bracket, 40 mm wide.')] })
+  const log: ChatEvent[] = [
+    // Old enough (turn <= 3 - 2) that runCompact finds something to cover.
+    { id: 'u0', ts: 0, turn: 1, kind: 'user', text: 'a box' },
+    { id: 'a0', ts: 0, turn: 1, kind: 'assistant', text: fenced('cube(1);') },
+    // Chat.tsx's compact() closes over the pre-bump turn, so this is the same
+    // turn number runCompact is called with — buildWindow reads it as "live".
+    { id: 'u1', ts: 0, turn: 3, kind: 'user', text: 'like this', images: [IMG] },
+    { id: 'a1', ts: 0, turn: 3, kind: 'assistant', text: fenced('cube(3);') },
+  ]
+
+  await runCompact({ log, turn: 3, systemPrompt: SYS, source: SRC }, h.deps)
+
+  expect(h.windows).toHaveLength(1)
+  expect(JSON.stringify(h.windows[0])).not.toContain(IMG)
 })

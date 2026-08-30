@@ -41,6 +41,8 @@ export interface TurnDeps {
 
 export interface TurnInput {
   readonly userText: string
+  /** Normalised data URLs attached to this message. Live for this turn only. */
+  readonly images?: readonly string[]
   /** The log BEFORE this turn. runTurn appends the user event itself. */
   readonly log: readonly ChatEvent[]
   readonly turn: number
@@ -81,7 +83,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   let lastDraftAt = -Infinity
 
   try {
-    emit({ kind: 'user', text: input.userText })
+    emit({ kind: 'user', text: input.userText, images: input.images })
 
     for (;;) {
       const messages = buildWindow({
@@ -242,6 +244,11 @@ export async function runCompact(
       turn: input.turn,
       systemPrompt: input.systemPrompt,
       source: input.source,
+      // Chat's `compact` closes over the turn that just ran — send() bumps the
+      // turn state but the closure does not see it — so that turn's user event
+      // is still "live" here and its images would be re-billed. Auto-compact
+      // fires unattended at 60% of context, so nobody would see the request.
+      images: false,
     }),
     { role: 'user', content: COMPACT_PROMPT },
   ]
