@@ -52,6 +52,8 @@ interface Harness {
   signals: (AbortSignal | undefined)[]
   appended: ChatEvent[]
   drafts: (string | null)[]
+  texts: string[]
+  reasonings: string[]
   usages: Usage[]
   compiled: string[]
   abort: () => void
@@ -68,6 +70,8 @@ function harness(options: {
   const signals: (AbortSignal | undefined)[] = []
   const appended: ChatEvent[] = []
   const drafts: (string | null)[] = []
+  const texts: string[] = []
+  const reasonings: string[] = []
   const usages: Usage[] = []
   const compiled: string[] = []
   const controller = new AbortController()
@@ -96,6 +100,8 @@ function harness(options: {
     },
     append: (event) => appended.push(event),
     onDraft: (partial) => drafts.push(partial),
+    onText: (text) => texts.push(text),
+    onReasoning: (text) => reasonings.push(text),
     onUsage: (usage) => usages.push(usage),
     now: () => clock,
     newId: () => `id${++ids}`,
@@ -108,6 +114,8 @@ function harness(options: {
     signals,
     appended,
     drafts,
+    texts,
+    reasonings,
     usages,
     compiled,
     abort: () => controller.abort(),
@@ -561,4 +569,43 @@ test('a stop that lands while the compile is in flight spends no attempt', async
   // No compile event: its stderr would be replayed to the model as a diagnostic.
   expect(kinds(h.appended)).toEqual(['user', 'assistant'])
   expect(h.windows).toHaveLength(1)
+})
+
+test('reasoning is streamed out but never logged and never compiled', async () => {
+  // A reasoning model can think for many seconds before its first content
+  // token. Without a reasoning port the UI has nothing at all to show.
+  const h = harness({
+    replies: [
+      {
+        events: [
+          { type: 'reasoning', text: 'The user wants a cube. ' },
+          { type: 'reasoning', text: 'Three millimetres.' },
+          { type: 'delta', text: fenced('cube(3);') },
+          { type: 'finish', reason: 'stop' },
+        ],
+      },
+    ],
+    compiles: [okResult()],
+    tickMs: DRAFT_INTERVAL_MS,
+  })
+  const outcome = await runTurn(turnInput(), h.deps)
+
+  expect(outcome.status).toBe('committed')
+  expect(h.reasonings.at(-1)).toBe('The user wants a cube. Three millimetres.')
+  // It is thinking, not an answer: it must not enter the append-only log, or
+  // buildWindow would ship it back to the model on every later turn.
+  expect(JSON.stringify(h.appended)).not.toContain('The user wants a cube')
+  expect(h.compiled).toEqual(['cube(3);'])
+})
+
+test('the reply text is pushed as it arrives, not only at the end', async () => {
+  const h = harness({
+    replies: [says(fenced('cube(3);'))],
+    compiles: [okResult()],
+    tickMs: DRAFT_INTERVAL_MS,
+  })
+  await runTurn(turnInput(), h.deps)
+
+  expect(h.texts.length).toBeGreaterThan(0)
+  expect(h.texts.at(-1)).toContain('cube(3);')
 })

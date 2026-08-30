@@ -28,6 +28,10 @@ export interface TurnDeps {
   readonly append: (event: ChatEvent) => void
   /** Streamed partial. NEVER compiled, NEVER written into `source`. */
   readonly onDraft: (source: string | null) => void
+  /** The reply so far, for the transcript. Throttled with onDraft. */
+  readonly onText: (text: string) => void
+  /** Reasoning so far, where the model emits it. Never logged, never re-sent. */
+  readonly onReasoning: (text: string) => void
   readonly onUsage: (usage: Usage) => void
   /** Injected so the draft throttle is an assertion rather than a timing hope. */
   readonly now: () => number
@@ -88,18 +92,30 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       })
 
       let text = ''
+      let reasoning = ''
       let finishReason: string | null = null
+
+      const pushProgress = (): void => {
+        if (deps.now() - lastDraftAt < DRAFT_INTERVAL_MS) return
+        lastDraftAt = deps.now()
+        const partial = extractSource(text).source
+        // Never blank the editor mid-stream: prose before the fence has no
+        // source yet, and null there would flash the committed doc.
+        if (partial !== null) deps.onDraft(partial)
+        deps.onText(text)
+        deps.onReasoning(reasoning)
+      }
+
       try {
         for await (const event of deps.stream(messages, deps.signal)) {
           if (event.type === 'delta') {
             text += event.text
-            if (deps.now() - lastDraftAt >= DRAFT_INTERVAL_MS) {
-              const partial = extractSource(text).source
-              // Never blank the editor mid-stream: prose before the fence has
-              // no source yet, and null there would flash the committed doc.
-              if (partial !== null) deps.onDraft(partial)
-              lastDraftAt = deps.now()
-            }
+            pushProgress()
+          } else if (event.type === 'reasoning') {
+            // A reasoning model can think for many seconds before its first
+            // content token. Without this the UI has nothing to show at all.
+            reasoning += event.text
+            pushProgress()
           } else if (event.type === 'usage') {
             deps.onUsage(event.usage)
           } else {
@@ -109,6 +125,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
           }
         }
       } catch (error) {
+        deps.onText(text)
         // Append-only, so what actually arrived is still recorded.
         emit({ kind: 'assistant', text, stopped: true })
         if (isAbort(error)) return { status: 'stopped' }
@@ -119,6 +136,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
 
       const { source: candidate, complete } = extractSource(text)
       deps.onDraft(candidate)
+      deps.onText(text)
       emit({ kind: 'assistant', text })
 
       // A reply with no code block at all answers a question; it is not a

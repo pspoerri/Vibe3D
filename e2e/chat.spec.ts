@@ -151,7 +151,7 @@ test('a failed compile is retried with the verbatim stderr and no second copy of
  * the state the editor's feedback loop corrupts. This patches fetch instead, so
  * a half-finished reply really does sit in the editor mid-turn.
  */
-async function stubProgressiveStream(page: Page): Promise<void> {
+async function stubProgressiveStream(page: Page, frames?: string): Promise<void> {
   await page.addInitScript((chunk) => {
     const realFetch = window.fetch.bind(window)
     window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
@@ -172,7 +172,7 @@ async function stubProgressiveStream(page: Page): Promise<void> {
         new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }),
       )
     }
-  }, `data: ${JSON.stringify({ choices: [{ delta: { content: '```openscad\ncube([3, 3, 3]);' } }] })}\n\n`)
+  }, frames ?? `data: ${JSON.stringify({ choices: [{ delta: { content: '```openscad\ncube([3, 3, 3]);' } }] })}\n\n`)
 }
 
 test('a stopped turn discards the partial and restores the pre-turn document', async ({ page }) => {
@@ -356,4 +356,43 @@ test('the built page carries a CSP that the kernel still compiles under', async 
     ...(await page.evaluate(() => (window as unknown as { __csp?: string[] }).__csp ?? [])),
   )
   expect(violations).toEqual([])
+})
+
+test('reasoning is shown while the model is still thinking', async ({ page }) => {
+  await seedKey(page)
+  // A reasoning model emits no content for seconds. Before this the pane sat
+  // on a static "thinking…" for the whole stream.
+  await stubProgressiveStream(
+    page,
+    `data: ${JSON.stringify({
+      choices: [
+        { delta: { reasoning_details: [{ type: 'reasoning.text', text: 'Sizing the plate' }] } },
+      ],
+    })}\n\n`,
+  )
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await send(page, 'a plate')
+
+  await expect(page.locator('.chat-reasoning')).toContainText('Sizing the plate')
+  // Still mid-turn: the document is untouched and Stop is live.
+  await expect(page.locator('.cm-content')).toContainText('plate_x = 60')
+  await page.getByRole('button', { name: 'Stop' }).click()
+  await expect(page.locator('.chat-reasoning')).toHaveCount(0)
+})
+
+test('the reply text appears in the transcript before the turn settles', async ({ page }) => {
+  await seedKey(page)
+  await stubProgressiveStream(
+    page,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Making a plate for you.' } }] })}\n\n`,
+  )
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await send(page, 'a plate')
+
+  await expect(page.locator('.msg-assistant')).toContainText('Making a plate for you.')
+  await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible()
 })

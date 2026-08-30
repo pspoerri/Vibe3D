@@ -72,6 +72,12 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
   max-height: 180px; overflow: auto;
 }
 .chat-empty { color: #6a706a; font-size: 12px; }
+/* Chain-of-thought while the model has produced no answer yet. Dimmed and
+   capped: it is a progress indicator, not content. */
+.chat-reasoning {
+  font: 11px/1.5 ui-monospace, monospace; color: #8a908a; white-space: pre-wrap;
+  max-height: 8em; overflow: hidden; border-left: 2px solid #c8ccc4; padding-left: 8px;
+}
 
 .chat-form { display: flex; gap: 6px; padding: 10px; border-top: 1px solid #c8ccc4; }
 .chat-form textarea {

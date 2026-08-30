@@ -310,3 +310,35 @@ test('checkKey is advisory: a non-200 and a network failure both say so, neither
     message: 'could not validate',
   })
 })
+
+/** An SSE body from chunk objects, matching the shape STREAM spells out. */
+const sse = (chunks: unknown[]): string =>
+  chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n'
+
+test('reasoning arrives as reasoning_details on a streaming delta', async () => {
+  // Streaming uses reasoning_details[]; the bare `reasoning` string is the
+  // non-streaming shape, which several providers send on the delta anyway.
+  stubFetch(
+    () =>
+      new Response(
+        sse([
+          { choices: [{ delta: { reasoning_details: [{ type: 'reasoning.text', text: 'Let me ' }] } }] },
+          { choices: [{ delta: { reasoning: 'think.' } }] },
+          { choices: [{ delta: { content: 'Done.' }, finish_reason: 'stop' }] },
+        ]),
+        { status: 200 },
+      ),
+  )
+
+  expect(await drain(streamChat(MESSAGES, signal(), OPTIONS))).toEqual([
+    { type: 'reasoning', text: 'Let me ' },
+    { type: 'reasoning', text: 'think.' },
+    { type: 'delta', text: 'Done.' },
+    { type: 'finish', reason: 'stop' },
+  ])
+})
+
+test('a delta carrying neither content nor reasoning yields nothing', async () => {
+  stubFetch(() => new Response(sse([{ choices: [{ delta: {} }] }]), { status: 200 }))
+  expect(await drain(streamChat(MESSAGES, signal(), OPTIONS))).toEqual([])
+})

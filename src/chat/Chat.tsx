@@ -32,6 +32,10 @@ export function Chat({
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
   const [thinking, setThinking] = useState(false)
+  // The reply as it arrives. Held here rather than in the log because the log
+  // is append-only and this is superseded the moment the turn settles.
+  const [liveText, setLiveText] = useState('')
+  const [liveReasoning, setLiveReasoning] = useState('')
   const [chatError, setChatError] = useState<string | null>(null)
   const [settings, setSettings] = useState(loadSettings)
   const [apiKey, setApiKey] = useState(loadKey)
@@ -203,10 +207,9 @@ export function Chat({
             }),
           compile: (candidate) => compiler.compile(candidate),
           append,
-          onDraft: (partial) => {
-            if (partial !== null) setThinking(false)
-            onStreamSource(partial)
-          },
+          onDraft: onStreamSource,
+          onText: setLiveText,
+          onReasoning: setLiveReasoning,
           onUsage: (usage) => {
             usageRef.current = usage
           },
@@ -239,6 +242,8 @@ export function Chat({
     } finally {
       onStreamSource(null)
       setThinking(false)
+      setLiveText('')
+      setLiveReasoning('')
       busyRef.current = false
       setBusy(false)
       onBusyChange(false)
@@ -258,7 +263,16 @@ export function Chat({
         {log.map((event) => (
           <ChatEventView key={event.id} event={event} />
         ))}
-        {thinking && <div className="chat-note">thinking…</div>}
+        {thinking && (liveText || liveReasoning) ? (
+          <div className="msg msg-assistant">
+            {/* Reasoning only until real content starts: it is the answer to
+                "why is nothing happening", not part of the reply. */}
+            {!liveText && <div className="chat-reasoning">{liveReasoning}</div>}
+            {stubFences(liveText)}
+          </div>
+        ) : (
+          thinking && <div className="chat-note">thinking…</div>
+        )}
         <div ref={logEndRef} />
       </div>
 
