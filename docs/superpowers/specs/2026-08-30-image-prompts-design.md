@@ -131,6 +131,16 @@ Consequences, all intended:
 - An image-only message emits no empty text part. Anthropic and Google both 400 on an empty
   content block — the same hazard the empty-assistant guard at `log.ts:87` exists for. Do **not**
   add a symmetric empty-guard to the user arm, or an image-only message vanishes from the window.
+- **An image-only message must be dropped once it is no longer live.** §5 deliberately allows a
+  message with images and no words, so the log holds `{kind:'user', text:''}` forever. That is
+  correct for the live turn, which sends an images-only parts array. From the next turn on the
+  degraded branch has nothing left to send — the words that would have survived were never there —
+  and pushing `{role:'user', content:''}` is exactly the empty content block the point above
+  forbids, poisoning every later request of the session and every `runCompact` window with it. The
+  guard therefore belongs **inside** the degraded branch, `if (event.text === '') break` after the
+  `!attached?.length` test — never ahead of it, which is the vanishing bug the point above rules
+  out. Both halves of this reasoning are about the same 400; only the live turn was reasoned about
+  when this section was first written.
 
 ## 5. Composer and transcript — `src/chat/Chat.tsx`
 
