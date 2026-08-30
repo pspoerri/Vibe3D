@@ -3,9 +3,11 @@ import type { CompileRequest, CompileResponse, ExportFormat } from './protocol'
 
 export type { ExportFormat }
 
+// stderr is the cleaned form for display; stderrRaw is verbatim kernel
+// stderr, untouched — the form Milestone 2 feeds back to the model.
 export type CompileResult =
-  | { ok: true; data: Uint8Array; stderr: string; ms: number }
-  | { ok: false; stderr: string; ms: number; cancelled?: boolean }
+  | { ok: true; data: Uint8Array; stderr: string; stderrRaw: string; ms: number }
+  | { ok: false; stderr: string; stderrRaw: string; ms: number; cancelled?: boolean }
 
 const DEFAULT_TIMEOUT_MS = 60_000
 
@@ -42,10 +44,10 @@ export class Compiler {
         resolve(result)
       }
 
-      const timer = setTimeout(
-        () => finish({ ok: false, stderr: `Compile timed out after ${timeoutMs / 1000}s.`, ms: timeoutMs }),
-        timeoutMs,
-      )
+      const timer = setTimeout(() => {
+        const stderr = `Compile timed out after ${timeoutMs / 1000}s.`
+        finish({ ok: false, stderr, stderrRaw: stderr, ms: timeoutMs })
+      }, timeoutMs)
       // Assigned after `timer` exists — finish() closes over it.
       this.#finish = finish
 
@@ -54,17 +56,25 @@ export class Compiler {
         const stderr = stripKernelNoise(message.stderr)
         finish(
           message.type === 'ok'
-            ? { ok: true, data: message.data, stderr, ms: message.ms }
-            : { ok: false, stderr: stderr || 'Compile failed with no diagnostics.', ms: message.ms },
+            ? { ok: true, data: message.data, stderr, stderrRaw: message.stderr, ms: message.ms }
+            : {
+                ok: false,
+                stderr: stderr || 'Compile failed with no diagnostics.',
+                stderrRaw: message.stderr,
+                ms: message.ms,
+              },
         )
       }
 
-      worker.onerror = (event) =>
+      worker.onerror = (event) => {
+        const raw = event.message ?? ''
         finish({
           ok: false,
-          stderr: stripKernelNoise(event.message ?? '') || 'Kernel worker crashed.',
+          stderr: stripKernelNoise(raw) || 'Kernel worker crashed.',
+          stderrRaw: raw,
           ms: Math.round(performance.now() - this.#started),
         })
+      }
 
       worker.postMessage({ source, format } satisfies CompileRequest)
     })
@@ -76,6 +86,7 @@ export class Compiler {
       ok: false,
       cancelled: true,
       stderr: 'Compile cancelled.',
+      stderrRaw: 'Compile cancelled.',
       ms: Math.round(performance.now() - this.#started),
     })
     // finish() already terminated the worker; this covers the idle case.

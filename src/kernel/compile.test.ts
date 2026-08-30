@@ -87,3 +87,34 @@ test('cancel() and dispose() on an idle Compiler are harmless no-ops', () => {
   expect(() => compiler.dispose()).not.toThrow()
   expect(FakeWorker.instances).toHaveLength(0)
 })
+
+test('stderrRaw carries the verbatim kernel stderr; stderr is cleaned', async () => {
+  const compiler = new Compiler()
+  try {
+    const result = compiler.compile('a')
+    const worker = FakeWorker.instances[0]
+    if (!worker) throw new Error('expected a worker to be constructed')
+
+    const rawStderr = 'Could not initialize localization.\nECHO: a real warning\n'
+    worker.onmessage?.({
+      data: { type: 'ok', data: new Uint8Array(), stderr: rawStderr, ms: 1 },
+    } as MessageEvent)
+
+    // Fail fast rather than hang if this regresses to waiting out the
+    // (real, 60s-by-default) compile timeout.
+    const guard = new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => reject(new Error('compile did not settle promptly')), 200)
+      timer.unref()
+    })
+
+    const settled = await Promise.race([result, guard])
+
+    expect(settled.ok).toBe(true)
+    expect(settled.stderrRaw).toBe(rawStderr)
+    expect(settled.stderrRaw).toContain('Could not initialize localization')
+    expect(settled.stderr).not.toContain('Could not initialize localization')
+    expect(settled.stderr).toContain('a real warning')
+  } finally {
+    compiler.dispose()
+  }
+})
