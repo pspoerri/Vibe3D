@@ -30,7 +30,11 @@ test('one to three hashes are all the same heading', () => {
 test('a fence keeps its language and its line count but never its body', () => {
   const reply = 'Here is a plate.\n\n```openscad\nwall = 2;\ncube([10, 10, wall]);\n```\n\nDrag it.'
   const blocks = parseMarkdown(reply)
-  expect(blocks).toEqual([p('Here is a plate.'), { kind: 'code', lang: 'openscad', lines: 2 }, p('Drag it.')])
+  expect(blocks).toEqual([
+    p('Here is a plate.'),
+    { kind: 'code', lang: 'openscad', lines: 2 },
+    p('Drag it.'),
+  ])
   // The point of the module: the source is already in the editor beside the
   // chat, so a copy of it here only pushes the prose off screen.
   expect(JSON.stringify(blocks)).not.toContain('cube')
@@ -69,7 +73,10 @@ test('a list interrupts a paragraph with no blank line before it', () => {
 
 test('emphasis spans a soft newline', () => {
   expect(parseMarkdown('a **bold\nspanning** b')).toEqual([
-    { kind: 'paragraph', spans: [{ text: 'a ' }, { text: 'bold spanning', strong: true }, { text: ' b' }] },
+    {
+      kind: 'paragraph',
+      spans: [{ text: 'a ' }, { text: 'bold spanning', strong: true }, { text: ' b' }],
+    },
   ])
   expect(parseMarkdown('*em*')).toEqual([{ kind: 'paragraph', spans: [{ text: 'em', em: true }] }])
 })
@@ -82,7 +89,10 @@ test('an unmatched or arithmetic asterisk stays literal', () => {
 
 test('inline code is verbatim, asterisks included', () => {
   expect(parseMarkdown('use `size * 2` here')).toEqual([
-    { kind: 'paragraph', spans: [{ text: 'use ' }, { text: 'size * 2', code: true }, { text: ' here' }] },
+    {
+      kind: 'paragraph',
+      spans: [{ text: 'use ' }, { text: 'size * 2', code: true }, { text: ' here' }],
+    },
   ])
 })
 
@@ -111,27 +121,8 @@ cube([20, 30, wall]);
 
 Drag the slider to try 3 mm.`
 
-/**
- * The prefix sweep, the same shape as fence.test.ts. parseMarkdown runs on
- * every streamed frame, so it always sees a prefix: it must never throw, and no
- * block it has already handed the reader may be lost or rewritten by a longer
- * prefix. Every block but the last is asserted identical, content included.
- *
- * The last one is excluded because it is the line still arriving, and that line
- * is genuinely ambiguous until its next character lands: '-' is prose, '- ' is
- * the next bullet of the list above it, and no parser can tell which one is
- * coming. Confining that to the tail is the whole property — it is what stops
- * the pane reflowing text the reader is in the middle of.
- */
-test('prefix sweep: no frame throws and no settled block ever changes', () => {
-  let prev: Block[] = []
-  for (let i = 0; i <= REPLY.length; i++) {
-    const blocks = parseMarkdown(REPLY.slice(0, i))
-    const settled = Math.max(Math.min(prev.length, blocks.length) - 1, 0)
-    expect(blocks.slice(0, settled), `at prefix length ${i}`).toEqual(prev.slice(0, settled))
-    prev = blocks
-  }
-  expect(prev).toEqual([
+test('parses a whole reply into the blocks the pane renders', () => {
+  expect(parseMarkdown(REPLY)).toEqual([
     { kind: 'heading', spans: [{ text: 'Plate' }] },
     {
       kind: 'paragraph',
@@ -156,8 +147,56 @@ test('prefix sweep: no frame throws and no settled block ever changes', () => {
   ])
 })
 
+test('a bullet arriving mid-frame is never shown as prose', () => {
+  // The frame between '\n' and '- ': rendering the bare marker as a paragraph
+  // and unrendering it a frame later is a visible twitch at 10 Hz.
+  expect(parseMarkdown('- one\n-')).toEqual(parseMarkdown('- one'))
+  expect(parseMarkdown('- one\n- ').at(-1)).toEqual({
+    kind: 'list',
+    ordered: false,
+    items: [[{ text: 'one' }], []],
+  })
+})
+
+/**
+ * The prefix sweep, the same shape as fence.test.ts. parseMarkdown runs on
+ * every streamed frame, so it always sees a prefix: it must never throw, and no
+ * block it has already handed the reader may be lost or rewritten by a longer
+ * prefix. Every block but the last is asserted identical, content included.
+ *
+ * The last one is excluded because it is the line still arriving, and that line
+ * stays ambiguous until its next character lands: in '- a\n1. b' the '1' is a
+ * paragraph and the '1.' is the list's second item, and no parser can know
+ * which is coming. Confining every such change to the tail is the property —
+ * it is what stops the pane reflowing text the reader is in the middle of.
+ */
+const SWEEP: Record<string, string> = {
+  'the whole reply': REPLY,
+  'list under a paragraph': 'Options:\n- one\n- two',
+  'ordered marker under a bullet': '- one\n1. two',
+  'unclosed fence': 'Sure:\n```openscad\ncube([20, 30, 2]);',
+  'two fences': '```openscad\nx\n```\nAnd a lid:\n```\ny\n```',
+  'headings and emphasis': '# One\ntext\n### Three\nmore *text* here',
+  crlf: REPLY.replaceAll('\n', '\r\n'),
+  'no markup at all': 'It already does that — nothing to change.',
+}
+
+for (const [name, reply] of Object.entries(SWEEP)) {
+  test(`prefix sweep: ${name}`, () => {
+    let prev: Block[] = []
+    for (let i = 0; i <= reply.length; i++) {
+      const blocks = parseMarkdown(reply.slice(0, i))
+      const settled = Math.max(Math.min(prev.length, blocks.length) - 1, 0)
+      expect(blocks.slice(0, settled), `at prefix length ${i}`).toEqual(prev.slice(0, settled))
+      prev = blocks
+    }
+  })
+}
+
 test('a long reply parses far inside a 10 Hz frame budget', () => {
-  const long = Array.from({ length: 200 }, (_, i) => REPLY.replace('Plate', `Plate ${i}`)).join('\n\n')
+  const long = Array.from({ length: 200 }, (_, i) => REPLY.replace('Plate', `Plate ${i}`)).join(
+    '\n\n',
+  )
   const start = Date.now()
   for (let i = 0; i < 10; i++) parseMarkdown(long)
   // 10 frames of a 40 KB reply, against a 100 ms per-frame budget.

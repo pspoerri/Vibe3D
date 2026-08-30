@@ -25,7 +25,7 @@ const fenced = (source: string, prose = 'Here is the part.') =>
 
 async function seedKey(page: Page): Promise<void> {
   await page.addInitScript((key) => {
-    window.localStorage.setItem('aimodeller.key', key)
+    window.localStorage.setItem('vibe3d.key', key)
   }, KEY)
   // The pane loads the catalogue as soon as a key exists, because that is what
   // prices a turn. No test may reach the real endpoint for it.

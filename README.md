@@ -1,24 +1,38 @@
-# ai-modeller
+# vibe3D
 
-A browser-only 3D modelling tool. Describe a part, an LLM writes OpenSCAD, the browser compiles
-it, and you export STL or 3MF. You can also just write the OpenSCAD yourself, or drag the sliders
-the source's own parameters produce. There is no backend.
+**Vibe 3D Models: Bring your own tokens.**
+Leverages LLM along with OpenSCAD to build your ideas into a 3D Model.
+
+Describe a part. The model writes OpenSCAD, your browser compiles it, and you get a mesh you can
+orbit and export as STL or 3MF. You can also just write the OpenSCAD yourself, or drag the sliders
+that the source's own parameters produce — those cost nothing at all.
+
+OpenSCAD is the prompting language on purpose: it has roughly 25× the public corpus of any
+alternative, so a model writes it fluently and zero-shot, and it is code you can read, edit and
+diff rather than a mesh you can only accept or reject.
+
+Everything runs in the browser. There is no backend — the kernel is OpenSCAD compiled to
+WebAssembly, the renderer is three.js, and the only thing that leaves your machine is the chat
+request to the model host you configured.
+
+**Live: <https://pspoerri.github.io/vibe3d/>**
 
 Design: [docs/design.md](docs/design.md) · Plans: [docs/superpowers/plans](docs/superpowers/plans)
 
-## Your API key
+## Bring your own tokens
 
-The model runs on [OpenRouter](https://openrouter.ai), with your key. Two ways to provide it:
+The model runs on [OpenRouter](https://openrouter.ai), with your key. Two ways to give it one:
 
 - **Connect OpenRouter** runs an OAuth PKCE flow and mints a key scoped to this app, which you
   can revoke without touching the rest of your account.
 - **Paste a key** works too, including keys for other OpenAI-compatible hosts — change the base
   URL and the model id and nothing else needs to change.
 
-The key is stored in this browser's `localStorage` under `aimodeller.key`, on its own, and it is
-sent to exactly one place: the model host you configured. Revoke it any time at
+The key is stored in this browser's `localStorage` under `vibe3d.key`, on its own, and it is sent
+to exactly one place: the model host you configured. Revoke it any time at
 <https://openrouter.ai/settings/keys>; the settings panel links to the specific key. **This app
-cannot set a spend cap** — that is a manual step in your OpenRouter settings.
+cannot set a spend cap** — that is a manual step in your OpenRouter settings. The chat footer
+shows what the session has cost so far, at the model's list price.
 
 Any script running on the page could read the key; that is inherent to browser storage, not a
 choice this app made. The mitigation is a strict Content-Security-Policy whose `connect-src`
@@ -26,6 +40,12 @@ allows only OpenRouter, plus keeping the dependency list short.
 
 One honest note about **Stop**: aborting the request stops billing on OpenAI, Anthropic, DeepSeek
 and xAI, but not on Google, Groq or Mistral, which bill the whole completion once it starts.
+
+## Units
+
+The source, the kernel and the exported file are always millimetres — that is what OpenSCAD
+speaks. The metric/imperial toggle changes the readout, and it tells the model how to read *you*:
+in imperial, "a two inch knob" means 50.8 mm in the source it writes.
 
 ## Licensing
 

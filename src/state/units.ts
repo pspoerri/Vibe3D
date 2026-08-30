@@ -10,11 +10,13 @@ const MM_PER_IN = 25.4
 /** mm³ per in³ — 25.4³, spelled out so it is checkable by eye. */
 const MM3_PER_IN3 = MM_PER_IN * MM_PER_IN * MM_PER_IN
 
-const RECORD = 'aimodeller.units'
+const RECORD = 'vibe3d.units'
+/** ponytail: the pre-rename record. Delete once no browser can still hold it. */
+const LEGACY = 'aimodeller.units'
 
 export function loadUnits(): Units {
   try {
-    return localStorage.getItem(RECORD) === 'in' ? 'in' : 'mm'
+    return (localStorage.getItem(RECORD) ?? localStorage.getItem(LEGACY)) === 'in' ? 'in' : 'mm'
   } catch {
     return 'mm'
   }

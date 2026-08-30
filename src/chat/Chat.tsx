@@ -403,7 +403,7 @@ export function Chat({
               />
             </label>
             <p className="chat-hint">
-              The key is stored in this browser only, under <code>aimodeller.key</code>. Revoke it
+              The key is stored in this browser only, under <code>vibe3d.key</code>. Revoke it
               at <a href={revoke} target="_blank" rel="noreferrer">openrouter.ai</a>. This app
               cannot set a spend cap — that is a manual step in your OpenRouter settings.
             </p>

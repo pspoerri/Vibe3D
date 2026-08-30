@@ -1,7 +1,7 @@
 import { DEFAULT_BASE_URL, errorMessage } from './openrouter'
 
 /** Dies with the tab, and survives the cross-origin round trip. See startPkce. */
-const VERIFIER_KEY = 'aimodeller.pkce'
+const VERIFIER_KEY = 'vibe3d.pkce'
 
 function base64url(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes))

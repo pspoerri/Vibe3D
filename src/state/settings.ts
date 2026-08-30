@@ -15,7 +15,9 @@ export const DEFAULT_SETTINGS: PortableSettings = {
   model: DEFAULT_MODEL,
 }
 
-const RECORD = 'aimodeller.settings'
+const RECORD = 'vibe3d.settings'
+/** ponytail: the pre-rename record. Delete once no browser can still hold it. */
+const LEGACY = 'aimodeller.settings'
 
 /**
  * Never throws. A corrupt blob and a browser blocking site data both throw from
@@ -24,7 +26,8 @@ const RECORD = 'aimodeller.settings'
 export function loadSettings(): PortableSettings {
   let stored: Partial<PortableSettings> | null = null
   try {
-    stored = JSON.parse(localStorage.getItem(RECORD) ?? 'null') as Partial<PortableSettings>
+    const raw = localStorage.getItem(RECORD) ?? localStorage.getItem(LEGACY)
+    stored = JSON.parse(raw ?? 'null') as Partial<PortableSettings>
   } catch {
     // Falls through to the defaults below rather than returning DEFAULT_SETTINGS
     // itself, so no caller can mutate the constant every later reader sees.
