@@ -199,9 +199,19 @@ const texts = (messages: readonly ChatMessage[]): string[] => messages.map((m) =
 
 Add `import type { ChatMessage } from '../llm/openrouter'` at the top.
 
-Then replace the two existing assertions that do string work on `m.content` with `texts(...)`:
-- in `'a failed compile reaches the model only for the live turn'` (~line 176), `const contents = win(log, 3).map((m) => m.content)` becomes `const contents = texts(win(log, 3))`.
-- in `'the source text appears exactly once, in a fenced block'` (~line 181), `.map((m) => m.content).join('\n')` becomes `texts(...).join('\n')`.
+Then apply one mechanical rule across the whole file: **every** `win(…).map((m) => m.content)`
+becomes `texts(win(…))`. That is ten call sites — at lines 75, 93, 116, 131, 142, 162, 175, 181,
+187 and 197 before any edits. Flattening a plain string returns that string, so every existing
+`toEqual([SYS, …])` and `expect.stringContaining(SRC)` assertion still passes unchanged.
+
+Two of those are hard type errors once `content` is a union and will fail the build if missed —
+`contents.filter((c) => c.startsWith('ERROR:'))` at lines 162 and 175. The rest are correctness
+insurance for when an image is present.
+
+**Leave these four alone**, they are a different shape and are still correct:
+`messages[1]?.content` at lines 64 and 230, and `messages.some((m) => m.content === …)` at lines
+211 and 223. In particular do **not** flatten line 211 — it asserts no message has empty content,
+and an image-only message legitimately flattens to `''`.
 
 Now the new tests:
 
