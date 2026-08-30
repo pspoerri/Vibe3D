@@ -104,7 +104,7 @@ export function App() {
   return (
     <div className="app">
       <section className="pane">
-        <Editor value={source} onChange={setSource} />
+        <Editor value={source} onChange={setSource} editable />
       </section>
       <section className="pane view">
         <Viewport mesh={mesh} />
