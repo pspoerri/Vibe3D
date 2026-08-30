@@ -1,4 +1,4 @@
-import { createStore, get, set } from 'idb-keyval'
+import { createStore, get, getMany, setMany } from 'idb-keyval'
 
 /**
  * A named database rather than idb-keyval's default `keyval-store`, which is
@@ -26,9 +26,22 @@ export async function loadSession(): Promise<unknown> {
   }
 }
 
-export async function saveSession(session: unknown): Promise<void> {
+/**
+ * Both records in ONE transaction. Written separately, a quota failure or a
+ * crash between the two puts could land the newer source beside a stale
+ * session — and the stale one revives cleanly, so the newer source would be
+ * discarded in silence. setMany is atomic: if one pair cannot be written,
+ * neither is.
+ */
+export async function saveSession(session: unknown, source: string): Promise<void> {
   try {
-    await set(RECORD, session, store)
+    await setMany(
+      [
+        [RECORD, session],
+        [SOURCE_RECORD, source],
+      ],
+      store,
+    )
   } catch {
     // Private mode, a full quota, or an evicted store. The caller has nothing
     // useful to do about it and the session in memory is still intact.
@@ -60,19 +73,24 @@ export async function persistRequested(): Promise<boolean> {
  * revive falls back to. Losing the document LIST is an inconvenience; losing
  * the last source is losing the work.
  */
-export async function saveLastSource(source: string): Promise<void> {
-  try {
-    await set(SOURCE_RECORD, source, store)
-  } catch {
-    // Same as saveSession: nothing useful to do, and memory is still intact.
-  }
-}
-
 export async function loadLastSource(): Promise<string | null> {
   try {
     const source = await get(SOURCE_RECORD, store)
     return typeof source === 'string' && source.trim() !== '' ? source : null
   } catch {
     return null
+  }
+}
+
+/** Both records at once, so boot cannot read a torn pair. */
+export async function loadAll(): Promise<{ session: unknown; lastSource: string | null }> {
+  try {
+    const [session, source] = await getMany([RECORD, SOURCE_RECORD], store)
+    return {
+      session,
+      lastSource: typeof source === 'string' && source.trim() !== '' ? source : null,
+    }
+  } catch {
+    return { session: undefined, lastSource: null }
   }
 }

@@ -14,6 +14,7 @@ import {
   updateSource,
   versionFamily,
   versionNumber,
+  versionNumbers,
   type Session,
 } from './documents'
 
@@ -235,20 +236,20 @@ test('two documents never end up with the same name', () => {
 
 test('only the first prompt names a document, and never over a chosen title', () => {
   const fresh: Session = { docs: [newDoc('Untitled', '', 'a', 1)], currentId: 'a' }
-  const named = nameFromFirstPrompt(fresh, 'a hex bolt', 2)
+  const named = nameFromFirstPrompt(fresh, 'a hex bolt')
   expect(currentDoc(named).name).toBe('Hex bolt')
 
   // A name merely derived from the source is a placeholder, so the first prompt
   // replaces it — that is the common case, since the starter is source-named.
   const fromSource = createSession(STARTER, 'z', 1)
   expect(currentDoc(fromSource).name).toBe('A mounting plate')
-  expect(currentDoc(nameFromFirstPrompt(fromSource, 'a knurled knob', 2)).name).toBe('Knurled knob')
+  expect(currentDoc(nameFromFirstPrompt(fromSource, 'a knurled knob')).name).toBe('Knurled knob')
 
   // The second prompt is an edit, not a description of the part.
-  expect(nameFromFirstPrompt(named, 'make it 2 mm taller', 3)).toBe(named)
+  expect(nameFromFirstPrompt(named, 'make it 2 mm taller')).toBe(named)
   // And a title the user typed is theirs.
   const mine = renameDoc(fresh, 'a', 'My bolt')
-  expect(nameFromFirstPrompt(mine, 'a hex bolt', 4)).toBe(mine)
+  expect(nameFromFirstPrompt(mine, 'a hex bolt')).toBe(mine)
 })
 
 test('a new version is a document that remembers where it came from', () => {
@@ -256,7 +257,10 @@ test('a new version is a document that remembers where it came from', () => {
   expect(forked.currentId).toBe('b2')
   expect(forked.docs).toHaveLength(4)
   const copy = currentDoc(forked)
-  expect(copy).toMatchObject({ source: 'cube(2);', name: 'B', parentId: 'b', createdAt: 500 })
+  // A distinct name: three rows all reading "B" is the failure the list exists
+  // to prevent, and the user deletes the wrong one.
+  expect(copy).toMatchObject({ source: 'cube(2);', name: 'B 2', parentId: 'b', createdAt: 500 })
+  expect(copy.named).toBeUndefined()
   // The original is untouched, which is the whole point of keeping versions.
   expect(forked.docs[1]).toEqual(three().docs[1])
 })
@@ -290,4 +294,93 @@ test('a lineage that outlived its parent, or points at itself, still resolves', 
   }
   expect(() => versionFamily(cyclic, 'x')).not.toThrow()
   expect(versionFamily(cyclic, 'x').map((d) => d.id)).toEqual(['x'])
+})
+
+test('two rows sharing an id cannot both survive revive', () => {
+  // Duplicates destroy documents twice over: editing the first overwrites the
+  // second's source, and deleting either removes BOTH, emptying the list and
+  // replacing the library with one blank document.
+  const revived = reviveSession(
+    {
+      docs: [
+        { id: 'a', name: 'Knob', source: 'KNOB' },
+        { id: 'a', name: 'Bracket', source: 'BRACKET' },
+      ],
+      currentId: 'a',
+    },
+    STARTER,
+    'fresh',
+    99,
+  )
+  expect(revived.docs).toHaveLength(1)
+
+  const edited = updateSource(revived, 'EDITED', 100)
+  expect(edited.docs).toHaveLength(1)
+  const gone = deleteDoc(edited, 'a', 'fresh', 101)
+  expect(gone.docs.map((d) => d.source)).toEqual([''])
+})
+
+test('a fork cannot claim an id that is already taken', () => {
+  // A caller that memoises its uuid would otherwise create the duplicate-row
+  // state by hand.
+  const session = three()
+  expect(forkDoc(session, 'b', 'a', 500)).toBe(session)
+})
+
+test('deleting a middle version reparents its children instead of orphaning them', () => {
+  let session = forkDoc(createSession('cube(1);', 'p', 1), 'p', 'p2', 2)
+  session = forkDoc(session, 'p2', 'p3', 3)
+  expect([1, 2, 3]).toEqual(['p', 'p2', 'p3'].map((id) => versionNumber(session, id)))
+
+  const cut = deleteDoc(session, 'p2', 'fresh', 4)
+  // Still one family, still numbered — not two orphans with no version tag.
+  expect(cut.docs.find((d) => d.id === 'p3')?.parentId).toBe('p')
+  expect(versionNumber(cut, 'p')).toBe(1)
+  expect(versionNumber(cut, 'p3')).toBe(2)
+
+  // And what the autosave writes is what the loader reads back: no dangling
+  // parentId for revive to silently rewrite.
+  expect(reviveSession(JSON.parse(JSON.stringify(cut)), STARTER, 'fresh', 5)).toEqual(cut)
+})
+
+test('numbering a large library stays cheap enough to run on every render', () => {
+  // design.md §7 sizes the store at ~200 versions. Rebuilding the id map per
+  // document made this O(n^3) and 130 ms, on a path that runs per keystroke.
+  let session = createSession('cube(1);', 'v0', 0)
+  for (let i = 1; i < 200; i++) session = forkDoc(session, `v${i - 1}`, `v${i}`, i)
+
+  const started = performance.now()
+  const numbers = versionNumbers(session)
+  expect(performance.now() - started).toBeLessThan(50)
+  expect(numbers.get('v199')).toBe(200)
+  expect(numbers.size).toBe(200)
+})
+
+test('a hyphenated part name keeps its first letter', () => {
+  // \b fires on a hyphen, so the article was being eaten out of the word.
+  expect(nameFromPrompt('A-frame shelf bracket', [])).toBe('A-frame shelf bracket')
+  expect(nameFromPrompt('AN-8 fitting', [])).toBe('AN-8 fitting')
+  expect(nameFromPrompt('a 30 mm bracket', [])).toBe('30 mm bracket')
+})
+
+test('recovery never invents two documents with the same name', () => {
+  const revived = reviveSession(
+    {
+      docs: [
+        { id: 'a', source: '// Plate\ncube(1);' },
+        { id: 'b', source: '// Plate\ncube(2);' },
+      ],
+      currentId: 'a',
+    },
+    STARTER,
+    'fresh',
+    99,
+  )
+  expect(revived.docs.map((d) => d.name)).toEqual(['Plate', 'Plate 2'])
+})
+
+test('an edit is never dropped, even against a session with no rows', () => {
+  const rescued = updateSource({ docs: [], currentId: 'x' }, 'THE USERS WORK', 5)
+  expect(currentDoc(rescued).source).toBe('THE USERS WORK')
+  expect(rescued.docs).toHaveLength(1)
 })

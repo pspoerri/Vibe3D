@@ -12,9 +12,9 @@ import {
 } from './state/units'
 import {
   currentDoc, deleteDoc, forkDoc, nameFromFirstPrompt, newDoc, renameDoc, reviveSession,
-  selectDoc, updateSource, versionNumber, type Session,
+  selectDoc, updateSource, versionNumbers, type Session,
 } from './state/documents'
-import { loadLastSource, loadSession, persistRequested, saveLastSource, saveSession } from './state/store'
+import { loadAll, persistRequested, saveSession } from './state/store'
 
 const STARTER = `// A mounting plate. Drag the numbers, or edit freely.
 $fn = 64;
@@ -75,7 +75,7 @@ export function App() {
   useEffect(() => {
     let live = true
     void (async () => {
-      const [raw, lastSource] = await Promise.all([loadSession(), loadLastSource()])
+      const { session: raw, lastSource } = await loadAll()
       if (!live) return
       // lastSource is the fallback, not the starter: if the session structure is
       // unreadable the user still gets the code they were last working on.
@@ -98,8 +98,7 @@ export function App() {
     const flush = () => {
       const current = sessionRef.current
       if (!current) return
-      void saveSession(current)
-      void saveLastSource(currentDoc(current).source)
+      void saveSession(current, currentDoc(current).source)
     }
     const onHidden = () => {
       if (document.visibilityState === 'hidden') flush()
@@ -115,10 +114,7 @@ export function App() {
   useEffect(() => {
     if (!session) return
     const timer = setTimeout(() => {
-      void saveSession(session)
-      // Written separately and on the same beat. See store.ts: losing the
-      // document list is an inconvenience, losing the source is losing the work.
-      void saveLastSource(currentDoc(session).source)
+      void saveSession(session, currentDoc(session).source)
     }, SAVE_DEBOUNCE_MS)
     return () => clearTimeout(timer)
   }, [session])
@@ -294,7 +290,7 @@ export function App() {
           source={source}
           units={units}
           onPrompt={(text) =>
-            setSession((s) => (s ? nameFromFirstPrompt(s, text, Date.now()) : s))
+            setSession((s) => (s ? nameFromFirstPrompt(s, text) : s))
           }
           onStreamSource={setStreamSource}
           onApply={(next, result) => {
@@ -324,6 +320,9 @@ function DocBar({
 }) {
   const doc = currentDoc(session)
   const now = () => Date.now()
+  // Once for the list, not once per row: per-row numbering is what made this
+  // O(n^3) and 130 ms at 200 versions.
+  const versions = versionNumbers(session)
 
   return (
     <div className="docbar">
@@ -333,11 +332,11 @@ function DocBar({
         onChange={(e) => onChange(selectDoc(session, e.target.value))}
       >
         {session.docs.map((d) => {
-          const version = versionNumber(session, d.id)
+          const version = versions.get(d.id)
           return (
             <option key={d.id} value={d.id}>
               {d.name}
-              {version > 0 ? ` · v${version}` : ''}
+              {version === undefined ? '' : ` · v${version}`}
             </option>
           )
         })}
