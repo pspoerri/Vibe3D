@@ -99,6 +99,7 @@ export function App() {
   const [units, setUnits] = useState(loadUnits)
   // The launcher is the entry point: nothing is open until a document is picked.
   const [open, setOpen] = useState(false)
+  const [codeOpen, setCodeOpen] = useState(true)
   const [help, setHelp] = useState(false)
   // design.md §7: what the browser actually granted, not what was asked for.
   const [durable, setDurable] = useState(true)
@@ -361,7 +362,7 @@ export function App() {
       )}
 
       <div className="panes">
-      <section className="pane side">
+      <section className={codeOpen ? 'pane side' : 'pane side collapsed'}>
         <div className="editor-pane">
           <div className="editor-host">
             {/* Remounts on a document switch, like the chat pane: a fresh
@@ -394,6 +395,16 @@ export function App() {
       </section>
 
       <section className="pane view">
+        <button
+          type="button"
+          className="code-toggle"
+          aria-expanded={codeOpen}
+          title={codeOpen ? 'Hide the code' : 'Show the code'}
+          aria-label={codeOpen ? 'Hide the code' : 'Show the code'}
+          onClick={() => setCodeOpen((o) => !o)}
+        >
+          {codeOpen ? '‹' : '›'}
+        </button>
         <Viewport
           mesh={shown}
           ghost={ghost}

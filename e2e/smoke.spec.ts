@@ -109,6 +109,16 @@ test.describe('on a retina display', () => {
   })
 })
 
+test('the code pane slides away and back', async ({ page }) => {
+  await openStarter(page)
+  const pane = page.locator('.pane.side').first()
+  await page.getByRole('button', { name: 'Hide the code' }).click()
+  await expect.poll(async () => (await pane.boundingBox())?.width).toBe(0)
+  await page.getByRole('button', { name: 'Show the code' }).click()
+  await expect.poll(async () => (await pane.boundingBox())?.width).toBeGreaterThan(200)
+  await expect(page.locator('.cm-content')).toBeVisible()
+})
+
 async function openStarter(page: Page): Promise<void> {
   await page.goto('/')
   await page.locator('.start-open').first().click({ timeout: 90_000 })

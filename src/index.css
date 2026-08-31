@@ -16,6 +16,19 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
    pane is laid out right-to-left so its grip sits on the inner corner, where
    there is room to drag. */
 .pane.side { width: 440px; min-width: 300px; max-width: 38vw; resize: horizontal; overflow: hidden; }
+/* The slide animates the constraints, not width: the platform resize grip owns
+   width (as an inline style), so the toggle must never fight a dragged value. */
+.pane.side { transition: max-width .25s ease, min-width .25s ease; }
+.pane.side.collapsed { max-width: 0; min-width: 0; resize: none; }
+.code-toggle {
+  position: absolute; top: 50%; left: 0; transform: translateY(-50%); z-index: 2;
+  width: 15px; height: 52px; padding: 0; cursor: pointer;
+  font: 600 13px/1 system-ui, sans-serif; color: #7c827c;
+  background: rgba(255, 255, 255, .9); border: 1px solid #c8ccc4; border-left: 0;
+  border-radius: 0 3px 3px 0;
+}
+.code-toggle:hover { border-color: #b8860b; color: #b8860b; }
+.code-toggle:focus-visible { outline: 2px solid #b8860b; outline-offset: 1px; }
 .pane.side.right { width: 360px; direction: rtl; }
 .pane.side.right > * { direction: ltr; }
 .pane + .pane { border-left: 1px solid #c8ccc4; }
