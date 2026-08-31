@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.2 — 2026-08-31
+
+- **CI is green again**: the three e2e tests that still assumed the old thinking-off default
+  were caught up with v0.3.1's default of high.
+
 ## v0.3.1 — 2026-08-31
 
 - **Thinking defaults to high**: a model with no stored thinking level now thinks at high
