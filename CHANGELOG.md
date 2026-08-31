@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.3.0 — 2026-08-31
+
+The phone, the divider and the local model host.
+
+- **A mobile view**: below 720px the app is one column — the model above, the chat below, the
+  export row on the model's bottom edge, the menubar scrolling sideways. The editor pane is
+  desktop-only; the source is untouched and waiting when the document is opened on a wide
+  screen again.
+- **The code pane slides away**: a chevron on the divider collapses the editor pane and brings
+  it back, animated, without fighting the resize grip.
+- **Keyless custom endpoints**: an empty API key is allowed when the base URL is not
+  OpenRouter's own, and then no `Authorization` header is sent at all — so a local host such as
+  Ollama or LM Studio works without inventing a key. (The deployed build's CSP still allows
+  only OpenRouter; local hosts are for builds you serve yourself.)
+- **The footer version is `git describe`**: the tag itself on a clean release,
+  `v0.2.0-3-gabc1234[-dirty]` past it, linking to the release or the commit accordingly.
+- **The tagline** is "Prompt a parametric 3D model - with your own tokens.", and Live moved to
+  <https://spoerri.dev/Vibe3D/>.
+
 ## v0.2.0 — 2026-08-31
 
 Milestones 5–7 of [`docs/design.md`](docs/design.md): parts and imported meshes, draw mode and
