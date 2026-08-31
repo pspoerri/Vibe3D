@@ -14,8 +14,8 @@ export interface PortableSettings {
   model: string
   /**
    * Per model, because the levels mean different things to different models
-   * and a model without reasoning wants none: switching models must not carry
-   * the last one's level along. Absent is off.
+   * and a model without reasoning ignores the knob on the wire: switching
+   * models must not carry the last one's level along. Absent is high.
    */
   thinking: Partial<Record<string, Thinking>>
 }
@@ -27,7 +27,7 @@ export const DEFAULT_SETTINGS: PortableSettings = {
 }
 
 /** The current model's level. */
-export const thinkingOf = (s: PortableSettings): Thinking => s.thinking[s.model] ?? 'off'
+export const thinkingOf = (s: PortableSettings): Thinking => s.thinking[s.model] ?? 'high'
 
 export const withThinking = (s: PortableSettings, level: Thinking): PortableSettings => ({
   ...s,
