@@ -3,7 +3,7 @@ import { Compiler, type CompileResult } from '../kernel/compile'
 import { completePkce, pkceAvailable, revokeUrl, startPkce } from '../llm/auth'
 import { toDataUrl } from '../llm/images'
 import {
-  contextLimit, fetchModels, streamChat, type ModelInfo, type Usage,
+  contextLimit, DEFAULT_BASE_URL, fetchModels, streamChat, type ModelInfo, type Usage,
 } from '../llm/openrouter'
 import { loadKey, saveKey } from '../state/key'
 import {
@@ -116,6 +116,9 @@ export function Chat({
   const [showSettings, setShowSettings] = useState(() => loadKey() === '')
   const [revoke, setRevoke] = useState(REVOKE_HOME)
   const [spend, setSpend] = useState<Spend>(ZERO_SPEND)
+  // A custom base URL may be a keyless local server (Ollama, LM Studio), so an
+  // empty key only blocks prompting against OpenRouter itself.
+  const canPrompt = apiKey !== '' || settings.baseUrl !== DEFAULT_BASE_URL
 
   // Refs, not state, wherever a value is read inside an async turn: the turn
   // closes over its render's values, and a stale log would re-send history.
@@ -232,11 +235,11 @@ export function Chat({
   // the only place a key can be entered, so the catalogue is loaded by the
   // time a turn could need contextLimit for auto-compact.
   useEffect(() => {
-    if (!showSettings && !apiKey) return
+    if (!showSettings && !canPrompt) return
     fetchModels(settings.baseUrl)
       .then(setModels)
       .catch(() => setModels([]))
-  }, [showSettings, apiKey, settings.baseUrl])
+  }, [showSettings, canPrompt, settings.baseUrl])
 
   useEffect(() => {
     if (!apiKey) return setRevoke(REVOKE_HOME)
@@ -431,7 +434,7 @@ export function Chat({
       return
     }
 
-    if (!apiKey) {
+    if (!canPrompt) {
       setChatError('Connect OpenRouter or add an API key below to start.')
       setShowSettings(true)
       return
@@ -669,7 +672,7 @@ export function Chat({
 
       {chatError && <div className="chat-error">{chatError}</div>}
 
-      {!apiKey && (
+      {!canPrompt && (
         <div className="chat-nokey">
           No API access yet — connect OpenRouter or paste an API key in{' '}
           <button type="button" onClick={() => setShowSettings(true)}>

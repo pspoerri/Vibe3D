@@ -162,7 +162,9 @@ export async function* streamChat(
     method: 'POST',
     signal,
     headers: {
-      Authorization: `Bearer ${options.apiKey}`,
+      // A custom base URL may be a keyless local server; `Bearer ` with
+      // nothing behind it is what such servers reject.
+      ...(options.apiKey ? { Authorization: `Bearer ${options.apiKey}` } : {}),
       'Content-Type': 'application/json',
       'HTTP-Referer': location.origin + location.pathname,
       'X-OpenRouter-Title': 'Vibe3D',

@@ -117,6 +117,12 @@ test('sends exactly the documented request', async () => {
   expect(init).not.toHaveProperty('credentials')
 })
 
+test('an empty key sends no Authorization header, for keyless local endpoints', async () => {
+  stubFetch(() => new Response(STREAM, { status: 200 }))
+  await drain(streamChat(MESSAGES, signal(), { ...OPTIONS, apiKey: '' }))
+  expect(calls[0]?.init?.headers).not.toHaveProperty('Authorization')
+})
+
 test('throws a ChatError for a pre-stream failure without touching the body', async () => {
   let bodyReads = 0
   stubFetch(() => ({
