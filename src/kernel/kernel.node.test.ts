@@ -178,9 +178,9 @@ test('the Biergarten example is one solid on Z=0, its lettering, frame and mugs 
   // Two hanging holes, and no other loop.
   expect(stats.genus).toBe(2)
   expect(stats.min[2]).toBe(0)
-  expect(stats.size.map((v) => Math.round(v * 10) / 10)).toEqual([140, 70, 5.6])
+  expect(stats.size.map((v) => Math.round(v * 10) / 10)).toEqual([198.1, 110.7, 12.9])
   const colours = new Set<string>()
   for (let t = 0; t < mesh.triangleCount; t++) colours.add([mesh.colors![t * 3], mesh.colors![t * 3 + 1], mesh.colors![t * 3 + 2]].join(','))
-  // SaddleBrown plate, Gold frame and lettering, Ivory mugs, White foam.
-  expect(colours).toEqual(new Set(['139,69,19', '255,215,0', '255,255,240', '255,255,255']))
+  // Green plate (#1B432C), gold trim and steins (#D4AF37), cream lettering (#FFF8E7), white foam.
+  expect(colours).toEqual(new Set(['27,67,44', '212,175,55', '255,248,231', '255,255,255']))
 })

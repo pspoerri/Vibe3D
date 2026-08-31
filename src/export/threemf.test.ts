@@ -46,6 +46,18 @@ test('colour regions are ranked by area, the largest painted as filament 1, and 
   expect(painted).toContain('<basematerials id="1">')
 })
 
+test('a mesh the size of a real sign paints in one pass, not in quadratic seconds', () => {
+  const triangles = Array.from(
+    { length: 20_000 },
+    (_, i) => `     <triangle v1="0" v2="${i % 2 ? 1 : 2}" v3="${i % 2 ? 2 : 4}"${i % 2 ? ' pid="1" p1="1"' : ''} />`,
+  ).join('\n')
+  const start = performance.now()
+  const painted = paintModel(model(triangles))
+  expect(performance.now() - start).toBeLessThan(2000)
+  expect(painted.match(/paint_color="4"/g)).toHaveLength(10_000)
+  expect(painted.match(/paint_color="8"/g)).toHaveLength(10_000)
+})
+
 test('one colour is no painting: the bytes come back untouched, and a painted file re-zips with everything else kept', () => {
   const plain = model('     <triangle v1="0" v2="1" v3="2" />')
   const bytes = zipSync({ '[Content_Types].xml': strToU8('<Types/>'), '3D/3dmodel.model': strToU8(plain) })

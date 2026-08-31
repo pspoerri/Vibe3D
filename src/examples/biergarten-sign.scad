@@ -1,4 +1,4 @@
-// Biergarten sign
+// A Biergarten sign
 
 // Overall sign width
 sign_width = 210;    // [140:10:300]
@@ -490,11 +490,13 @@ module biergarten_sign() {
       }
     }
 
-    // Mounting Holes
+    // Mounting Holes — coloured like the plate, so the bore walls are too
     if (mount_holes) {
-      for (sx = [-1, 1]) {
-        translate([sx * sign_width * 0.41, sign_height * 0.18, -1]) {
-          cylinder(h = base_thick + beer_relief_h + 10, d = hole_diam);
+      color(color_base) {
+        for (sx = [-1, 1]) {
+          translate([sx * sign_width * 0.41, sign_height * 0.18, -1]) {
+            cylinder(h = base_thick + beer_relief_h + 10, d = hole_diam);
+          }
         }
       }
     }

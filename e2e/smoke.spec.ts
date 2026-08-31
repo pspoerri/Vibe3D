@@ -43,7 +43,7 @@ test('opens the Biergarten sign example: lettering in the bundled font, coloured
   await page.goto('/')
   await page.getByRole('button', { name: 'A Biergarten sign' }).click({ timeout: 90_000 })
   await expect(page.locator('.menubar-doc')).toHaveText('A Biergarten sign')
-  await expect(page.locator('.tag', { hasText: '140.0 × 70.0 × 5.6 mm' })).toBeVisible({ timeout: 120_000 })
+  await expect(page.locator('.tag', { hasText: '198.1 × 110.7 × 12.9 mm' })).toBeVisible({ timeout: 120_000 })
   await expect(page.locator('.error')).toBeHidden()
   expect(errors).toEqual([])
 })

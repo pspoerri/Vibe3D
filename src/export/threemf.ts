@@ -29,8 +29,9 @@ const attr = (tag: string, name: string): string | null => new RegExp(`\\b${name
 export function paintModel(xml: string): string {
   // Material index → its triangles' total area, summed over every object.
   const area = new Map<number, number>()
-  const objects = [...xml.matchAll(/<object [^>]*>[\s\S]*?<\/object>/g)].map((m) => m[0])
-  const perObject = objects.map((object) => {
+  const matches = [...xml.matchAll(/<object [^>]*>[\s\S]*?<\/object>/g)]
+  const perObject = matches.map((m) => {
+    const object = m[0]
     const head = /<object [^>]*>/.exec(object)![0]
     const fallback = Number(attr(head, 'pindex') ?? -1)
     const vertices = [...object.matchAll(/<vertex x="([^"]*)" y="([^"]*)" z="([^"]*)"/g)].map((m) => [
@@ -38,33 +39,35 @@ export function paintModel(xml: string): string {
       Number(m[2]),
       Number(m[3]),
     ])
-    const triangles = [...object.matchAll(/<triangle [^>]*\/>/g)].map((m) => {
-      const tag = m[0]
+    for (const [tag] of object.matchAll(/<triangle [^>]*\/>/g)) {
       const index = Number(attr(tag, 'p1') ?? fallback)
       const [a, b, c] = ['v1', 'v2', 'v3'].map((v) => vertices[Number(attr(tag, v))] ?? [0, 0, 0])
       const u = [b![0]! - a![0]!, b![1]! - a![1]!, b![2]! - a![2]!]
       const w = [c![0]! - a![0]!, c![1]! - a![1]!, c![2]! - a![2]!]
       const size = Math.hypot(u[1]! * w[2]! - u[2]! * w[1]!, u[2]! * w[0]! - u[0]! * w[2]!, u[0]! * w[1]! - u[1]! * w[0]!) / 2
       area.set(index, (area.get(index) ?? 0) + size)
-      return { tag, index }
-    })
-    return { object, triangles }
+    }
+    return { at: m.index, object, fallback }
   })
   const ranked = [...area.entries()].sort((a, b) => b[1] - a[1]).map(([index]) => index)
   if (ranked.length < 2) return xml
   const slot = new Map(ranked.slice(0, MAX_SLOTS).map((index, i) => [index, i + 1]))
 
-  let out = xml
-  for (const { object, triangles } of perObject) {
-    let painted = object
-    for (const { tag, index } of triangles) {
-      const n = slot.get(index)
-      if (n === undefined) continue
+  // One pass per object: per-tag String.replace over the whole model was
+  // quadratic, minutes on a real mesh.
+  let out = ''
+  let last = 0
+  for (const { at, object, fallback } of perObject) {
+    const painted = object.replace(/<triangle [^>]*\/>/g, (tag) => {
+      const n = slot.get(Number(attr(tag, 'p1') ?? fallback))
+      if (n === undefined) return tag
       const code = paintCode(n)
-      painted = painted.replace(tag, tag.replace(/\s*\/>$/, ` paint_color="${code}" slic3rpe:mmu_segmentation="${code}" />`))
-    }
-    out = out.replace(object, painted)
+      return tag.replace(/\s*\/>$/, ` paint_color="${code}" slic3rpe:mmu_segmentation="${code}" />`)
+    })
+    out += xml.slice(last, at) + painted
+    last = at + object.length
   }
+  out += xml.slice(last)
   if (!out.includes('xmlns:slic3rpe=')) out = out.replace(/<model /, `<model ${PRUSA_NS} `)
   return out
 }
