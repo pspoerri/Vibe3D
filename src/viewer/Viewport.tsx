@@ -427,9 +427,7 @@ export function Viewport({
           const indexed = new BufferGeometry()
           indexed.setAttribute('position', new BufferAttribute(next.positions, 3))
           indexed.setIndex(new BufferAttribute(next.indices, 1))
-          indexed.computeVertexNormals()
-          // A per-face colour needs a vertex per corner. De-indexing after the
-          // normals exist keeps the smooth shading of the indexed mesh.
+          // A per-face colour needs a vertex per corner.
           const geometry = next.colors ? indexed.toNonIndexed() : indexed
           if (next.colors) {
             indexed.dispose()
@@ -444,7 +442,7 @@ export function Viewport({
             new MeshStandardMaterial({
               color: next.colors ? 0xffffff : MODEL_COLOR,
               vertexColors: next.colors !== undefined,
-              roughness: 0.55, metalness: 0, side: DoubleSide,
+              roughness: 0.55, metalness: 0, side: DoubleSide, flatShading: true,
             }),
           )
           modelGroup.add(modelMesh)
