@@ -244,10 +244,10 @@ export async function runCompact(
       turn: input.turn,
       systemPrompt: input.systemPrompt,
       source: input.source,
-      // Chat's `compact` closes over the turn that just ran — send() bumps the
-      // turn state but the closure does not see it — so that turn's user event
-      // is still "live" here and its images would be re-billed. Auto-compact
-      // fires unattended at 60% of context, so nobody would see the request.
+      // Belt and braces. The caller passes the real next turn, so the turn that
+      // just ran is no longer live here — but auto-compact fires unattended at
+      // 60% of context, and re-billing an image with nobody watching is the one
+      // failure worth guaranteeing against rather than reasoning about.
       images: false,
     }),
     { role: 'user', content: COMPACT_PROMPT },

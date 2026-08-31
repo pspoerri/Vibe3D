@@ -11,7 +11,7 @@ import { parseCommand, type Command } from './commands'
 import { COMPACT_AT, runCompact, runTurn } from './controller'
 import { addUsage, formatTokens, formatUsd, ZERO_SPEND, type Spend } from './cost'
 import { parseMarkdown, type Inline } from './markdown'
-import type { ChatEvent } from './log'
+import { nextTurn, type ChatEvent } from './log'
 import { systemPromptFor } from './prompt'
 
 const REVOKE_HOME = 'https://openrouter.ai/settings/keys'
@@ -22,8 +22,11 @@ const MAX_IMAGES = 4
 export function Chat({
   source,
   units,
+  initialLog,
+  onLogChange,
   onStreamSource,
   onApply,
+  onUndo,
   onExport,
   onBusyChange,
   onPrompt,
@@ -31,15 +34,22 @@ export function Chat({
   source: string
   /** Display units. The source stays metric; this is how to READ the user. */
   units: 'mm' | 'in'
+  /** The transcript this document had when it was opened. Read once. */
+  initialLog: readonly ChatEvent[]
+  /** Every change to the log, images included — the receiver strips them. */
+  onLogChange: (log: readonly ChatEvent[]) => void
   onStreamSource: (partial: string | null) => void
-  onApply: (next: string, result: CompileResult) => void
+  /** `label` is the user's words, for the version this turn becomes. */
+  onApply: (next: string, result: CompileResult, label: string) => void
+  /** Steps the document back one version; the note to show, or null when there is nothing to undo. */
+  onUndo: () => string | null
   onExport: (format: 'binstl' | '3mf') => void
   onBusyChange: (busy: boolean) => void
   /** The user's words for the part. The document takes its name from the first. */
   onPrompt: (text: string) => void
 }) {
-  const [log, setLog] = useState<ChatEvent[]>([])
-  const [turn, setTurn] = useState(1)
+  const [log, setLog] = useState<ChatEvent[]>(() => [...initialLog])
+  const [turn, setTurn] = useState(() => nextTurn(initialLog))
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<readonly string[]>([])
   // Slots claimed by a normalisation still in flight. Reserved synchronously,
@@ -71,11 +81,29 @@ export function Chat({
   const logEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
+  // The document owns the transcript (design.md §7); this pane owns the live
+  // copy. Reported through a ref so the effect does not re-fire on every
+  // parent render, and never for the array it was seeded with.
+  const initialLogRef = useRef(log)
+  const onLogChangeRef = useRef(onLogChange)
+  onLogChangeRef.current = onLogChange
+  useEffect(() => {
+    if (log !== initialLogRef.current) onLogChangeRef.current(log)
+  }, [log])
+
   // The turn gets its OWN compiler. compile() calls cancel() as its first
   // statement, so sharing the preview's instance would let a stray recompile
   // settle a paid-for turn as cancelled, with no user-visible message.
   const compiler = useMemo(() => new Compiler(), [])
-  useEffect(() => () => compiler.dispose(), [compiler])
+  // A document switch remounts this pane; the turn it was running must die with
+  // it, or its onApply lands in whichever document is current by then.
+  useEffect(
+    () => () => {
+      abortRef.current?.abort()
+      compiler.dispose()
+    },
+    [compiler],
+  )
 
   const append = (event: ChatEvent) => setLog((current) => [...current, event])
   const note = (text: string, tone: 'info' | 'error' = 'info') =>
@@ -194,16 +222,22 @@ export function Chat({
       case 'unknown':
         note(`Unknown command /${command.word}.`, 'error')
         return
+      case 'undo': {
+        const restored = onUndo()
+        note(restored ?? 'Nothing to undo.', restored ? 'info' : 'error')
+        return
+      }
       case 'compact':
-        await compact(true)
+        await compact(true, turn)
     }
   }
 
-  const compact = async (explicit: boolean) => {
+  /** `at` is the next turn number — passed in because send() bumps the state after it runs. */
+  const compact = async (explicit: boolean, at: number) => {
     const controller = new AbortController()
     abortRef.current = controller
     const outcome = await runCompact(
-      { log: logRef.current, turn, systemPrompt: systemPromptFor(units), source },
+      { log: logRef.current, turn: at, systemPrompt: systemPromptFor(units), source },
       {
         stream: (messages, signal) =>
           streamChat(messages, signal, {
@@ -308,7 +342,7 @@ export function Chat({
       // Commit on final failure too: the user has to see the code to fix it,
       // and CodeMirror's history makes the whole-document replace undoable.
       if (outcome.status === 'committed' || outcome.status === 'failed') {
-        onApply(outcome.source, outcome.result)
+        onApply(outcome.source, outcome.result, text)
       } else if (outcome.status === 'error') {
         setChatError(outcome.message)
       }
@@ -320,7 +354,7 @@ export function Chat({
       if (limit > 0 && used / limit > COMPACT_AT && compactedRef.current !== finished) {
         compactedRef.current = finished
         note('Context is filling up — compacting.')
-        await compact(false)
+        await compact(false, finished + 1)
       }
     } finally {
       onStreamSource(null)

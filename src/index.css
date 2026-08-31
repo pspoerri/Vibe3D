@@ -346,3 +346,12 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
 .start-open:focus-visible, .start-del:focus-visible, .start-new:focus-visible {
   outline: 2px solid #b8860b; outline-offset: 1px;
 }
+
+/* Version picker (design.md §7). */
+.menubar select {
+  font: 500 11px/1 ui-monospace, monospace; padding: 5px 6px; color: #414741; background: #fff;
+  border: 1px solid #c8ccc4; border-radius: 2px; max-width: 240px;
+}
+.menubar select:disabled { opacity: .35; }
+.menubar select:focus-visible { outline: 2px solid #b8860b; outline-offset: 1px; }
+.start-durability { margin: 0 0 14px; font: 12px/1.5 system-ui, sans-serif; color: #8a5a00; }

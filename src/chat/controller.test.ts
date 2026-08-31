@@ -643,8 +643,8 @@ test('a compaction never re-sends the images of the turn it is summarising', asy
     // Old enough (turn <= 3 - 2) that runCompact finds something to cover.
     { id: 'u0', ts: 0, turn: 1, kind: 'user', text: 'a box' },
     { id: 'a0', ts: 0, turn: 1, kind: 'assistant', text: fenced('cube(1);') },
-    // Chat.tsx's compact() closes over the pre-bump turn, so this is the same
-    // turn number runCompact is called with — buildWindow reads it as "live".
+    // The same turn number runCompact is called with, so buildWindow reads it
+    // as "live": the guarantee has to hold even for a caller that gets it wrong.
     { id: 'u1', ts: 0, turn: 3, kind: 'user', text: 'like this', images: [IMG] },
     { id: 'a1', ts: 0, turn: 3, kind: 'assistant', text: fenced('cube(3);') },
   ]

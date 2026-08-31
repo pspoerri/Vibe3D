@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
 
 const CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions'
@@ -243,6 +244,40 @@ test('undo restores the document a committed turn replaced', async ({ page }) =>
   await page.locator('.cm-content').click()
   await page.keyboard.press('ControlOrMeta+z')
   await expect(page.locator('.cm-content')).toContainText('plate_x = 60')
+})
+
+test('/undo steps the document back to the version a turn replaced', async ({ page }) => {
+  await seedKey(page)
+  await page.route(CHAT_URL, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: sseBody(fenced('cube([15, 5, 5]);')),
+    }),
+  )
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await send(page, 'a bar')
+  await expect(page.locator('.tag', { hasText: '15.0 × 5.0 × 5.0 mm' })).toBeVisible({
+    timeout: 60_000,
+  })
+  const picker = page.getByRole('combobox', { name: 'Version' })
+  await expect(picker).toHaveValue('2')
+  await expect(picker.locator('option[value="2"]')).toHaveText(/a bar/)
+
+  await send(page, '/undo')
+  await expect(page.locator('.chat-note', { hasText: 'Restored v1' })).toBeVisible()
+  await expect(picker).toHaveValue('1')
+  await expect(page.locator('.cm-content')).toContainText('plate_x = 60')
+  await expect(page.locator('.tag', { hasText: '60.0 × 40.0 × 3.0 mm' })).toBeVisible({
+    timeout: 60_000,
+  })
+  // Nothing was thrown away: the turn's version is still there to go forward to.
+  await expect(picker.locator('option')).toHaveCount(2)
+
+  await send(page, '/undo')
+  await expect(page.locator('.chat-note.bad', { hasText: 'Nothing to undo' })).toBeVisible()
 })
 
 test('/clear leaves the source alone', async ({ page }) => {
@@ -728,35 +763,64 @@ test('a document survives a reload, and its name comes from the prompt', async (
   await expect(page.locator('.cm-content')).toContainText('cube([21, 21, 21]);', {
     timeout: 90_000,
   })
+  // And so is the conversation that produced it (design.md §7).
+  await expect(page.locator('.msg-user', { hasText: 'make me a knurled knob' })).toBeVisible()
+  await expect(page.getByRole('combobox', { name: 'Version' })).toHaveValue('2')
 })
 
-test('a new version becomes the current document and leaves the old one intact', async ({
+test('save, edit, and step back through the version picker without losing either state', async ({
   page,
 }) => {
   await page.goto('/')
   await waitForStarter(page)
+  const picker = page.getByRole('combobox', { name: 'Version' })
+  await expect(picker).toHaveValue('1')
 
-  await page.getByRole('button', { name: 'Version' }).click()
-  // The fork is what you are editing from the next keystroke on.
-  await expect(page.locator('.menubar-doc')).toContainText('v2')
-
-  // Typing in the editor updates the viewport, and only this version's source.
   await page.locator('.cm-content').click()
   await page.keyboard.press('ControlOrMeta+a')
   await page.keyboard.type('cube([8, 8, 8]);')
   await expect(page.locator('.tag', { hasText: '8.0 × 8.0 × 8.0 mm' })).toBeVisible({
     timeout: 60_000,
   })
+  // A successful compile of an edit is a version.
+  await expect(picker).toHaveValue('2')
+  await expect(picker.locator('option[value="2"]')).toHaveText(/edit/)
 
-  // v1 is still openable, exactly as it was.
-  await page.getByRole('button', { name: 'Open', exact: true }).click()
-  const rows = page.locator('.start-open')
-  await expect(rows).toHaveCount(2)
-  await rows.filter({ hasText: 'v1' }).click()
+  await page.getByRole('button', { name: 'Save version' }).click()
+  await expect(picker.locator('option[value="2"]')).toHaveText(/saved/)
+
+  // Back to v1: the list keeps v2, and the source is exactly the starter again.
+  await picker.selectOption('1')
   await expect(page.locator('.cm-content')).toContainText('plate_x = 60')
   await expect(page.locator('.tag', { hasText: '60.0 × 40.0 × 3.0 mm' })).toBeVisible({
     timeout: 60_000,
   })
+  await expect(picker.locator('option')).toHaveCount(2)
+})
+
+test('a project exports as one JSON file that imports back as a new document', async ({ page }) => {
+  await page.goto('/')
+  await waitForStarter(page)
+
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Export project' }).click()
+  const file = await download
+  expect(file.suggestedFilename()).toBe('A mounting plate.json')
+  const text = (await readFile((await file.path())!)).toString()
+  const project = JSON.parse(text) as { type: string; schemaVersion: number; versions: unknown[] }
+  expect(project.type).toBe('vibe3d/project')
+  expect(project.schemaVersion).toBe(1)
+  expect(project.versions).toHaveLength(1)
+  expect(text).not.toContain('sk-or-')
+
+  await page.locator('.menubar input[type="file"]').setInputFiles({
+    name: 'plate.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(text),
+  })
+  await expect(page.locator('.menubar-doc')).toContainText('A mounting plate 2')
+  await page.getByRole('button', { name: 'Open', exact: true }).click()
+  await expect(page.locator('.start-open')).toHaveCount(2)
 })
 
 test('a corrupt session still restores the last source', async ({ page }) => {

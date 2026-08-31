@@ -11,9 +11,11 @@ import {
   formatLength, formatVolume, lengthLabel, loadUnits, saveUnits, volumeLabel,
 } from './state/units'
 import {
-  currentDoc, deleteDoc, forkDoc, nameFromFirstPrompt, newDoc, renameDoc, reviveSession,
-  selectDoc, updateSource, UNTITLED, versionNumbers, type Session,
+  commitEdit, commitTurn, currentDoc, deleteDoc, headVersion, nameFromFirstPrompt, newDoc,
+  renameDoc, restoreVersion, reviveSession, saveVersion, selectDoc, setChat, undoVersion,
+  updateSource, UNTITLED, type Session,
 } from './state/documents'
+import { exportProject, importProject } from './state/project'
 import { loadAll, persistRequested, saveSession } from './state/store'
 
 const STARTER = `// A mounting plate. Drag the numbers, or edit freely.
@@ -55,6 +57,7 @@ export function App() {
   // null until IndexedDB answers. Nothing compiles before then, so the starter
   // is never compiled and thrown away one frame later.
   const [session, setSession] = useState<Session | null>(null)
+  const ready = session !== null
   const source = session ? currentDoc(session).source : STARTER
   const setSource = (next: string) =>
     setSession((s) => (s ? updateSource(s, next, Date.now()) : s))
@@ -70,6 +73,8 @@ export function App() {
   const [units, setUnits] = useState(loadUnits)
   // The launcher is the entry point: nothing is open until a document is picked.
   const [open, setOpen] = useState(false)
+  // design.md §7: what the browser actually granted, not what was asked for.
+  const [durable, setDurable] = useState(true)
 
   const compiler = useMemo(() => new Compiler(), [])
   useEffect(() => () => compiler.dispose(), [compiler])
@@ -82,9 +87,10 @@ export function App() {
       // lastSource is the fallback, not the starter: if the session structure is
       // unreadable the user still gets the code they were last working on.
       setSession(reviveSession(raw, lastSource ?? STARTER, crypto.randomUUID(), Date.now()))
-      // design.md §7: WebKit drops script-writable storage after 7 days without
-      // interaction, and this is silently denied when heuristics are unmet.
-      void persistRequested()
+      // WebKit drops script-writable storage after 7 days without interaction,
+      // and the request is silently denied when heuristics are unmet.
+      const granted = await persistRequested()
+      if (live) setDurable(granted)
     })()
     return () => {
       live = false
@@ -150,14 +156,28 @@ export function App() {
     setCompiles((n) => n + 1)
   }
 
+  // Depends on `ready`, not `session`: a chat event or a version commit changes
+  // the session without changing the source, and must not restart a compile
+  // that is already in flight.
   useEffect(() => {
-    if (!session) return
+    if (!ready) return
     const key = compileKey(source, previewDefines)
     // FIRST statement, before the run id and before setBusy: a turn commits its
     // source together with the result it already paid for, and recompiling it
     // here would double every turn. Moving this inside the timeout instead
     // would latch the "compiling..." tag forever.
     if (key === appliedKeyRef.current) return
+
+    // A blank document has nothing to compile, and would otherwise show the
+    // kernel's "top level object is empty" as an error for having done nothing.
+    if (source.trim() === '') {
+      appliedKeyRef.current = key
+      setBusy(false)
+      setMesh(null)
+      setError(null)
+      setMs(null)
+      return
+    }
 
     const runId = ++runIdRef.current
     setBusy(true)
@@ -176,12 +196,16 @@ export function App() {
         // A cancelled compile is not a failure the user should see.
         if (!result.ok && result.cancelled) return
         applyCompiled(key, result)
+        // design.md §7 (c): a successful compile of manual edits is a version.
+        if (result.ok && previewDefines.length === 0) {
+          setSession((s) => (s ? commitEdit(s, source, Date.now()) : s))
+        }
       },
       previewDefines.length > 0 ? DRAG_DEBOUNCE_MS : DEBOUNCE_MS,
     )
 
     return () => clearTimeout(timer)
-  }, [source, previewDefines, compiler, session])
+  }, [source, previewDefines, compiler, ready])
 
   const stats = useMemo(() => (mesh ? meshStats(mesh) : null), [mesh])
 
@@ -216,6 +240,7 @@ export function App() {
 
       <MenuBar
         session={session}
+        busy={chatBusy}
         onChange={(next) => {
           setSession(next)
           setFitToken((n) => n + 1)
@@ -226,6 +251,7 @@ export function App() {
       {session && !open && (
         <StartWindow
           session={session}
+          durable={durable}
           onOpen={(id) => {
             setSession(selectDoc(session, id))
             setFitToken((n) => n + 1)
@@ -301,18 +327,32 @@ export function App() {
       <section className="pane">
         <Chat
           // Remounts on a document switch: the conversation was about the part
-          // that just left the screen.
+          // that just left the screen, and the new one brings its own.
           key={session?.currentId ?? 'boot'}
           source={source}
           units={units}
+          initialLog={session ? currentDoc(session).chat : []}
+          onLogChange={(log) => setSession((s) => (s ? setChat(s, log) : s))}
           onPrompt={(text) =>
             setSession((s) => (s ? nameFromFirstPrompt(s, text) : s))
           }
           onStreamSource={setStreamSource}
-          onApply={(next, result) => {
-            setSource(next)
+          onApply={(next, result, label) => {
+            // A preview compile still in flight would land on top of this and
+            // put a stale mesh under the new source.
+            compiler.cancel()
+            setSession((s) => (s ? commitTurn(s, next, label, result.ok, Date.now()) : s))
             applyCompiled(compileKey(next, NO_DEFINES), result)
             setFitToken((n) => n + 1)
+          }}
+          onUndo={() => {
+            const s = sessionRef.current
+            if (!s) return null
+            const next = undoVersion(s, Date.now())
+            if (next === s) return null
+            setSession(next)
+            setFitToken((n) => n + 1)
+            return `Restored v${headVersion(currentDoc(next)).id}.`
           }}
           onExport={exportAs}
           onBusyChange={setChatBusy}
@@ -336,25 +376,31 @@ function whenEdited(ts: number): string {
   for (const [size, unit] of STEPS) {
     if (ago < size * 60 || unit === 'day') return RELATIVE.format(-Math.floor(ago / size), unit)
   }
-  return 'a while ago'
+  return RELATIVE.format(-Math.floor(ago / 86_400_000), 'day')
 }
 
+/** A document name as a file name. */
+const fileName = (name: string): string => name.replace(/[\\/:*?"<>|]+/g, '_')
+
 /**
- * New / Open / Rename / Delete, and the name of what is open. Open returns to
- * the start window, which is the document list — one screen rather than a
- * picker plus a launcher that would both list the same rows.
+ * New / Open / versions / Rename / Delete / project file, and the name of what
+ * is open. Open returns to the start window, which is the document list — one
+ * screen rather than a picker plus a launcher that would both list the same rows.
  */
 function MenuBar({
   session,
+  busy,
   onChange,
   onOpen,
 }: {
   session: Session | null
+  /** A turn owns the document: nothing here may move its head under it. */
+  busy: boolean
   onChange: (next: Session) => void
   onOpen: () => void
 }) {
   const doc = session ? currentDoc(session) : null
-  const version = session && doc ? versionNumbers(session).get(doc.id) : undefined
+  const fileRef = useRef<HTMLInputElement>(null)
 
   return (
     <div className="menubar">
@@ -378,17 +424,29 @@ function MenuBar({
       </button>
       <button
         type="button"
-        title="Copy this document as a new version and switch to it, leaving this one untouched"
-        disabled={!session || !doc}
-        onClick={() => {
-          if (!session || !doc) return
-          // forkDoc selects the copy, so the new version IS what you are editing
-          // from the next keystroke on.
-          onChange(forkDoc(session, doc.id, crypto.randomUUID(), Date.now()))
-        }}
+        title="Keep what is in the editor as a version of its own"
+        disabled={!session || !doc || busy}
+        onClick={() => session && onChange(saveVersion(session, Date.now()))}
       >
-        Version
+        Save version
       </button>
+      {session && doc && (
+        <select
+          className="menubar-versions"
+          aria-label="Version"
+          title="Every LLM turn, save and edit is a version. Pick one to go back to it."
+          value={doc.head}
+          disabled={busy}
+          onChange={(e) => onChange(restoreVersion(session, e.target.value, Date.now()))}
+        >
+          {doc.versions.map((v) => (
+            <option key={v.id} value={v.id}>
+              v{v.id} · {v.label}
+              {v.compileOk ? '' : ' ✗'}
+            </option>
+          ))}
+        </select>
+      )}
       <button
         type="button"
         disabled={!session || !doc}
@@ -413,12 +471,50 @@ function MenuBar({
       >
         Delete
       </button>
-      {doc && (
-        <span className="menubar-doc">
-          {doc.name}
-          {version === undefined ? '' : ` · v${version}`}
-        </span>
-      )}
+      <button
+        type="button"
+        title="One .json with the source, every version and the conversation — never the key"
+        disabled={!doc}
+        onClick={() =>
+          doc &&
+          downloadBlob(
+            new TextEncoder().encode(exportProject(doc)),
+            `${fileName(doc.name)}.json`,
+            'application/json',
+          )
+        }
+      >
+        Export project
+      </button>
+      <button type="button" disabled={!session} onClick={() => fileRef.current?.click()}>
+        Import project
+      </button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".json,application/json"
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          // So the same file can be picked twice in a row.
+          e.target.value = ''
+          if (!file || !session) return
+          void file.text().then((text) => {
+            try {
+              const imported = importProject(
+                text,
+                crypto.randomUUID(),
+                Date.now(),
+                session.docs.map((d) => d.name),
+              )
+              onChange({ docs: [...session.docs, imported], currentId: imported.id })
+            } catch (error) {
+              window.alert(error instanceof Error ? error.message : String(error))
+            }
+          })
+        }}
+      />
+      {doc && <span className="menubar-doc">{doc.name}</span>}
     </div>
   )
 }
@@ -429,14 +525,15 @@ function MenuBar({
  */
 function StartWindow({
   session,
+  durable,
   onOpen,
   onChange,
 }: {
   session: Session
+  durable: boolean
   onOpen: (id: string) => void
   onChange: (next: Session) => void
 }) {
-  const versions = versionNumbers(session)
   const rows = [...session.docs].sort((a, b) => b.updatedAt - a.updatedAt)
 
   return (
@@ -449,30 +546,34 @@ function StartWindow({
         </p>
 
         <ul className="start-list">
-          {rows.map((d) => {
-            const version = versions.get(d.id)
-            return (
-              <li key={d.id}>
-                <button type="button" className="start-open" onClick={() => onOpen(d.id)}>
-                  <span className="start-name">{d.name}</span>
-                  {version !== undefined && <span className="start-ver">v{version}</span>}
-                  <span className="start-when">{whenEdited(d.updatedAt)}</span>
-                </button>
-                <button
-                  type="button"
-                  className="start-del"
-                  aria-label={`Delete ${d.name}`}
-                  onClick={() => {
-                    if (!window.confirm(`Delete "${d.name}"? This cannot be undone.`)) return
-                    onChange(deleteDoc(session, d.id, crypto.randomUUID(), Date.now()))
-                  }}
-                >
-                  ×
-                </button>
-              </li>
-            )
-          })}
+          {rows.map((d) => (
+            <li key={d.id}>
+              <button type="button" className="start-open" onClick={() => onOpen(d.id)}>
+                <span className="start-name">{d.name}</span>
+                {d.versions.length > 1 && <span className="start-ver">v{d.versions.length}</span>}
+                <span className="start-when">{whenEdited(d.updatedAt)}</span>
+              </button>
+              <button
+                type="button"
+                className="start-del"
+                aria-label={`Delete ${d.name}`}
+                onClick={() => {
+                  if (!window.confirm(`Delete "${d.name}"? This cannot be undone.`)) return
+                  onChange(deleteDoc(session, d.id, crypto.randomUUID(), Date.now()))
+                }}
+              >
+                ×
+              </button>
+            </li>
+          ))}
         </ul>
+
+        {!durable && (
+          <p className="start-durability">
+            This browser may evict local data when it needs space. Export anything you want to
+            keep.
+          </p>
+        )}
 
         <button
           type="button"
