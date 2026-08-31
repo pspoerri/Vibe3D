@@ -8,7 +8,7 @@ const post = (message: CompileResponse, transfer: Transferable[] = []) =>
   (self as unknown as Worker).postMessage(message, transfer)
 
 self.onmessage = async (event: MessageEvent<CompileRequest>) => {
-  const { source, format, defines } = event.data
+  const { source, format, defines, files } = event.data
   const started = performance.now()
   let stderr = ''
 
@@ -23,6 +23,7 @@ self.onmessage = async (event: MessageEvent<CompileRequest>) => {
     })
 
     kernel.FS.writeFile('/in.scad', source)
+    for (const [path, bytes] of Object.entries(files ?? {})) kernel.FS.writeFile(path, bytes)
     const outputPath = `/out.${format}`
     // Failure is signalled by a non-zero exit code, for both parse errors and
     // empty top-level geometry. Never infer failure from stderr contents.

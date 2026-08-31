@@ -184,3 +184,14 @@ test('a worker crash is flagged crashed, with a frequently-empty stderrRaw', asy
     compiler.dispose()
   }
 })
+
+test('extra files travel to the worker with the request', () => {
+  const compiler = new Compiler()
+  try {
+    const bytes = new Uint8Array([79, 70, 70])
+    compiler.compile('import("old.off");', 'off', { files: { '/old.off': bytes } })
+    expect(FakeWorker.instances[0]?.sent[0]).toMatchObject({ files: { '/old.off': bytes } })
+  } finally {
+    compiler.dispose()
+  }
+})

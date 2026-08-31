@@ -10,6 +10,11 @@ export interface CompileRequest {
    * free text.
    */
   defines?: readonly string[]
+  /**
+   * Written to the kernel's FS before main() runs, keyed by absolute path.
+   * What lets a source `import()` a mesh — the diff booleans of design.md §6.
+   */
+  files?: Readonly<Record<string, Uint8Array>>
 }
 
 export type CompileResponse =

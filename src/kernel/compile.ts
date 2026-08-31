@@ -30,6 +30,8 @@ export type CompileResult =
 export interface CompileOptions {
   defines?: readonly string[]
   timeoutMs?: number
+  /** Extra files for the kernel FS, by absolute path — see CompileRequest.files. */
+  files?: Readonly<Record<string, Uint8Array>>
 }
 
 const DEFAULT_TIMEOUT_MS = 60_000
@@ -50,7 +52,7 @@ export class Compiler {
     format: ExportFormat = 'off',
     options: CompileOptions = {},
   ): Promise<CompileResult> {
-    const { defines, timeoutMs = DEFAULT_TIMEOUT_MS } = options
+    const { defines, files, timeoutMs = DEFAULT_TIMEOUT_MS } = options
     this.cancel()
 
     const worker = new Worker(new URL('./openscad.worker.ts', import.meta.url), {
@@ -101,7 +103,7 @@ export class Compiler {
         })
       }
 
-      worker.postMessage({ source, format, defines } satisfies CompileRequest)
+      worker.postMessage({ source, format, defines, files } satisfies CompileRequest)
     })
   }
 
