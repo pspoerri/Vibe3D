@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.1 — 2026-08-31
+
+- **Thinking defaults to high**: a model with no stored thinking level now thinks at high
+  instead of not at all. Choosing off in the menubar still sticks, per model, and a model
+  without reasoning ignores the knob on the wire.
+
 ## v0.3.0 — 2026-08-31
 
 The phone, the divider and the local model host.
