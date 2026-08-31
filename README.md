@@ -1,6 +1,6 @@
 # Vibe3D
 
-**Prompt a parametrized 3D model - leveraging your own tokens.**
+**Prompt a parametric 3D model - with your own tokens.**
 
 Describe a part. The model writes OpenSCAD, your browser compiles it, and you get a mesh you can
 orbit and export as STL, 3MF or OBJ. You can also just write the OpenSCAD yourself, or drag the
@@ -14,7 +14,7 @@ Everything runs in the browser. There is no backend — the kernel is OpenSCAD c
 WebAssembly, the renderer is three.js, and the only thing that leaves your machine is the chat
 request to the model host you configured.
 
-**Live: <https://pspoerri.github.io/Vibe3D/>**
+**Live: <https://spoerri.dev/Vibe3D/>**
 
 Design: [docs/design.md](docs/design.md) · Plans: [docs/superpowers/plans](docs/superpowers/plans)
 

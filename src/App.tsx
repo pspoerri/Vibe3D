@@ -734,7 +734,7 @@ function StartWindow({
           Vibe3D
           <img className="start-icon" src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" />
         </h1>
-        <p className="start-tag">Prompt a parametrized 3D model - leveraging your own tokens.</p>
+        <p className="start-tag">Prompt a parametric 3D model - with your own tokens.</p>
 
         <ul className="start-list">
           {rows.map((d) => (
