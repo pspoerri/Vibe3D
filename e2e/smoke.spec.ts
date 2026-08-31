@@ -37,6 +37,17 @@ test('the brand in the menu bar goes back to the start window', async ({ page })
   await expect(page.locator('.start-card')).toBeVisible()
 })
 
+test('opens the Biergarten sign example: lettering in the bundled font, coloured apart from the plate', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(e.message))
+  await page.goto('/')
+  await page.getByRole('button', { name: 'A Biergarten sign' }).click({ timeout: 90_000 })
+  await expect(page.locator('.menubar-doc')).toHaveText('A Biergarten sign')
+  await expect(page.locator('.tag', { hasText: '140.0 × 70.0 × 5.6 mm' })).toBeVisible({ timeout: 120_000 })
+  await expect(page.locator('.error')).toBeHidden()
+  expect(errors).toEqual([])
+})
+
 test('surfaces a compile error and recovers from it', async ({ page }) => {
   await page.goto('/')
   await page.locator('.start-open').first().click({ timeout: 90_000 })
@@ -114,13 +125,31 @@ async function typeSource(page: Page, source: string): Promise<void> {
 
 test('exports an OBJ', async ({ page }) => {
   await openStarter(page)
+  await typeSource(page, 'cube(10);')
+  await expect(page.locator('.tag', { hasText: '10.0 × 10.0 × 10.0 mm' })).toBeVisible({ timeout: 60_000 })
   const download = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Export OBJ' }).click()
   expect((await download).suggestedFilename()).toBe('A mounting plate.obj')
   const text = await readFile(await (await download).path(), 'utf8')
-  expect(text.startsWith('# OpenSCAD obj exporter')).toBe(true)
+  expect(text.startsWith('# Vibe3D OBJ export')).toBe(true)
+  expect(text).not.toContain('mtllib')
   expect(text).toMatch(/^v /m)
   expect(text).toMatch(/^f /m)
+})
+
+test('a coloured OBJ export brings its MTL along', async ({ page }) => {
+  await openStarter(page)
+  await typeSource(page, 'color("red") cube(10);')
+  await expect(page.locator('.tag', { hasText: '10.0 × 10.0 × 10.0 mm' })).toBeVisible({ timeout: 60_000 })
+  const first = page.waitForEvent('download')
+  const second = page.waitForEvent('download', { predicate: (d) => d.suggestedFilename().endsWith('.mtl') })
+  await page.getByRole('button', { name: 'Export OBJ' }).click()
+  const obj = await readFile(await (await first).path(), 'utf8')
+  expect((await first).suggestedFilename()).toBe('A mounting plate.obj')
+  expect(obj).toContain('mtllib A mounting plate.mtl')
+  expect(obj).toContain('usemtl c_ff0000')
+  const mtl = await readFile(await (await second).path(), 'utf8')
+  expect(mtl).toContain('newmtl c_ff0000\nKd 1.000 0.000 0.000')
 })
 
 test('two top-level statements are two parts on screen and two objects in the 3MF', async ({ page }) => {
@@ -237,4 +266,44 @@ test('deleting the open document goes back to the start window', async ({ page }
   // The document row is gone; the example of the same name is not a document.
   await expect(page.locator('.start-open', { hasText: 'A mounting plate' })).toHaveCount(0)
   await expect(page.locator('.start-open')).toHaveCount(1)
+})
+
+test('text() renders with the bundled fonts', async ({ page }) => {
+  await openStarter(page)
+  await typeSource(page, 'linear_extrude(2) text("Vibe", size = 10, font = "Liberation Sans:style=Bold");')
+  // Four bold glyphs at size 10: a couple of centimetres wide, 2 mm thick — and not empty.
+  await expect(page.locator('.tag', { hasText: /^\d\d\.\d × \d+\.\d × 2\.0 mm$/ })).toBeVisible({ timeout: 90_000 })
+  await expect(page.locator('.error')).toBeHidden()
+})
+
+test('exports a coloured STL written from the mesh', async ({ page }) => {
+  await openStarter(page)
+  await typeSource(page, 'color("red") cube(10);')
+  await expect(page.locator('.tag', { hasText: '10.0 × 10.0 × 10.0 mm' })).toBeVisible({ timeout: 60_000 })
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Export STL' }).click()
+  expect((await download).suggestedFilename()).toBe('A mounting plate.stl')
+  const bytes = await readFile(await (await download).path())
+  expect(bytes.subarray(0, 6).toString()).toBe('Vibe3D')
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  expect(view.getUint32(80, true)).toBe(12)
+  // Red, in the VisCAM/SolidView word: bit 15 set, red at full in bits 10–14.
+  expect(view.getUint16(84 + 48, true)).toBe(0x8000 | (31 << 10))
+})
+
+test('a coloured 3MF export carries its colours as materials, per triangle', async ({ page }) => {
+  await openStarter(page)
+  await typeSource(page, 'union() { color("saddlebrown") cube([40, 20, 3]); color("gold") translate([5, 5, 3]) cube([30, 10, 2]); }')
+  await expect(page.locator('.tag', { hasText: '40.0 × 20.0 × 5.0 mm' })).toBeVisible({ timeout: 60_000 })
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Export 3MF' }).click()
+  const model = strFromU8(unzipSync(await readFile(await (await download).path()))['3D/3dmodel.model']!)
+  expect(model).toContain('<basematerials id="1">')
+  expect(model).toContain('displaycolor="#8B4513FF"')
+  expect(model).toContain('displaycolor="#FFD700FF"')
+  expect(model.match(/<triangle [^>]*p1="\d+"/g)?.length).toBeGreaterThan(0)
+  // The plate is the larger region: filament 1; the lettering block filament 2 — in both slicers' dialects.
+  expect(model).toContain('xmlns:slic3rpe=')
+  expect(model.match(/paint_color="4" slic3rpe:mmu_segmentation="4"/g)?.length).toBeGreaterThan(0)
+  expect(model.match(/paint_color="8" slic3rpe:mmu_segmentation="8"/g)?.length).toBeGreaterThan(0)
 })

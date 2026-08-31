@@ -58,6 +58,16 @@ export type ChatEvent =
       image?: string
     }
   | { id: string; ts: number; turn: number; kind: 'note'; text: string; tone: 'info' | 'error' }
+  | {
+      id: string
+      ts: number
+      turn: number
+      kind: 'skill'
+      /** What the model asked for. Its body is rendered at window time, so a listing is always current. */
+      name: string
+      /** Set when there is no such skill: what the model is told, live turn only. */
+      error?: string
+    }
   | { id: string; ts: number; turn: number; kind: 'clear' }
   | { id: string; ts: number; turn: number; kind: 'summary'; text: string; coversThrough: string }
 
@@ -82,6 +92,8 @@ export interface WindowInput {
    * just ran and would otherwise re-bill its images unattended.
    */
   readonly images?: boolean
+  /** The current body of a loaded skill, or null for a name that has none. Absent: no skills. */
+  readonly skills?: (name: string) => string | null
 }
 
 /**
@@ -98,6 +110,7 @@ export function buildWindow({
   source,
   components,
   images = true,
+  skills,
 }: WindowInput): ChatMessage[] {
   const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }]
 
@@ -107,6 +120,13 @@ export function buildWindow({
       start = i + 1
       break
     }
+  }
+  // Loaded skills outlive a summary: they are reference, not history, and are
+  // re-rendered at the end of every window rather than replayed from the log.
+  const loaded: string[] = []
+  for (let i = start; i < log.length; i++) {
+    const event = log[i]!
+    if (event.kind === 'skill' && !event.error && !loaded.includes(event.name)) loaded.push(event.name)
   }
 
   // The newest summary wins: an older one is already inside what it covers.
@@ -184,6 +204,10 @@ export function buildWindow({
         // which no longer exists does not just waste tokens, it misleads.
         if (!event.ok && event.turn === turn) messages.push({ role: 'user', content: event.stderr })
         break
+      case 'skill':
+        // The refusal is live only, like stderr; a body is attached below.
+        if (event.error && event.turn === turn) messages.push({ role: 'user', content: event.error })
+        break
       case 'inspect': {
         // Live only, like stderr: a report about a mesh that no longer exists
         // does not just waste tokens, it misleads (design.md §12).
@@ -203,6 +227,11 @@ export function buildWindow({
         break
       }
     }
+  }
+
+  for (const name of loaded) {
+    const body = skills?.(name)
+    if (body) messages.push({ role: 'user', content: body })
   }
 
   // design.md §5: on a retry the model already has the source it just wrote,
@@ -294,6 +323,10 @@ function reviveEvent(raw: unknown): ChatEvent | null {
         : { ...base, kind: 'note', text, tone: e.tone === 'error' ? 'error' : 'info' }
     case 'inspect':
       return text === null ? null : { ...base, kind: 'inspect', text }
+    case 'skill':
+      return typeof e.name !== 'string'
+        ? null
+        : { ...base, kind: 'skill', name: e.name, ...(typeof e.error === 'string' ? { error: e.error } : {}) }
     case 'summary':
       return text === null || typeof e.coversThrough !== 'string'
         ? null

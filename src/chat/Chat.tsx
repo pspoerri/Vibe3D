@@ -23,6 +23,8 @@ import { parseMarkdown, type Inline } from './markdown'
 import { nextTurn, type ChatEvent } from './log'
 import { partCount } from './parts'
 import { systemPromptFor, verifyMessage } from './prompt'
+import { renderSkill } from './skills'
+import { usesText } from '../kernel/fonts'
 
 const REVOKE_HOME = 'https://openrouter.ai/settings/keys'
 /** A plain cap, chosen over reasoning about 413 payload_too_large: OpenRouter
@@ -305,6 +307,9 @@ export function Chat({
         case 'note':
           lines.push(`${head} (${e.tone}): ${e.text}`, '')
           break
+        case 'skill':
+          lines.push(`${head}: ${e.name}${e.error ? ` — ${e.error}` : ''}`, '')
+          break
         case 'summary':
           lines.push(`${head} (covers through ${e.coversThrough}):`, e.text, '')
           break
@@ -464,6 +469,18 @@ export function Chat({
           log: logRef.current,
           turn,
           systemPrompt: systemPromptFor(units, images.length > 0, looks),
+          // ponytail: the mesh is decoded per window that carries a loaded
+          // skill; only the parts listing reads it. Cache by bytes if it shows.
+          skills: (name, src, off) => {
+            const bytes = off ?? before
+            let mesh = null
+            try {
+              mesh = bytes ? parseOff(new TextDecoder().decode(bytes)) : null
+            } catch {
+              mesh = null
+            }
+            return renderSkill(name, { source: src, mesh, looks })
+          },
           source,
           components,
           looks,
@@ -500,7 +517,7 @@ export function Chat({
             return {
               text: verifyMessage(
                 formatReport(insp.report),
-                meshChecks(insp.report, partCount(candidate)),
+                meshChecks(insp.report, partCount(candidate), usesText(candidate)),
                 insp.legend,
                 looks,
                 closeups.length,
@@ -959,6 +976,12 @@ function ChatEventView({ event }: { event: ChatEvent }) {
       )
     case 'note':
       return <div className={event.tone === 'error' ? 'chat-note bad' : 'chat-note'}>{event.text}</div>
+    case 'skill':
+      return event.error ? (
+        <div className="chat-note bad">{event.error}</div>
+      ) : (
+        <span className="chip">skill · {event.name}</span>
+      )
     case 'clear':
       return <div className="chat-rule">cleared</div>
     case 'summary':

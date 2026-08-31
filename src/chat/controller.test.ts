@@ -5,6 +5,7 @@ import type { ChatMessage, StreamEvent, Usage } from '../llm/openrouter'
 import {
   DRAFT_INTERVAL_MS,
   MAX_RETRIES,
+  MAX_SKILL_ROUNDS,
   runCompact,
   runTurn,
   type TurnDeps,
@@ -959,4 +960,36 @@ test('an inspection that throws still commits what compiled', async () => {
   expect(outcome).toMatchObject({ status: 'committed', source: 'a' })
   expect(h.windows).toHaveLength(1)
   expect(kinds(h.appended)).toEqual(['user', 'assistant', 'compile', 'note'])
+})
+
+test('a skill request alone is a round: recorded, its body in the next window, then the reply goes on', async () => {
+  const h = harness({ replies: [says('```skill\nfonts\n```'), says(fenced('cube(1);'))], compiles: [okResult()] })
+  const skills = (name: string, source: string): string | null => (name === 'fonts' ? `FONTS for ${source}` : null)
+  const outcome = await runTurn({ ...turnInput(), skills }, h.deps)
+  expect(outcome).toMatchObject({ status: 'committed', source: 'cube(1);' })
+  expect(kinds(h.appended)).toEqual(['user', 'assistant', 'skill', 'assistant', 'compile'])
+  expect(JSON.stringify(h.windows[0])).not.toContain('FONTS for')
+  expect(JSON.stringify(h.windows[1])).toContain('FONTS for')
+})
+
+test('an unknown skill is refused by name, and a model that only loads skills is stopped', async () => {
+  const h = harness({ replies: [says('```skill\nmagic\n```'), says('Fine.')] })
+  expect(await runTurn({ ...turnInput(), skills: () => null }, h.deps)).toEqual({ status: 'answered' })
+  expect(h.appended.find((e) => e.kind === 'skill')).toMatchObject({
+    name: 'magic',
+    error: expect.stringContaining('fonts, views, parts, diff'),
+  })
+  expect(JSON.stringify(h.windows[1])).toContain('There is no skill named \\"magic\\"')
+
+  const loop = harness({ replies: Array.from({ length: 5 }, () => says('```skill\nfonts\n```')) })
+  const outcome = await runTurn({ ...turnInput(), skills: () => 'BODY' }, loop.deps)
+  expect(outcome).toMatchObject({ status: 'error' })
+  expect(loop.windows).toHaveLength(MAX_SKILL_ROUNDS + 1)
+})
+
+test('a skill block beside a source is honoured and the compile goes ahead', async () => {
+  const h = harness({ replies: [says(`\`\`\`skill\nparts\n\`\`\`\n\n${fenced('cube(2);')}`)], compiles: [okResult()] })
+  const outcome = await runTurn({ ...turnInput(), skills: () => 'BODY' }, h.deps)
+  expect(outcome).toMatchObject({ status: 'committed', source: 'cube(2);' })
+  expect(kinds(h.appended)).toEqual(['user', 'assistant', 'skill', 'compile'])
 })

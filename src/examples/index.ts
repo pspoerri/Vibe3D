@@ -1,3 +1,4 @@
+import sign from './biergarten-sign.scad?raw'
 import plate from './mounting-plate.scad?raw'
 import plant from './potted-plant.scad?raw'
 
@@ -9,6 +10,7 @@ import plant from './potted-plant.scad?raw'
 export const EXAMPLES: readonly { name: string; source: string }[] = [
   { name: 'A mounting plate', source: plate },
   { name: 'A potted plant', source: plant },
+  { name: 'A Biergarten sign', source: sign },
 ]
 
 /** The document a fresh browser boots into. */

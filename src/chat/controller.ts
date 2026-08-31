@@ -6,10 +6,13 @@ import { extractSource } from './fence'
 import { buildWindow, type ChatEvent, type ComponentRef } from './log'
 import { applyParts, checkParts, parsePartBlocks } from './parts'
 import { COMPACT_PROMPT } from './prompt'
+import { isSkill, parseSkill, SKILL_NAMES } from './skills'
 import { describeView, parseView, type ViewRequest } from './views'
 
 /** Repairs per candidate: 2 compile failures in a row and the turn gives up on it. */
 export const MAX_RETRIES = 2
+/** Skill loads per turn that carry no source: a model that only ever asks for reference is not answering. */
+export const MAX_SKILL_ROUNDS = 3
 export const DRAFT_INTERVAL_MS = 100
 export const COMPACT_AT = 0.6
 
@@ -80,6 +83,12 @@ export interface TurnInput {
    * repairs only, no look at all.
    */
   readonly looks?: boolean
+  /**
+   * The current body of a loaded skill, for the source the model is shown and
+   * the latest mesh of the turn (null when nothing has compiled). Absent: a
+   * skill request is refused as unknown.
+   */
+  readonly skills?: (name: string, source: string, off: Uint8Array | null) => string | null
 }
 
 /** Distributes over the union, so each variant keeps its own fields. */
@@ -120,6 +129,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   let verified: Verified | null = null
   const looks = input.looks ?? true
   let rounds = 0
+  let skillRounds = 0
 
   /** "look 3", "repair 1 of 2", or nothing: the prefix of every status line. */
   const stage = (): string =>
@@ -152,6 +162,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         systemPrompt: input.systemPrompt,
         source: base,
         components: input.components,
+        skills: input.skills && ((name) => input.skills!(name, base, verified?.result.data ?? null)),
       })
 
       let text = ''
@@ -235,10 +246,35 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         continue
       }
 
+      const view = parseView(text)
+
+      // A skill request: recorded, and its body rides every window from here
+      // on. Alone, it is a round; beside a source, an edit or a look, the
+      // reply goes ahead and the reference simply arrives with the result.
+      const skill = parseSkill(text)
+      if (skill.name !== null) {
+        if (isSkill(skill.name) && input.skills) emit({ kind: 'skill', name: skill.name })
+        else {
+          emit({
+            kind: 'skill',
+            name: skill.name,
+            error: `There is no skill named "${skill.name}". The skills are ${SKILL_NAMES.join(', ')}.`,
+          })
+        }
+        if (candidate === null && view.request === null && view.error === null) {
+          if (++skillRounds > MAX_SKILL_ROUNDS) {
+            const message = 'The model kept loading skills without answering.'
+            emit({ kind: 'note', tone: 'error', text: message })
+            return { status: 'error', message }
+          }
+          phase(`loading the ${skill.name} skill`)
+          continue
+        }
+      }
+
       // A look request, and no source with it: render what it asked for and
       // hand it back as an inspection. A source beside it wins — the
       // verification round after the compile is the look.
-      const view = parseView(text)
       if (candidate === null && (view.request !== null || view.error !== null)) {
         if (!looks) {
           emit({

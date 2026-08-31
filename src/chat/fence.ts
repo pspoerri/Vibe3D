@@ -13,9 +13,11 @@ export const EDIT_FENCE = /^```openscad-edit\s*$/i
 export const PART_FENCE = /^```openscad-part\b.*$/i
 /** A look request (views.ts). */
 export const VIEW_FENCE = /^```view\s*$/i
+/** A skill request (skills.ts). */
+export const SKILL_FENCE = /^```skill\s*$/i
 /** A block that is not a document. */
 export const isAside = (line: string): boolean =>
-  EDIT_FENCE.test(line) || PART_FENCE.test(line) || VIEW_FENCE.test(line)
+  EDIT_FENCE.test(line) || PART_FENCE.test(line) || VIEW_FENCE.test(line) || SKILL_FENCE.test(line)
 
 /** An OpenSCAD comment, so a stub can never be mistaken for code. */
 const STUB = '// ... superseded source elided; the current version appears later ...'

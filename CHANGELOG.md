@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- **A third example**, "A Biergarten sign": a plate with a raised gold frame and Liberation
+  Serif lettering, a beer mug at each end, hanging holes — every feature in its own colour, the
+  way the colour rules ask for.
+- **Colour**: the model is asked to colour every feature a second filament would print —
+  lettering, ornaments, trim — apart from its base, and each part apart from the others; the
+  measured report lists each part's colours by surface share and flags lettering left in its
+  base's colour. 3MF exports carry the colours as materials (per triangle) and, for Bambu
+  Studio and PrusaSlicer, as painting — each colour region assigned a filament slot, largest
+  region first, in both slicers' dialects; STL exports carry them per facet in the
+  VisCAM/SolidView attribute word, which MeshLab reads and slicers ignore; OBJ exports carry
+  them as materials in an MTL file downloaded alongside, which the slicers import too.
+- **Skills**: reference the model loads on demand with a ```` ```skill ```` block — `fonts`
+  (every face and style, sizing and cutting lettering), `views` (the view grammar: cuts,
+  framing, close-ups, the best side), `parts` (PART editing, and a live listing of this
+  document's parts with their colours and boxes), `diff` (reading the measured report and the
+  render). Listed one line each in the system prompt; a **skill · fonts** chip marks a load.
+- **Fonts**: `text()` renders. The Liberation family (Sans, Serif, Mono; Regular, Bold,
+  Italic, Bold Italic — SIL OFL) ships with the kernel and is loaded on the first part that
+  uses text; a font name outside the family falls back to the nearest face instead of
+  rendering nothing. The prompt tells the model which faces exist.
 - **Inspection per part**: the measured report lists every solid with its box and volume in
   PART order, and names a closed void — a pocket cut entirely inside a part — instead of
   counting it as a part. The app grades the mechanical checks itself (rests on Z=0, solids

@@ -88,6 +88,31 @@ function sections(lines: readonly string[]): Map<number, Span> {
 /** How many PART sections the source has — what the mesh's solid count is checked against. */
 export const partCount = (source: string): number => sections(source.split('\n')).size
 
+/** Each PART section's number and its top-level call, first line, for a listing. */
+export function partSections(source: string): { part: number; call: string }[] {
+  const lines = source.split('\n')
+  return [...sections(lines).entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([part, span]) => {
+      let depth = 0
+      let call = ''
+      for (let i = span.start + 1; i < span.end; i++) {
+        const line = lines[i]!.replace(/\/\/.*$/, '').trim()
+        if (
+          call === '' &&
+          depth === 0 &&
+          line !== '' &&
+          !/^(module\b|function\b|[\w$]+\s*=)/.test(line) &&
+          !/^[)}\]]/.test(line)
+        ) {
+          call = line
+        }
+        for (const ch of line) depth += '{(['.includes(ch) ? 1 : '})]'.includes(ch) ? -1 : 0
+      }
+      return { part, call: call.length > 80 ? `${call.slice(0, 77)}…` : call }
+    })
+}
+
 /** The construction section's open and END lines, when both exist. */
 function constructionSpan(lines: readonly string[]): { start: number; end: number } | null {
   let start = -1

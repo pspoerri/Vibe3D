@@ -1,5 +1,6 @@
 import { expect, test } from 'vitest'
 import { COMPACT_PROMPT, SYSTEM_PROMPT, systemPromptFor, verifyMessage } from './prompt'
+import { SKILLS } from './skills'
 
 test('the prompt states the output contract and the $fn rule', () => {
   expect(SYSTEM_PROMPT).toMatch(/```/)
@@ -13,6 +14,16 @@ test('the prompt teaches edits, parts, imported meshes and the selection referen
   expect(SYSTEM_PROMPT).toMatch(/one top-level (call|statement) per part/i)
   expect(SYSTEM_PROMPT).toContain('import("')
   expect(SYSTEM_PROMPT).toContain('[Selected part')
+})
+
+test('the prompt names the font family text() has, and points at the fonts skill for the faces', () => {
+  expect(SYSTEM_PROMPT).toContain('font = "Liberation Sans:style=Bold"')
+  expect(SYSTEM_PROMPT).toMatch(/fonts skill/)
+})
+
+test('the prompt lists every skill by name with its one line, and the block that loads one', () => {
+  expect(SYSTEM_PROMPT).toMatch(/```skill\n {4}fonts\n {4}```/)
+  for (const { name, what } of SKILLS) expect(SYSTEM_PROMPT).toContain(`- ${name} — ${what}`)
 })
 
 test('metric adds nothing — it is already the language OpenSCAD speaks', () => {

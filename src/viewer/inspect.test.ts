@@ -66,7 +66,7 @@ test('a first generation reports the part alone, every diff field null', () => {
     volume_mm3: 6000,
     watertight: true,
     parts: 1,
-    per_part: [{ bbox_mm: { min: [0, 0, 0], max: [10, 20, 30], size: [10, 20, 30] }, volume_mm3: 6000 }],
+    per_part: [{ bbox_mm: { min: [0, 0, 0], max: [10, 20, 30], size: [10, 20, 30] }, volume_mm3: 6000, colours: 'no colour' }],
     voids: [],
     genus: 0,
     tri_count: 12,
@@ -111,9 +111,10 @@ test('the formatted report is JSON, one field per line', () => {
 
 const first = (w: number, d: number, h: number): Report =>
   buildReport({ after: stats(w, d, h), before: null, added: null, removed: null })
-const shell = (min: [number, number, number], size: [number, number, number], volume_mm3: number) => ({
+const shell = (min: [number, number, number], size: [number, number, number], volume_mm3: number, colours = 'no colour') => ({
   bbox_mm: { min, max: [min[0] + size[0], min[1] + size[1], min[2] + size[2]] as [number, number, number], size },
   volume_mm3,
+  colours,
 })
 
 test('a sound single part passes every check in one line each', () => {
@@ -240,4 +241,14 @@ test('the legend says what the image shows: first render, one pane, or two with 
   const two = legendFor(true, { frame: { min: [0, 0, 0], max: [1, 1, 1] }, direction: [1, -1, -1] })
   expect(two).toMatch(/two panes/)
   expect(two).toMatch(/changed piece 1, the largest, seen from the front-right, below/)
+})
+
+test('lettering in one colour with its base is a NO; two colours are listed; no colour says nothing', () => {
+  const plain = first(10, 20, 30)
+  expect(meshChecks(plain, 1, true).find((c) => c.startsWith('colours'))).toMatch(/^colours: NO — the source has text\(\)/)
+  expect(meshChecks(plain, 1, false).find((c) => c.startsWith('colours'))).toBeUndefined()
+  const signed: Report = { ...plain, per_part: [shell([0, 0, 0], [40, 20, 5], 2900, 'saddlebrown (#8b4513) 82%, gold (#ffd700) 18%')] }
+  expect(meshChecks(signed, 1, true).find((c) => c.startsWith('colours'))).toBe('colours: part 1 saddlebrown (#8b4513) 82%, gold (#ffd700) 18%')
+  const oneColour: Report = { ...plain, per_part: [shell([0, 0, 0], [40, 20, 5], 2900, 'red (#ff0000) 100%')] }
+  expect(meshChecks(oneColour, 1, false).find((c) => c.startsWith('colours'))).toBe('colours: part 1 red (#ff0000) 100%')
 })

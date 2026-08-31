@@ -39,7 +39,7 @@ export function Help({ onClose }: { onClose: () => void }) {
             key works too. It is kept in this browser only and sent to exactly one host.
           </li>
           <li>
-            <b>A document.</b> The start window lists yours, newest first, with two examples to
+            <b>A document.</b> The start window lists yours, newest first, with three examples to
             start from. <b>New</b> in the menu bar makes an empty one.
           </li>
           <li>
@@ -64,7 +64,9 @@ export function Help({ onClose }: { onClose: () => void }) {
           The line under the transcript says what it is doing — <code>look 2 · compiling</code>{' '}
           — click it to see the model's raw output so far; the viewport shows each version that compiles as it goes (tagged <b>candidate</b>{' '}
           until it commits), and nothing interrupts it but <b>Stop</b>. Everything it saw sits in the transcript
-          behind the <b>inspected</b> chip.
+          behind the <b>inspected</b> chip. The model can also load a <b>skill</b> — fonts, views,
+          parts, diff — reference it pulls in when it needs it, at any thinking level; a{' '}
+          <b>skill · fonts</b> chip marks the moment.
         </p>
         <p>
           <b>Stop</b> aborts the request. If a version had already compiled, you keep it. Prices
@@ -101,7 +103,13 @@ export function Help({ onClose }: { onClose: () => void }) {
             <b>CLEAR</b> fix a stroke, <b>ATTACH</b> puts the marked-up view into your next message,
             where the model reads the strokes as "here". <kbd>Esc</kbd> leaves without attaching.
           </li>
-          <li><b>Export 3MF</b> (carries units, one object per part), <b>STL</b>, or <b>OBJ</b>.</li>
+          <li>
+            <b>Export 3MF</b> (carries units, one object per part, and every <code>color()</code> as a
+            material — and, for Bambu Studio and PrusaSlicer, as painting: each colour region is
+            a filament slot, the largest region filament 1), <b>STL</b> (colours per facet, the VisCAM/SolidView
+            way — MeshLab reads them, slicers ignore them), or <b>OBJ</b> (a coloured model brings
+            a <code>.mtl</code> file along, one material per colour, which slicers read).
+          </li>
         </ul>
 
         <h2>Parts</h2>

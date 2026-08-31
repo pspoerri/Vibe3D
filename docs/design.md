@@ -95,6 +95,25 @@ off      rc=0   36,702 B      csg      rc=0      730 B
 The 3MF is spec-correct: core namespace, `unit="millimeter"`, and the `_rels/.rels` StartPart
 relationship that Bambu Studio **hard-fails** without.
 
+### Fonts (2026-08-31)
+
+The wasm build ships no font and its fontconfig has no default config path, so `text()`
+rendered nothing — past a "Can't get font" warning, silently when other geometry was in
+the same top-level object (the A320 log's engraved nameplate was byte-identical to its
+embossed predecessor). `src/kernel/vendor/fonts/` now carries the Liberation family
+(2.1.5, SIL OFL 1.1: Sans, Serif, Mono × Regular, Bold, Italic, Bold Italic — OpenSCAD's
+own default is Liberation Sans), and `fonts.ts` installs it: the twelve faces and a
+`fonts.conf` listing `/fonts` are written into the instance's FS and `ENV.FONTCONFIG_FILE`
+points at the config before `callMain` — the glue exports `ENV`. Installed only when the
+source matches `text\w*\s*\(` (a regex; a comment that matches merely installs fonts for
+nothing): fontconfig scans the directory on every kernel start, and measured under Node
+that is ~25 ms for two faces and ~30 ms for twelve on a ~30 ms compile, so the whole
+family ships and a text-free part pays nothing. The worker fetches the faces once, on the
+first source that needs them, as Vite-hashed assets via `import.meta.glob`; a failed fetch
+is retried on the next text() compile. A name the bundle lacks gets fontconfig's nearest
+match rather than nothing, and the system prompt's TEXT section names the faces so the
+model asks for one that is there.
+
 ### Compile path
 
 ```
@@ -270,6 +289,33 @@ Parameters, bbox, watertightness, part count and thumbnail are all computed clie
 model's entire output surface is one string. Corollary and the best UX-per-line in the project:
 OpenSCAD Customizer annotations (`wall = 2; // [1:0.5:5]`) parse straight into sliders, and
 dragging one does an in-source substitution and recompiles with **zero LLM calls**.
+
+### Skills (2026-08-31)
+
+Reference the model loads when it changes what it will do next, so the system prompt stays a
+short cacheable prefix while the detail grows. Four, in `src/chat/skills.ts`:
+
+- **fonts** — generated from `FONT_FILES`, so it can never promise a face that is not
+  vendored: every family and style by name, the `Family:style=Style` syntax, size and relief
+  for printed lettering, emboss and engrave snippets.
+- **views** — the whole view grammar (named directions, `auto`, cuts, `box`, `closeup`), or,
+  with thinking off, how to turn looks on.
+- **parts** — PART sections, the four ways to change one, and a live listing of this document:
+  each PART's call line against the solid on screen, with its colour (name and hex, from the
+  mesh's per-face colours via `partColours`) and box — so a part can be spoken of as "the red
+  one", and a mismatch between sections and solids is named.
+- **diff** — every field of the measured report, the checks, and how to read the green/magenta
+  render and the round-against-round semantics.
+
+Carried in-band like a view request: a reply that is only a ```` ```skill ```` block naming one
+is a round — the controller records a `skill` event and continues; beside a source, an edit or
+a look the block is honoured and the reply goes ahead. Bodies are not stored: `buildWindow`
+re-renders every loaded skill at window time (after the history, before the source), so the
+parts listing is always current, and a loaded skill outlives compaction — it is reference, not
+history — and dies at `/clear`. An unknown name gets a live-only refusal that lists the skills.
+Skill loads are allowed at every thinking level, including off, capped at three per turn
+without a source (`MAX_SKILL_ROUNDS`). The system prompt's SKILLS section is generated from
+the same list, and its TEXT and looking clauses shrank to a pointer each.
 
 ---
 
@@ -550,6 +596,34 @@ buys the removal of one checkbox.
 **STEP was dropped.** OpenSCAD is a mesh kernel, so STEP could only ever be faceted — and for
 printing it buys nothing: Bambu Studio tessellates STEP on import and cannot export it, and the
 same part is 198 KB as 3MF versus 8.03 MB as faceted STEP.
+
+### Colour (2026-08-31)
+
+Colour is a print instruction: the prompt's COLOUR section asks for a `color()` on every
+feature a second filament would print — lettering, logos, inlays, trim — and on each part when
+there are several. The kernel already carries it: per-face colours reach the OFF through
+`union()` and `difference()` (a cut face takes the cutter's colour, so colouring the cutter
+colours an engraving), and the default 3MF export writes one `<basematerials>` entry per colour
+with per-triangle `pid`/`p1` references. A kernel test pins that — and Bambu Studio ignores
+it: what it and PrusaSlicer show is *painting*, an attribute per triangle naming a filament
+slot (`paint_color` for Bambu, `slic3rpe:mmu_segmentation` for Prusa, the same value: the
+TriangleSelector serialisation of an unsplit triangle in state n — "4", "8", "0C", "1C" …).
+`export/threemf.ts` rewrites the kernel's model XML with both, the colour regions ranked by
+surface area so the base is filament 1 and the lettering 2; the materials stay for everything
+else that reads them, and a file with fewer than two colours passes through untouched. Which
+filament a region gets is the slicer's choice — the export carries regions, not RGB, which is
+what a multi-material print is. STL has no colour
+standard, so `export/stl.ts` writes the binary STL itself from the OFF, with each facet's
+colour in the attribute word the VisCAM/SolidView way (bit 15 valid, 5 bits per channel) —
+MeshLab and most viewers read it, slicers ignore the word, an uncoloured reader sees a plain
+STL. OBJ is written the same way (`export/obj.ts`): a material per colour in a sidecar MTL,
+faces grouped under `usemtl`, each solid an `o part_N` group — the OBJ form PrusaSlicer and
+Bambu Studio import as painting; "Export OBJ" downloads both files when the mesh is coloured,
+and a plain OBJ alone when it is not. The kernel's OBJ writer is no longer used. The measured
+report carries each part's colours by surface share (`per_part[i].colours`,
+`partColourShares`), the parts listing names parts by them ("the gold lettering"), and one
+check fires when the source has `text()` but no part carries two colours — the one colour
+mistake the request's own words make certain enough to name.
 
 ### Shipped 2026-08-31: parts, components, OBJ, edits, selection, panes (M5)
 

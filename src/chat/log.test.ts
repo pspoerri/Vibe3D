@@ -450,3 +450,49 @@ test('a revived inspection has its report and never a render', () => {
   ])
   expect(revived).toEqual([{ id: 'i1', ts: 1, turn: 1, kind: 'inspect', text: 'REPORT' }])
 })
+
+test('a loaded skill is rendered at the end of every later window, once, until a /clear', () => {
+  const skills = (name: string): string | null => (name === 'fonts' ? 'FONTS BODY' : null)
+  const log: ChatEvent[] = [
+    { id: 'u1', ts: 1, turn: 1, kind: 'user', text: 'lettering please' },
+    { id: 'a1', ts: 2, turn: 1, kind: 'assistant', text: '```skill\nfonts\n```' },
+    { id: 's1', ts: 3, turn: 1, kind: 'skill', name: 'fonts' },
+    { id: 's2', ts: 4, turn: 1, kind: 'skill', name: 'fonts' },
+    { id: 's3', ts: 5, turn: 1, kind: 'skill', name: 'nope', error: 'There is no skill named "nope".' },
+  ]
+  const live = buildWindow({ log, turn: 1, systemPrompt: 'S', source: 'cube(1);', skills })
+  const texts = live.map((m) => (typeof m.content === 'string' ? m.content : '')).join('\n---\n')
+  expect(texts.match(/FONTS BODY/g)).toHaveLength(1)
+  expect(texts).toContain('There is no skill named "nope".')
+  // The body sits after the history and before the source, so the model reads it last.
+  expect(live.at(-2)?.content).toBe('FONTS BODY')
+  expect(String(live.at(-1)?.content)).toContain('cube(1);')
+
+  // A later turn keeps the body and drops the refusal; without a renderer, nothing is attached.
+  const later = buildWindow({ log, turn: 2, systemPrompt: 'S', source: 'cube(1);', skills })
+  const laterTexts = later.map((m) => (typeof m.content === 'string' ? m.content : '')).join('\n')
+  expect(laterTexts).toContain('FONTS BODY')
+  expect(laterTexts).not.toContain('no skill named')
+  expect(JSON.stringify(buildWindow({ log, turn: 2, systemPrompt: 'S', source: 'cube(1);' }))).not.toContain('FONTS BODY')
+
+  const cleared = buildWindow({
+    log: [...log, { id: 'c', ts: 6, turn: 2, kind: 'clear' }],
+    turn: 3,
+    systemPrompt: 'S',
+    source: 'cube(1);',
+    skills,
+  })
+  expect(JSON.stringify(cleared)).not.toContain('FONTS BODY')
+})
+
+test('a skill event survives the store, and one with no name is dropped', () => {
+  const revived = reviveLog([
+    { id: 'a', ts: 1, turn: 1, kind: 'skill', name: 'fonts' },
+    { id: 'b', ts: 2, turn: 1, kind: 'skill', name: 'nope', error: 'no' },
+    { id: 'c', ts: 3, turn: 1, kind: 'skill' },
+  ])
+  expect(revived).toEqual([
+    { id: 'a', ts: 1, turn: 1, kind: 'skill', name: 'fonts' },
+    { id: 'b', ts: 2, turn: 1, kind: 'skill', name: 'nope', error: 'no' },
+  ])
+})

@@ -2,3 +2,6 @@ OpenSCAD 2026.08.30 WebAssembly (web build) — https://files.openscad.org/snaps
 
 0dbdc9ca5e3460216cff43223bc3addeeb22f331981eaf9395224fb2b1cb7ebe  openscad.js
 31475d6191ca3877f3254a53232e9410a14f5d2da1fc4f10173cea2bbd4c8921  openscad.wasm
+
+Liberation Fonts 2.1.5 (SIL Open Font License 1.1) — https://github.com/liberationfonts/liberation-fonts/releases/tag/2.1.5
+fonts/*.ttf and fonts/LICENSE, unmodified from liberation-fonts-ttf-2.1.5.tar.gz

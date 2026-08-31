@@ -12,6 +12,9 @@ import { ParamsPanel } from './editor/ParamsPanel'
 import { Viewport } from './viewer/Viewport'
 import { selectPart, type Selection } from './viewer/select'
 import { downloadBlob, EXTENSION, MIME, type DownloadFormat } from './export/download'
+import { encodeObj } from './export/obj'
+import { encodeStl } from './export/stl'
+import { paint3mf } from './export/threemf'
 import {
   formatLength, formatVolume, lengthLabel, loadUnits, saveUnits, volumeLabel,
 } from './state/units'
@@ -286,9 +289,23 @@ export function App() {
     const name = fileName(session ? currentDoc(session).name : UNTITLED)
     const exporter = new Compiler()
     try {
-      const result = await exporter.compile(source, format, { files })
+      // STL and OBJ are written here from the OFF, so colour comes along —
+      // per facet in the STL, as an MTL beside the OBJ. The kernel's own
+      // writers of both have none. 3MF comes from the kernel with its
+      // materials, and gets the slicers' per-triangle painting added.
+      const result = await exporter.compile(source, format === '3mf' ? format : 'off', { files })
       if (result.ok) {
-        downloadBlob(result.data, `${name}.${EXTENSION[format]}`, MIME[format])
+        const filename = `${name}.${EXTENSION[format]}`
+        if (format === '3mf') downloadBlob(paint3mf(result.data), filename, MIME[format])
+        else {
+          const mesh = parseOff(new TextDecoder().decode(result.data))
+          if (format === 'binstl') downloadBlob(encodeStl(mesh), filename, MIME[format])
+          else {
+            const { obj, mtl } = encodeObj(mesh, name)
+            downloadBlob(obj, filename, MIME[format])
+            if (mtl) downloadBlob(mtl, `${name}.mtl`, 'model/mtl')
+          }
+        }
       } else {
         setExportError(result.stderr)
       }

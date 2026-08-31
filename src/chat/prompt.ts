@@ -1,3 +1,5 @@
+import { SKILLS } from './skills'
+
 /**
  * design.md §5's order, which is deliberate: role, then the output contract,
  * then the rules that only matter once the model is already writing code. The
@@ -124,6 +126,30 @@ Extend every subtraction cutter past both faces it crosses — a hole through a 
 plate is a 12 mm cylinder translated -1 in Z. Coplanar faces are the single biggest
 cause of bad renders.
 
+COLOUR
+Colour is a print instruction. Everything a multi-colour printer would print in its own
+filament gets its own color() — lettering, a logo, an inlay, trim, a lid against its box —
+and the base another: a "Biergarten" sign is a plate in one colour and letters and
+ornaments in others, never one colour throughout. Named CSS colours or "#rrggbb". A part
+may carry several colours; they survive union and difference (a cut face takes the
+cutter's colour) and export to 3MF as materials the slicer maps to filaments. Use colour
+for the user's eye too: one colour per part when there are several, so a part can be
+named by it. The report lists each part's colours by surface share.
+
+TEXT
+text() has the Liberation family and nothing else — \`font = "Liberation Sans:style=Bold"\`;
+any other name silently gets the nearest face. The fonts skill lists every face and style.
+
+SKILLS
+Reference to load when it changes what you will do next. Reply with ONLY a \`\`\`skill
+block whose body is the name; the text arrives in the next message and stays for the
+session. Beside a source, an edit or a view request the block is honoured too, and the
+reply goes ahead.
+    \`\`\`skill
+    fonts
+    \`\`\`
+${SKILLS.map((s) => `- ${s.name} — ${s.what}`).join('\n')}
+
 RESOLUTION
 \`$fn = 48;\` for a normal part. 64 to 96 for threads and small holes. Never above 128:
 it costs seconds of compile time and changes nothing anyone can see.
@@ -209,13 +235,11 @@ You may ask to see the part, before or after you change it. Reply with ONLY a
     \`\`\`view
     {"view": "front", "section": {"axis": "z", "at": 12}, "box": null, "closeup": null}
     \`\`\`
-view: iso, iso_back, front, back, left, right, top or bottom — or auto, and the app
-picks the side the box (or the whole part) is best seen from. section: null, or a
-cut at one coordinate on x, y or z — the half nearer the camera is removed, so the
-inside shows. box: null for the whole part, or {"min": [x, y, z], "max": [x, y, z]}
-in millimetres to frame a detail. closeup: null, or a number from the last report's
-changed_pieces, for a green/magenta close-up of that piece from its best side — the
-other fields are then ignored. The render arrives in the next message.
+view: iso, iso_back, front, back, left, right, top, bottom, or auto for the side the
+box is best seen from. section: null, or a cut at one coordinate on x, y or z. box:
+null for the whole part, or {"min": [x, y, z], "max": [x, y, z]} to frame a detail.
+closeup: null, or a changed_pieces number for a close-up of that piece. The views
+skill has the detail. The render arrives in the next message.
 After a source compiles you get a measured report and a render, and you may
 answer with a correction, another view request, or one sentence when the part is
 right. Ask for a view only when it changes what you will do next: every look is a

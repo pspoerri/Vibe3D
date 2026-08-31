@@ -2,10 +2,13 @@ export interface OpenSCADFS {
   writeFile(path: string, data: string | Uint8Array): void
   readFile(path: string): Uint8Array
   unlink(path: string): void
+  mkdir(path: string): void
 }
 
 export interface OpenSCADModule {
   FS: OpenSCADFS
+  /** The program's environment, read when main() starts. */
+  ENV: Record<string, string>
   /** Runs main() to process exit — the module instance is single-use afterwards. */
   callMain(args: string[]): number
 }

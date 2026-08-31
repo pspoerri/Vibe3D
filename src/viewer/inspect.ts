@@ -3,6 +3,7 @@ import { encodeOff, parseOff, type Mesh } from '../kernel/off'
 import { meshStats, partLabels, type MeshStats, type ShellStats } from '../kernel/stats'
 import type { Vec3 } from './camera'
 import { renderComposite, type Detail } from './capture'
+import { describeColours, partColourShares } from './select'
 
 export interface Box {
   readonly min: Vec3
@@ -24,6 +25,8 @@ interface ShellReport {
   volume_mm3: number
   /** Present when the part was translated whole: the move, already taken out of the diff. */
   moved_mm?: Vec3
+  /** The part's colours by surface share, largest first — "saddlebrown (#8b4513) 82%, gold (#ffd700) 18%". */
+  colours: string
 }
 
 /** design.md §6.1, the ~200-token text diff. Field names are the wire format. */
@@ -124,10 +127,11 @@ const boxReport = (stats: { min: Vec3; max: Vec3; size: Vec3 }): BoxReport => ({
   max: round3(stats.max),
   size: round3(stats.size),
 })
-const shellReport = (shell: ShellStats, moved: Vec3 | null = null): ShellReport => ({
+const shellReport = (shell: ShellStats, moved: Vec3 | null = null, colours = 'no colour'): ShellReport => ({
   bbox_mm: boxReport(shell),
   volume_mm3: r1(shell.volume),
   ...(moved ? { moved_mm: round3(moved) } : {}),
+  colours,
 })
 const volumeOf = (stats: MeshStats): number | null =>
   stats.volume === null ? null : r1(stats.volume)
@@ -143,15 +147,17 @@ export function buildReport(input: {
   moves?: readonly (Vec3 | null)[]
   /** changedPieces of the diff. Absent: none. */
   pieces?: readonly Piece[]
+  /** Per solid of `after`: its colours described (describeColours). Absent: "no colour". */
+  colours?: readonly string[]
 }): Report {
-  const { after, before, added, removed, moves = [], pieces = [] } = input
+  const { after, before, added, removed, moves = [], pieces = [], colours = [] } = input
   const change = changeBox(added, removed)
   return {
     model_bbox_mm: boxReport(after),
     volume_mm3: volumeOf(after),
     watertight: after.watertight,
     parts: after.parts,
-    per_part: after.shells.map((shell, i) => shellReport(shell, moves[i] ?? null)),
+    per_part: after.shells.map((shell, i) => shellReport(shell, moves[i] ?? null, colours[i])),
     voids: after.voids.map((shell) => shellReport(shell)),
     genus: after.genus,
     tri_count: after.triangles,
@@ -387,7 +393,7 @@ const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' 
  * the request instead. A line that starts with NO is a defect to fix; the
  * void line names the shell the bare count could not.
  */
-export function meshChecks(report: Report, sections: number): string[] {
+export function meshChecks(report: Report, sections: number, lettering = false): string[] {
   const out: string[] = []
   const parts = report.per_part
 
@@ -435,6 +441,16 @@ export function meshChecks(report: Report, sections: number): string[] {
       ? 'watertight: yes'
       : 'watertight: NO — the mesh has open edges; look for a zero-thickness feature or a coplanar face',
   )
+
+  // Lettering that shares its base's colour prints in one filament: the one
+  // colour mistake the request's own words make certain enough to name.
+  if (lettering && parts.every((part) => (part.colours.match(/#/g) ?? []).length < 2)) {
+    out.push(
+      'colours: NO — the source has text() but no part carries two colours, so the lettering prints in the same filament as its base. color() the text (and any trim) differently from the base',
+    )
+  } else if (parts.some((part) => part.colours !== 'no colour')) {
+    out.push(`colours: ${parts.map((part, i) => `part ${i + 1} ${part.colours}`).join('; ')}`)
+  }
 
   const genus = report.genus
   const was = report.was?.genus ?? null
@@ -557,7 +573,8 @@ export async function inspect(input: InspectInput): Promise<Inspection> {
   const model = boxOf(after)
   const pieces = changedPieces(addedStats, removedStats, parts, model)
   const detail = detailOf(pieces, change, parts, model)
-  const report = buildReport({ after, before, added: addedStats, removed: removedStats, moves, pieces })
+  const colours = partColourShares(afterMesh).map(describeColours)
+  const report = buildReport({ after, before, added: addedStats, removed: removedStats, moves, pieces, colours })
   const image =
     input.vision && !input.signal.aborted
       ? renderComposite(aligned, afterMesh, frameBox(change, model), detail)
