@@ -719,10 +719,7 @@ function StartWindow({
           Vibe3D
           <img className="start-icon" src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" />
         </h1>
-        <p className="start-tag">
-          Vibe 3D Models: Bring your own tokens. Leverages your LLM along with OpenSCAD to build
-          your ideas into a 3D Model.
-        </p>
+        <p className="start-tag">Prompt a 3D model (with your own tokens).</p>
 
         <ul className="start-list">
           {rows.map((d) => (
