@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.2.0 — 2026-08-31
+
+Milestones 5–7 of [`docs/design.md`](docs/design.md): parts and imported meshes, draw mode and
+model-requested views, colour everywhere and per-part inspection — plus fonts, skills and a
+third example.
 
 - **A third example**, "A Biergarten sign": a plate with a raised gold frame and Liberation
   Serif lettering, a beer mug at each end, hanging holes — every feature in its own colour, the
@@ -94,6 +98,21 @@
 - **Help**: a manual in the app (menu bar → Help, Esc closes), the command list on hover over
   that button, and `/help` in the chat. One `COMMANDS` table feeds all three.
 - Real-kernel unit tests: the pinned wasm now runs under vitest for format and import checks.
+
+- **Exporting a big coloured model no longer freezes the tab**: the 3MF painting pass replaced
+  triangle tags one `String.replace` at a time over the whole model XML — quadratic, 46 seconds
+  for the sign's 58k triangles, on the main thread. One pass now, 0.2 s, byte-identical output.
+- The Biergarten example's mounting-hole cutters carry the plate's colour, so the bore walls no
+  longer export in an unset colour.
+- **Help** explains Bambu Studio's "invalid config, load geometry data only" dialog: its
+  greeting for every 3MF it did not write itself — click OK, the parts and colours all load.
+- The start page ends with the version — `v0.2.0` on a release, `v0.2.0+hash` linking to the
+  commit otherwise — and a link to the repository.
+- A standing notice in the chat when no API access is configured yet: connect OpenRouter or
+  paste a key in settings.
+- The start window no longer wears the last document's menubar: version picker, name badge,
+  Rename and Delete belong to a document on screen.
+- The tagline is "Prompt a 3D model (with your own tokens)."
 
 ## v0.1.0 — 2026-08-31
 
