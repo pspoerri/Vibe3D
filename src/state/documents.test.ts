@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest'
 import type { ChatEvent } from '../chat/log'
 import {
+  addComponent,
   commitEdit,
   commitTurn,
   createSession,
@@ -11,6 +12,7 @@ import {
   nameFromFirstTurn,
   nameFromPrompt,
   newDoc,
+  removeComponent,
   renameDoc,
   restoreVersion,
   reviveSession,
@@ -20,6 +22,7 @@ import {
   suggestName,
   undoVersion,
   updateSource,
+  type Component,
   type Doc,
   type Session,
   type Version,
@@ -50,6 +53,7 @@ const doc = (id: string, name: string, source: string, ts: number): Doc => ({
   versions: [{ ...v('1', source), ts }],
   head: '1',
   chat: [],
+  components: [],
 })
 const three = (): Session => ({
   docs: [doc('a', 'A', 'cube(1);', 1), doc('b', 'B', 'cube(2);', 2), doc('c', 'C', 'cube(3);', 3)],
@@ -476,4 +480,64 @@ test('revive renumbers versions, remaps head and parents, and drops what it cann
     ),
   )
   expect(dangling.head).toBe('1')
+})
+
+// ---- components (design.md §8) ---------------------------------------------------
+
+const comp = (name: string, byte = 1): Component => ({
+  name,
+  bytes: new Uint8Array([byte]),
+  min: [0, 0, 0],
+  max: [10, 20, 30],
+})
+
+test('a new document has no components, and adding one stamps the document', () => {
+  const s = three()
+  expect(currentDoc(s).components).toEqual([])
+  const next = addComponent(s, comp('bracket.stl'), 99)
+  expect(currentDoc(next).components).toEqual([comp('bracket.stl')])
+  expect(currentDoc(next).updatedAt).toBe(99)
+  expect(currentDoc(s).components).toEqual([])
+})
+
+test('adding a component under a taken name replaces it in place', () => {
+  let s = addComponent(three(), comp('a.stl', 1), 1)
+  s = addComponent(s, comp('b.obj', 2), 2)
+  s = addComponent(s, comp('a.stl', 3), 3)
+  expect(currentDoc(s).components.map((c) => [c.name, c.bytes[0]])).toEqual([
+    ['a.stl', 3],
+    ['b.obj', 2],
+  ])
+})
+
+test('removing a component by name, and removing one that is not there changes nothing', () => {
+  const s = addComponent(three(), comp('a.stl'), 1)
+  expect(currentDoc(removeComponent(s, 'a.stl', 2)).components).toEqual([])
+  expect(removeComponent(s, 'zzz.stl', 2)).toBe(s)
+})
+
+test('revive keeps well-formed components, accepts base64 bytes, and drops the rest', () => {
+  const raw = {
+    ...doc('a', 'A', 'cube(1);', 1),
+    components: [
+      comp('good.stl', 7),
+      { name: 'b64.obj', bytes: btoa('\x05'), min: [1, 2, 3], max: [4, 5, 6] },
+      { name: '../evil.stl', bytes: new Uint8Array([1]), min: [0, 0, 0], max: [1, 1, 1] },
+      { name: 'notes.txt', bytes: new Uint8Array([1]), min: [0, 0, 0], max: [1, 1, 1] },
+      { name: 'nobytes.stl', min: [0, 0, 0], max: [1, 1, 1] },
+      { name: 'badbox.stl', bytes: new Uint8Array([1]), min: [0, 0], max: [1, 1, 1] },
+      { name: 'nan.stl', bytes: new Uint8Array([1]), min: [0, 0, 'x'], max: [1, 1, 1] },
+      'garbage',
+    ],
+  }
+  const revived = reviveSession({ docs: [raw], currentId: 'a' }, '', 'x', 0)
+  expect(currentDoc(revived).components).toEqual([
+    comp('good.stl', 7),
+    { name: 'b64.obj', bytes: new Uint8Array([5]), min: [1, 2, 3], max: [4, 5, 6] },
+  ])
+})
+
+test('a row with no components field revives with an empty list', () => {
+  const revived = reviveSession({ docs: [doc('a', 'A', 'cube(1);', 1)], currentId: 'a' }, '', 'x', 0)
+  expect(currentDoc(revived).components).toEqual([])
 })

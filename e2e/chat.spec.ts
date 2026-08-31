@@ -985,3 +985,62 @@ test("opening another document never shows the previous document's mesh", async 
   await expect(page.locator('.cm-content')).not.toContainText('plate_x = 60')
   await expect(page.locator('.tag', { hasText: '21.0 × 21.0 × 21.0 mm' })).toBeVisible()
 })
+
+test('an edit reply changes one section and leaves the rest of the source alone', async ({ page }) => {
+  await seedKey(page)
+  const edit =
+    'Thicker.\n\n```openscad-edit\n<<<<<<< SEARCH\nplate_z = 3;   // [1:0.5:10]\n=======\nplate_z = 5;   // [1:0.5:10]\n>>>>>>> REPLACE\n```\n'
+  const bodies: string[] = []
+  let call = 0
+  await page.route(CHAT_URL, (route) => {
+    bodies.push(JSON.stringify(route.request().postDataJSON()))
+    call += 1
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      // The edit, then a prose confirmation of the verification round.
+      body: sseBody(call === 1 ? edit : 'The plate is 5 mm thick as asked.'),
+    })
+  })
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await send(page, 'make it thicker')
+
+  await expect(page.locator('.tag', { hasText: '60.0 × 40.0 × 5.0 mm' })).toBeVisible({
+    timeout: 90_000,
+  })
+  const editor = page.locator('.cm-content')
+  await expect(editor).toContainText('plate_z = 5;')
+  await expect(editor).toContainText('plate_x = 60;')
+  // The verification request shows the model the source with its edit applied,
+  // since it never wrote that file whole.
+  await expect.poll(() => call).toBe(2)
+  expect(bodies[1]).toContain('edits applied')
+  expect(bodies[1]).toContain('plate_z = 5;')
+})
+
+test('a selected part heads the message the model gets', async ({ page }) => {
+  await seedKey(page)
+  const bodies: string[] = []
+  await page.route(CHAT_URL, (route) => {
+    bodies.push(JSON.stringify(route.request().postDataJSON()))
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: sseBody('Sure — 3 mm is the current thickness.'),
+    })
+  })
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await page.locator('.viewport-canvas canvas').click()
+  await expect(page.locator('.chat-selection')).toContainText('part 1 of 1')
+  await send(page, 'how thick is this?')
+
+  await expect(page.locator('.msg-user')).toContainText('[Selected part 1 of 1')
+  await expect.poll(() => bodies.length).toBe(1)
+  expect(bodies[0]).toContain(
+    '[Selected part 1 of 1: 60 × 40 × 3 mm, from [0, 0, 0] to [60, 40, 3]]\\n\\nhow thick is this?',
+  )
+})

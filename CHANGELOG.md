@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- **Parts**: every top-level statement is its own part — shown together, counted in the HUD,
+  and exported as separate objects in the 3MF (each with its colour). The model is told to
+  lay parts out side by side on the plate and never to overlap two top-level statements.
+- **Import meshes**: attach STL, OBJ, 3MF or OFF files to a document (under the sliders) and
+  `import("name.stl")` them from the source. Each file is validated and measured by the kernel
+  on attach; the model sees the list with bounding boxes. Files persist with the document and
+  travel in the project file (schema 2, base64 — a file without any is still schema 1).
+- **Export OBJ**, and `/export obj`.
+- **Partial updates**: the model may reply with ```` ```openscad-edit ```` blocks that replace
+  a quoted section of the current source instead of rewriting the file. A non-matching edit is
+  reported back to it like a compile error and costs a repair attempt.
+- **Click a part** in the viewport to select it; the next message is headed by its number,
+  bounding box and colour, so "make this taller" means that part.
+- **Resizable panes**: drag the grip at the bottom corner of the editor or chat pane.
+- Real-kernel unit tests: the pinned wasm now runs under vitest for format and import checks.
+
 ## v0.1.0 — 2026-08-31
 
 The first tagged release: milestones 1–4 of [`docs/design.md`](docs/design.md), plus examples,
@@ -69,6 +87,6 @@ colour and the LLM-titled document. A static site — nothing runs anywhere but 
 ### Known limits
 
 - OpenRouter is the only model host; the CSP's `connect-src` allows nothing else.
-- No assemblies, organic shapes or multi-user anything (design.md §1).
+- No organic shapes or multi-user anything, and no whole assemblies from one prompt (design.md §1).
 - Stop halts billing on OpenAI, Anthropic, DeepSeek and xAI, not on Google, Groq or Mistral.
 - A browser may evict IndexedDB when it needs space; export what you want to keep.

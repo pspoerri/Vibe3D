@@ -1,5 +1,12 @@
 import type { ChatMessage, ContentPart } from '../llm/openrouter'
-import { stubFences } from './fence'
+import { EDIT_FENCE, stubFences } from './fence'
+
+/** A document component as the model needs it: a name to import() and a measured box. */
+export interface ComponentRef {
+  readonly name: string
+  readonly min: readonly number[]
+  readonly max: readonly number[]
+}
 
 /**
  * `id` and `ts` are carried from the start because Milestone 3 persists this
@@ -60,8 +67,15 @@ export interface WindowInput {
   /** The turn number in flight. Events with this turn are treated as live. */
   readonly turn: number
   readonly systemPrompt: string
-  /** The committed document. Never a streamed partial, never a retry candidate. */
+  /**
+   * The source the model is to work from: the committed document, or, once a
+   * reply has edited it, the result of those edits — a retry candidate ONLY
+   * in that case, because the model never wrote it whole and would otherwise
+   * repair a file it cannot see.
+   */
   readonly source: string
+  /** Listed after the source, so the model can import() them by name and place them by numbers. */
+  readonly components?: readonly ComponentRef[]
   /**
    * False strips image parts from every message, live turn included. Exists for
    * exactly one caller — runCompact — whose window is built for the turn that
@@ -82,6 +96,7 @@ export function buildWindow({
   turn,
   systemPrompt,
   source,
+  components,
   images = true,
 }: WindowInput): ChatMessage[] {
   const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }]
@@ -112,6 +127,9 @@ export function buildWindow({
   }
 
   let liveReply = false
+  // Whether the latest live reply was a partial update: its source is not on
+  // the wire, so the applied result has to be attached for the next attempt.
+  let liveEdits = false
   for (let i = start; i < log.length; i++) {
     const event = log[i]!
     switch (event.kind) {
@@ -153,7 +171,10 @@ export function buildWindow({
           role: 'assistant',
           content: event.turn === turn ? event.text : stubFences(event.text),
         })
-        if (event.turn === turn) liveReply = true
+        if (event.turn === turn) {
+          liveReply = true
+          liveEdits = EDIT_REPLY.test(event.text)
+        }
         break
       case 'compile':
         // Verbatim, and only from the live turn: stderr that points at source
@@ -184,14 +205,32 @@ export function buildWindow({
   // design.md §5: on a retry the model already has the source it just wrote,
   // so the document crosses the wire exactly once per request either way —
   // and a failed candidate is never mislabelled as the current source.
-  if (!liveReply) {
-    messages.push({
-      role: 'user',
-      content: `This is the current source of the part:\n\n\`\`\`openscad\n${source}\n\`\`\``,
-    })
+  if (!liveReply || liveEdits) {
+    messages.push({ role: 'user', content: sourceMessage(source, components, liveEdits) })
   }
 
   return messages
+}
+
+const EDIT_REPLY = new RegExp(EDIT_FENCE.source, 'im')
+
+/** Whole numbers stay whole; anything else gets one decimal, like the measured report. */
+const num = (n: number): string => String(Math.round(n * 10) / 10)
+const vec = (v: readonly number[]): string => `[${v.map(num).join(', ')}]`
+
+function sourceMessage(
+  source: string,
+  components: readonly ComponentRef[] | undefined,
+  edited: boolean,
+): string {
+  const head = `This is the current source of the part${edited ? ', with your edits applied' : ''}:`
+  const body = `\`\`\`openscad\n${source}\n\`\`\``
+  if (!components?.length) return `${head}\n\n${body}`
+  const list = components.map(
+    (c) =>
+      `- import("${c.name}") — ${c.max.map((hi, i) => num(hi - (c.min[i] ?? 0))).join(' × ')} mm, from ${vec(c.min)} to ${vec(c.max)}`,
+  )
+  return `${head}\n\n${body}\n\nMesh files in this document, for import():\n${list.join('\n')}`
 }
 
 /** The next turn number for a log, so a revived transcript continues rather than restarts. */

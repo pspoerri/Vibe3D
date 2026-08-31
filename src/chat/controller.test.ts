@@ -221,6 +221,81 @@ test('the source crosses the wire once per turn, and only live stderr does', asy
   ])
 })
 
+const editReply = (search: string, replace: string, prose = 'Small change.'): string =>
+  `${prose}\n\n\`\`\`openscad-edit\n<<<<<<< SEARCH\n${search}\n=======\n${replace}\n>>>>>>> REPLACE\n\`\`\``
+const EDITED = 'wall = 3;\ncube([10, 10, wall]);'
+
+test('an edit reply is applied to the committed source and the result is compiled', async () => {
+  const h = harness({ replies: [says(editReply('wall = 2;', 'wall = 3;'))], compiles: [okResult()] })
+  const outcome = await runTurn(turnInput(), h.deps)
+
+  expect(outcome).toEqual({ status: 'committed', source: EDITED, result: okResult() })
+  expect(h.compiled).toEqual([EDITED])
+  expect(h.drafts.at(-1)).toBe(EDITED)
+})
+
+test('an edit that does not match is fed back as a diagnostic and costs an attempt', async () => {
+  const h = harness({
+    replies: [says(editReply('wall = 9;', 'wall = 3;')), says(editReply('wall = 2;', 'wall = 3;'))],
+    compiles: [okResult()],
+  })
+  const outcome = await runTurn(turnInput(), h.deps)
+
+  expect(outcome).toMatchObject({ status: 'committed', source: EDITED })
+  expect(h.compiled).toEqual([EDITED])
+  expect(contents(h.windows[1] ?? []).some((c) => /^Edit 1 did not apply/.test(c))).toBe(true)
+  expect(h.appended.filter((e) => e.kind === 'compile').map((e) => [e.ok, e.attempt])).toEqual([
+    [false, 0],
+    [true, 1],
+  ])
+})
+
+test('a repair after an edit reply sees the applied source together with the stderr', async () => {
+  const broken = 'wall = 3\ncube([10, 10, wall]);'
+  const h = harness({
+    replies: [says(editReply('wall = 2;', 'wall = 3')), says(editReply('wall = 3', 'wall = 3;'))],
+    compiles: [failResult('ERROR: Parser error'), okResult()],
+  })
+  const outcome = await runTurn(turnInput(), h.deps)
+
+  expect(outcome).toMatchObject({ status: 'committed', source: EDITED })
+  const retry = contents(h.windows[1] ?? []).join('\n')
+  expect(retry).toContain(broken)
+  expect(retry).toContain('ERROR: Parser error')
+  expect(h.compiled).toEqual([broken, EDITED])
+})
+
+test('three failed edits spend the budget and end in an error, with nothing to commit', async () => {
+  const bad = says(editReply('nope', 'x'))
+  const h = harness({ replies: [bad, bad, bad] })
+  const outcome = await runTurn(turnInput(), h.deps)
+
+  expect(outcome.status).toBe('error')
+  expect(h.compiled).toEqual([])
+  expect(h.windows).toHaveLength(MAX_RETRIES + 1)
+})
+
+test('an unterminated edit block is a cut-off reply, not an answer', async () => {
+  const h = harness({
+    replies: [says('Edit:\n```openscad-edit\n<<<<<<< SEARCH\nwall = 2;\n=======\nwall = 3;')],
+  })
+  const outcome = await runTurn(turnInput(), h.deps)
+
+  expect(outcome.status).toBe('error')
+  expect(h.compiled).toEqual([])
+})
+
+test('a correction after inspection edits the inspected source, not the committed one', async () => {
+  const h = harness({
+    replies: [says(fenced('wall = 4;\ncube([10, 10, wall]);')), says(editReply('wall = 4;', 'wall = 5;'))],
+    compiles: [okResult(), okResult()],
+    inspect: { text: 'report' },
+  })
+  const outcome = await runTurn(turnInput(), h.deps)
+
+  expect(outcome).toMatchObject({ status: 'committed', source: 'wall = 5;\ncube([10, 10, wall]);' })
+})
+
 test('a prose-only reply is an answer, and compiles nothing', async () => {
   const h = harness({ replies: [says('A 2 mm wall is plenty for PLA at this size.')] })
   const outcome = await runTurn(turnInput('how thick should the wall be?'), h.deps)

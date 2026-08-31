@@ -4,12 +4,13 @@ A browser-only 3D modelling tool where an LLM writes and edits OpenSCAD source, 
 result in 3D, and everything — state, history, API key — lives in your browser. Static site,
 no backend, bring your own API key.
 
-Status: **Milestones 1–4 shipped** — kernel, viewport, editor, export (M1); agent loop,
+Status: **Milestones 1–5 shipped** — kernel, viewport, editor, export (M1); agent loop,
 OpenRouter client, Customizer sliders, reference images (M2); document store, version timeline,
 persisted transcript, project file, launcher (M3); change inspection — measured report, diff
-booleans, before/after composite, one verification round per turn (M4, see the end of §6).
-Plans: `docs/superpowers/plans/`.
-Date: 2026-08-30. License: **GPL-3.0**.
+booleans, before/after composite, one verification round per turn (M4, see the end of §6);
+parts, imported meshes, OBJ, partial edits, click-to-select, resizable panes (M5, see the end
+of §8). Plans: `docs/superpowers/plans/`.
+Date: 2026-08-31. License: **GPL-3.0**.
 
 ---
 
@@ -20,11 +21,14 @@ A chat window, a 3D viewport, and a source editor over one OpenSCAD document.
 - You describe a part. The model writes OpenSCAD. The browser compiles it and shows the mesh.
 - You can edit the source directly, or drag sliders derived from the source's own parameters.
 - Every change is a version you can step back to.
-- Export STL or 3MF for Bambu Studio.
+- A document can hold several parts, and can import meshes you already have (STL, OBJ, 3MF).
+- Export STL, 3MF or OBJ for Bambu Studio; the 3MF carries each part as its own object.
 
-Explicit non-goals: assemblies, organic shapes (faces, terrain, soft curves), and multi-user
-anything. Even frontier models reach only ~0.5 part-matching F1 on assemblies; promising that
-would be promising a thing that does not work.
+Explicit non-goals: organic shapes (faces, terrain, soft curves), multi-user anything, and
+whole assemblies designed from one prompt. Even frontier models reach only ~0.5 part-matching F1
+on assemblies; promising that would be promising a thing that does not work. Several parts in one
+document and a mesh imported into it are in (§8) — those are things a user composes, one part
+at a time.
 
 ---
 
@@ -38,9 +42,9 @@ Each row is a decision that was actually contested, with the evidence that settl
 | Kernel | **openscad-wasm, official snapshot** | Pinned from `files.openscad.org`, not npm. See §3. |
 | Renderer | **three.js (WebGL 2)** | ~134 KB gz buys orbit controls, `EdgesGeometry`, offscreen render targets, multi-view capture. |
 | Editor | **CodeMirror 6** | 121 KB gz vs Monaco's 1.24 MB. Neither ships an OpenSCAD mode, so Monaco's ecosystem edge evaporates exactly where we'd need it. ~40-line `StreamLanguage` parser. |
-| Export | **STL + 3MF, both native** | The kernel emits both. No serializer to write. STEP dropped — see §8. |
+| Export | **STL + 3MF + OBJ, all native** | The kernel emits all three. No serializer to write. STEP dropped — see §8. |
 | LLM host | **OpenRouter only for v1** | Verified browser-callable. Hand-rolled client, no SDK. |
-| Edit protocol | **Full source rewrite per turn** | A diff applier is a new silent-failure surface for a single-file artifact. Every reference implementation in this space uses whole-file. Revisit only if measured latency hurts. |
+| Edit protocol | **Full rewrite, or content-anchored section edits** | Whole-file was the v0.1 rule (a diff applier is a silent-failure surface). M5 added `openscad-edit` blocks that name the lines they replace by quoting them — not by line number, which models miscount — and must match exactly once; a miss is fed back as a diagnostic on the repair budget, so the failure is loud. See §8. |
 | Time travel | **Append-only linear list** | No shipping AI tool has a branching UI. `parentId` stored anyway — it is one string, and a linear list whose nodes record their parent already *is* the tree. |
 | License | **GPL-3.0** | Forced, and fine — see §9. |
 
@@ -116,8 +120,9 @@ The kernel loads lazily on first compile, keeping it off the first-paint budget.
 src/
   kernel/
     vendor/              pinned openscad.js + openscad.wasm, never edited
-    protocol.ts          worker message types, incl. -D defines
+    protocol.ts          worker message types, incl. -D defines and files; kernelArgs (lazy-union)
     openscad.worker.ts   fresh Worker per compile; terminate() to cancel
+    kernel.node.test.ts  the real wasm under vitest: OBJ, three-object 3MF, mesh import
     compile.ts           Compiler — worker lifecycle, cancel, timeout
     off.ts               OFF → Mesh
     stats.ts             bbox, volume, tri count, watertightness
@@ -128,6 +133,7 @@ src/
     ViewCube.ts          orientation widget
     capture.ts           offscreen 768² orthographic before/after composite (§6)
     inspect.ts           measured report, diff booleans on the kernel, framing (§6)
+    select.ts            a clicked triangle → its part, box, colour; the [Selected part …] line (§8)
   llm/
     sse.ts               SSE reader (hand-rolled, see below)
     openrouter.ts        streamChat, model catalogue, error normalisation
@@ -136,7 +142,8 @@ src/
   chat/
     controller.ts        runTurn / runCompact — the deterministic loop (§5)
     log.ts               append-only ChatEvent[] + buildWindow (§10); reviveLog, stripImages (§7)
-    fence.ts             fenced-source extraction, fence stubbing
+    fence.ts             fenced-source extraction, fence stubbing; steps over edit blocks
+    edits.ts             openscad-edit blocks: parse, apply exactly once (§8)
     prompt.ts            system prompt
     commands.ts          /clear /compact /export /model /key
     Chat.tsx             the chat pane
@@ -145,13 +152,14 @@ src/
     openscad-mode.ts     the StreamLanguage tokenizer
     params.ts            Customizer annotations → sliders
     ParamsPanel.tsx      the slider strip (named to avoid a case collision with params.ts)
+    ComponentsPanel.tsx  the document's mesh files; attach = one validating compile (§8)
   state/
     settings.ts          localStorage: baseUrl, model
     key.ts               localStorage: the API key, ALONE (see §7)
-    documents.ts         Doc{versions, head, chat}, Session, the commit rules — pure data (§7)
+    documents.ts         Doc{versions, head, chat, components}, Session, the commit rules — pure data (§7)
     project.ts           the .json project file: export, import, schemaVersion (§7)
     store.ts             idb-keyval, one named database, atomic write (§7)
-  export/download.ts     bytes → file download
+  export/download.ts     bytes → file download; DownloadFormat = binstl | 3mf | obj
   examples/
     index.ts             EXAMPLES for the start window + STARTER; each .scad imported ?raw
     *.scad               the mounting plate, the potted plant (colour() per part)
@@ -460,6 +468,58 @@ buys the removal of one checkbox.
 printing it buys nothing: Bambu Studio tessellates STEP on import and cannot export it, and the
 same part is 198 KB as 3MF versus 8.03 MB as faceted STEP.
 
+### Shipped 2026-08-31: parts, components, OBJ, edits, selection, panes (M5)
+
+Everything below was verified against the pinned kernel first, under Node with `wasmBinary`
+(the web glue has no file reader), and `kernel.node.test.ts` keeps those checks: a compile is
+~40 ms there, so it is a far cheaper oracle than Playwright for anything the kernel decides.
+
+- **A part is a top-level statement.** Every compile runs with `--enable=lazy-union`, so
+  top-level statements are no longer unioned: the OFF concatenates them (the viewport shows
+  all of them, and `partCensus` counts them), and the 3MF carries one `<object>` and one
+  `<item partnumber="Part N">` per statement, in source order, with `color()` as base
+  materials — which is what a slicer wants. A single-statement source produces a byte-identical
+  OFF with and without the flag, the "top level object is empty" exit that §6's diff booleans
+  read is unchanged, and both examples are single-statement. STL and OBJ have no object notion
+  and carry everything in one mesh. The system prompt's rule is now "one top-level call per
+  part, side by side on Z=0, never overlapping" — two overlapping top-level statements would
+  print as two bodies, so a solid's union belongs inside a module.
+- **Components** are mesh files on the document — `Doc.components: {name, bytes, min, max}[]`
+  — written into the kernel FS beside `/in.scad` on every preview, turn and export compile,
+  so `import("bracket.stl")` just works. Bytes stay a `Uint8Array` in IndexedDB (structured
+  clone) and become base64 only in the project file, which is written as `schemaVersion: 2`
+  when it has any and `1` otherwise, so a v0.1 app still opens a file without them. Attaching
+  is one compile of `import("name")` on a fresh kernel: the kernel's own error is the
+  validation ("STL format not recognized"), and the resulting OFF is the measurement. The
+  model gets the list after the source, each with its box, and is told to place a mesh by
+  numbers (§5's rule again) and treat it as a solid. STL (ASCII and binary), OBJ, 3MF and OFF
+  all import; a 2 MB STL takes ~150 ms. Names are checked against `COMPONENT_NAME` at revive —
+  they are written into the FS and spliced into a string literal.
+- **OBJ export** is `--export-format=obj`; no groups, one mesh. `/export obj` too.
+- **Partial updates.** A reply may be one or more ```` ```openscad-edit ```` blocks, each
+  `<<<<<<< SEARCH` / `=======` / `>>>>>>> REPLACE`, applied in order to the source the model
+  was last shown; a search matches whole lines, exact or up to trailing whitespace, and must
+  match exactly once. Content anchors rather than line ranges: models miscount lines, and this
+  needs no numbered listing and no re-attachment on a full rewrite. A miss or a malformed block
+  is a `compile` event with `ok: false`, so it takes the same wire path and the same repair
+  budget as a kernel error, and three misses end the turn as an error with nothing committed.
+  After an edit reply the applied source is attached again ("with your edits applied") for the
+  repair and verification rounds — the model never wrote that file whole, and stderr line
+  numbers point into it. `extractSource` steps over edit blocks, or an edit's closing fence
+  would open a phantom source block.
+- **Click a part.** A press that travels under 5 px is a click; the raycast's `faceIndex` is a
+  triangle in both geometry layouts, `partLabels` (the union-find §6 already had) names its
+  part, and the part's triangles get a translucent overlay sharing the model's position
+  buffer. The chat shows the selection above the composer, and the message goes out headed by
+  `[Selected part 2 of 3: 40 × 40 × 20 mm, from [60, 0, 0] to [100, 40, 20], colour #ff0000]`,
+  which the system prompt explains. The model finds the part in the source by box and colour —
+  no source↔mesh mapping to maintain. The selection is dropped with the mesh, since a
+  recompile may renumber the parts.
+- **Resizable panes**: `resize: horizontal` on the editor and chat panes over a
+  `auto 1fr auto` grid — the platform's own grip. The chat pane is laid out `direction: rtl`
+  (its children reset to `ltr`) so the grip sits on its inner corner, where there is room to
+  drag. Widths are not persisted.
+
 ---
 
 ## 9. LLM client
@@ -581,7 +641,8 @@ Budget: ~320 KB gz first paint (shell + three + editor), then 3.1 MB gz of wasm 
 Testing — the minimum that catches real breakage:
 
 1. **Vitest, node env** — OFF parser, param extraction, history/restore, project-file migration.
-   Pure functions, fast.
+   Pure functions, fast. Plus `kernel.node.test.ts`: the real wasm, instantiated with
+   `wasmBinary`, for what the kernel decides (formats, imports, the lazy union).
 2. **One jsdom test** round-tripping our 3MF through three's `3MFLoader`. (three ships a 3MF
    *loader* but no exporter, so the loader is a free independent oracle.) Lower priority now that
    the kernel writes the 3MF, but still the cheapest proof it is loadable.

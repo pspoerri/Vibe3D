@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import { parseOff } from './off'
-import { meshStats } from './stats'
+import { meshStats, partLabels } from './stats'
 
 /** Axis-aligned box from `at` to `at + [w,d,h]`, outward-facing, as vertex and face lists. */
 function boxLists(w: number, d: number, h: number, at: [number, number, number] = [0, 0, 0]) {
@@ -112,4 +112,11 @@ test('a torus has genus one, and an open mesh has no genus', () => {
   const open = meshStats(parseOff('OFF\n3 1 0\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n'))
   expect(open.genus).toBeNull()
   expect(open.parts).toBe(1)
+})
+
+test('partLabels numbers each triangle by its part, in order of first appearance', () => {
+  const { labels, count } = partLabels(parseOff(twoBoxes()))
+  expect(count).toBe(2)
+  expect([...labels]).toEqual([...Array(12).fill(0), ...Array(12).fill(1)])
+  expect(partLabels(parseOff(box(1, 1, 1))).count).toBe(1)
 })

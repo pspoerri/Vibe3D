@@ -112,6 +112,19 @@ for (const [name, reply] of Object.entries(SWEEP)) {
   })
 }
 
+test('an edit block is not source, and its closing fence does not open one', () => {
+  const reply =
+    'Small change:\n```openscad-edit\n<<<<<<< SEARCH\nwall = 2;\n=======\nwall = 3;\n>>>>>>> REPLACE\n```\nDone.'
+  expect(extractSource(reply)).toEqual({ source: null, complete: false })
+  // A full source block after an edit block still wins.
+  expect(extractSource(`${reply}\n\`\`\`openscad\n${BODY}\n\`\`\``)).toEqual({
+    source: BODY,
+    complete: true,
+  })
+  // And the stub still elides the edit's body.
+  expect(stubFences(reply)).not.toContain('wall = 3')
+})
+
 test('stubFences replaces every body with one line and keeps the prose', () => {
   const reply = `Plate:\n\`\`\`openscad\n${BODY}\n\`\`\`\nAnd a lid:\n\`\`\`\nlid();\n\`\`\`\n`
   const stubbed = stubFences(reply)

@@ -5,8 +5,10 @@
 // A lone \r has to go too, not just the \r\n pair: a stream boundary can land
 // between the two, and `[^\n]*$` then swallows the orphan so the fence never
 // opens and the code body prints into the transcript as prose.
-const OPEN_FENCE = /^```[^\n]*$/
-const CLOSE_FENCE = /^```\s*$/
+export const OPEN_FENCE = /^```[^\n]*$/
+export const CLOSE_FENCE = /^```\s*$/
+/** A partial update (edits.ts). Never a document: extractSource steps over it. */
+export const EDIT_FENCE = /^```openscad-edit\s*$/i
 
 /** An OpenSCAD comment, so a stub can never be mistaken for code. */
 const STUB = '// ... superseded source elided; the current version appears later ...'
@@ -27,10 +29,16 @@ export function extractSource(text: string): { source: string | null; complete: 
   let source: string | null = null
   let complete = false
   let body: string[] | null = null
+  // Inside an edit block: its lines are not source, and its closing fence
+  // must not read as a bare opening one.
+  let skipping = false
 
   for (const line of text.replace(/\r\n?/g, '\n').split('\n')) {
-    if (body === null) {
-      if (OPEN_FENCE.test(line)) body = []
+    if (skipping) {
+      if (CLOSE_FENCE.test(line)) skipping = false
+    } else if (body === null) {
+      if (EDIT_FENCE.test(line)) skipping = true
+      else if (OPEN_FENCE.test(line)) body = []
     } else if (CLOSE_FENCE.test(line)) {
       // A closed but empty block is not a document. Reporting '' here would
       // commit a blank file over the user's part.

@@ -2,7 +2,7 @@ import OpenSCAD from './vendor/openscad.js'
 // `?url` gives the emitted asset URL, so the wasm is fetched rather than
 // inlined and stays out of the main chunk.
 import wasmUrl from './vendor/openscad.wasm?url'
-import type { CompileRequest, CompileResponse } from './protocol'
+import { IN_PATH, kernelArgs, outPath, type CompileRequest, type CompileResponse } from './protocol'
 
 const post = (message: CompileResponse, transfer: Transferable[] = []) =>
   (self as unknown as Worker).postMessage(message, transfer)
@@ -22,21 +22,12 @@ self.onmessage = async (event: MessageEvent<CompileRequest>) => {
       },
     })
 
-    kernel.FS.writeFile('/in.scad', source)
+    kernel.FS.writeFile(IN_PATH, source)
     for (const [path, bytes] of Object.entries(files ?? {})) kernel.FS.writeFile(path, bytes)
-    const outputPath = `/out.${format}`
+    const outputPath = outPath(format)
     // Failure is signalled by a non-zero exit code, for both parse errors and
     // empty top-level geometry. Never infer failure from stderr contents.
-    // A fresh array per call: Emscripten's callMain does args.unshift(thisProgram),
-    // mutating the array it is handed, so a reused one grows a leading argument
-    // every compile.
-    const code = kernel.callMain([
-      '/in.scad',
-      '-o',
-      outputPath,
-      `--export-format=${format}`,
-      ...(defines ?? []).flatMap((define) => ['-D', define]),
-    ])
+    const code = kernel.callMain(kernelArgs(format, defines))
     const ms = Math.round(performance.now() - started)
 
     if (code !== 0) {

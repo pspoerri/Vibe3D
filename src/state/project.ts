@@ -1,7 +1,8 @@
-import { reviveDoc, type Doc } from './documents'
+import { reviveDoc, toBase64, type Doc } from './documents'
 
 export const PROJECT_TYPE = 'vibe3d/project'
-export const SCHEMA_VERSION = 1
+/** 2 added `components` (mesh bytes as base64). A file without any is still written as 1, so v0.1 opens it. */
+export const SCHEMA_VERSION = 2
 
 /**
  * Named fields, never a spread: design.md §7 — the file must not be able to
@@ -10,8 +11,12 @@ export const SCHEMA_VERSION = 1
  */
 export function exportProject(doc: Doc): string {
   const { name, source, head, versions, chat } = doc
+  const components = doc.components.map(({ name, min, max, bytes }) => ({
+    name, min, max, bytes: toBase64(bytes),
+  }))
+  const schemaVersion = components.length > 0 ? SCHEMA_VERSION : 1
   return JSON.stringify(
-    { type: PROJECT_TYPE, schemaVersion: SCHEMA_VERSION, name, source, head, versions, chat },
+    { type: PROJECT_TYPE, schemaVersion, name, source, head, versions, chat, components },
     null,
     2,
   )

@@ -3,18 +3,20 @@ import { Chat } from './chat/Chat'
 import { Compiler, type CompileResult } from './kernel/compile'
 import { parseOff, type Mesh } from './kernel/off'
 import { meshStats } from './kernel/stats'
+import { ComponentsPanel } from './editor/ComponentsPanel'
 import { Editor } from './editor/Editor'
 import { ParamsPanel } from './editor/ParamsPanel'
 import { Viewport } from './viewer/Viewport'
-import { downloadBlob, MIME } from './export/download'
+import { selectPart, type Selection } from './viewer/select'
+import { downloadBlob, EXTENSION, MIME, type DownloadFormat } from './export/download'
 import {
   formatLength, formatVolume, lengthLabel, loadUnits, saveUnits, volumeLabel,
 } from './state/units'
 import {
-  commitEdit, commitTurn, currentDoc, deleteDoc, headVersion, nameFromFirstPrompt,
-  nameFromFirstTurn, newDoc,
+  addComponent, commitEdit, commitTurn, currentDoc, deleteDoc, headVersion, nameFromFirstPrompt,
+  nameFromFirstTurn, newDoc, removeComponent,
   renameDoc, restoreVersion, reviveSession, saveVersion, selectDoc, setChat, undoVersion,
-  suggestName, updateSource, UNTITLED, type Session,
+  suggestName, updateSource, UNTITLED, type Component, type Session,
 } from './state/documents'
 import { exportProject, importProject } from './state/project'
 import { loadAll, persistRequested, saveSession } from './state/store'
@@ -24,17 +26,23 @@ import { EXAMPLES, STARTER } from './examples'
 const DEBOUNCE_MS = 600
 /** A 600 ms slider preview is not a preview. */
 const DRAG_DEBOUNCE_MS = 30
-/** Module-level so its identity is stable across renders. */
+/** Module-level so their identity is stable across renders. */
 const NO_DEFINES: readonly string[] = []
+const NO_COMPONENTS: readonly Component[] = []
 
 /**
  * Identity of a compile. The defines half is load-bearing: without it,
  * releasing a slider back at its original value would leave the reduced-$fn
- * mesh on screen forever. The separator is a form feed, which cannot appear in
- * a define and would be whitespace in source anyway.
+ * mesh on screen forever. The files half is what makes attaching a mesh the
+ * source already imports recompile it. The separator is a form feed, which
+ * cannot appear in a define or a file name and would be whitespace in source.
  */
-const compileKey = (source: string, defines: readonly string[]): string =>
-  defines.join('\f') + '\f' + source
+const compileKey = (
+  source: string,
+  defines: readonly string[],
+  components: readonly Component[] = NO_COMPONENTS,
+): string =>
+  components.map((c) => `${c.name}:${c.bytes.length}`).join('\f') + '\f' + defines.join('\f') + '\f' + source
 
 /** Long enough to coalesce a burst of typing, short enough to survive a crash. */
 const SAVE_DEBOUNCE_MS = 400
@@ -47,7 +55,18 @@ export function App() {
   const source = session ? currentDoc(session).source : STARTER
   const setSource = (next: string) =>
     setSession((s) => (s ? updateSource(s, next, Date.now()) : s))
+  // Stable across session updates that do not touch them, so the memo holds.
+  const components = session ? currentDoc(session).components : NO_COMPONENTS
+  /** The kernel FS view of the components, beside /in.scad so a bare name imports. */
+  const files = useMemo(
+    () => Object.fromEntries(components.map((c) => [`/${c.name}`, c.bytes])),
+    [components],
+  )
   const [mesh, setMesh] = useState<Mesh | null>(null)
+  // The part the user clicked. Dropped with the mesh: a recompile may have
+  // changed which part is which.
+  const [selected, setSelected] = useState<Selection | null>(null)
+  useEffect(() => setSelected(null), [mesh])
   // design.md §6: the "was" of a turn's inspection. Only a define-free compile
   // or a turn sets it, so a slider drag's reduced-$fn preview is never the before.
   const [before, setBefore] = useState<Uint8Array | null>(null)
@@ -121,7 +140,7 @@ export function App() {
   // The key of the compile whose result is currently on screen.
   const appliedKeyRef = useRef<string | null>(null)
 
-  const [exporting, setExporting] = useState<null | 'binstl' | '3mf'>(null)
+  const [exporting, setExporting] = useState<DownloadFormat | null>(null)
   const [exportError, setExportError] = useState<string | null>(null)
 
   /** The single place busy, mesh, ms and error move together. */
@@ -165,7 +184,7 @@ export function App() {
       setMs(null)
       setError(null)
     }
-    const key = compileKey(source, previewDefines)
+    const key = compileKey(source, previewDefines, components)
     // FIRST statement, before the run id and before setBusy: a turn commits its
     // source together with the result it already paid for, and recompiling it
     // here would double every turn. Moving this inside the timeout instead
@@ -189,7 +208,7 @@ export function App() {
       async () => {
         let result
         try {
-          result = await compiler.compile(source, 'off', { defines: previewDefines })
+          result = await compiler.compile(source, 'off', { defines: previewDefines, files })
         } catch (e) {
           if (runIdRef.current !== runId) return // superseded
           setBusy(false)
@@ -210,20 +229,20 @@ export function App() {
     )
 
     return () => clearTimeout(timer)
-  }, [source, previewDefines, compiler, ready, currentId])
+  }, [source, previewDefines, components, files, compiler, ready, currentId])
 
   const stats = useMemo(() => (mesh ? meshStats(mesh) : null), [mesh])
 
   // Export runs its own compile so the exported bytes always match the current
   // source, and never reuses the viewport's OFF.
-  const exportAs = async (format: 'binstl' | '3mf') => {
+  const exportAs = async (format: DownloadFormat) => {
     setExporting(format)
     setExportError(null)
     const exporter = new Compiler()
     try {
-      const result = await exporter.compile(source, format)
+      const result = await exporter.compile(source, format, { files })
       if (result.ok) {
-        downloadBlob(result.data, format === '3mf' ? 'model.3mf' : 'model.stl', MIME[format])
+        downloadBlob(result.data, `model.${EXTENSION[format]}`, MIME[format])
       } else {
         setExportError(result.stderr)
       }
@@ -270,7 +289,7 @@ export function App() {
       )}
 
       <div className="panes">
-      <section className="pane">
+      <section className="pane side">
         <div className="editor-pane">
           <div className="editor-host">
             {/* Remounts on a document switch, like the chat pane: a fresh
@@ -290,21 +309,35 @@ export function App() {
             onPreview={setPreviewDefines}
             onCommit={setSource}
           />
+          {session && (
+            <ComponentsPanel
+              components={components}
+              units={units}
+              disabled={chatBusy}
+              onAdd={(c) => setSession((s) => (s ? addComponent(s, c, Date.now()) : s))}
+              onRemove={(name) => setSession((s) => (s ? removeComponent(s, name, Date.now()) : s))}
+            />
+          )}
         </div>
       </section>
 
       <section className="pane view">
-        <Viewport mesh={mesh} fitToken={fitToken} />
+        <Viewport
+          mesh={mesh}
+          fitToken={fitToken}
+          highlight={selected?.triangles ?? null}
+          onPick={(triangle) => setSelected(triangle !== null && mesh ? selectPart(mesh, triangle) : null)}
+        />
         <div className="actions">
-          <button onClick={() => exportAs('3mf')} disabled={!mesh || !!error || exporting !== null}>
-            {exporting === '3mf' ? 'Exporting…' : 'Export 3MF'}
-          </button>
-          <button
-            onClick={() => exportAs('binstl')}
-            disabled={!mesh || !!error || exporting !== null}
-          >
-            {exporting === 'binstl' ? 'Exporting…' : 'Export STL'}
-          </button>
+          {(['3mf', 'binstl', 'obj'] as const).map((format) => (
+            <button
+              key={format}
+              onClick={() => exportAs(format)}
+              disabled={!mesh || !!error || exporting !== null}
+            >
+              {exporting === format ? 'Exporting…' : `Export ${EXTENSION[format].toUpperCase()}`}
+            </button>
+          ))}
         </div>
         <div className="hud">
           {/* Display only: the model, the source and the exported file stay
@@ -330,6 +363,7 @@ export function App() {
                 {stats.size.map((n) => formatLength(n, units)).join(' × ')} {lengthLabel(units)}
               </span>
               <span className="tag">{stats.triangles.toLocaleString()} tris</span>
+              {stats.parts > 1 && <span className="tag">{stats.parts} parts</span>}
               <span className="tag">
                 {stats.volume === null
                   ? 'not watertight'
@@ -341,12 +375,16 @@ export function App() {
         {shownError && <pre className="error">{shownError}</pre>}
       </section>
 
-      <section className="pane">
+      <section className="pane side right">
         <Chat
           // Remounts on a document switch: the conversation was about the part
           // that just left the screen, and the new one brings its own.
           key={session?.currentId ?? 'boot'}
           source={source}
+          files={files}
+          components={components}
+          selection={selected}
+          onClearSelection={() => setSelected(null)}
           before={before}
           units={units}
           initialLog={session ? currentDoc(session).chat : []}

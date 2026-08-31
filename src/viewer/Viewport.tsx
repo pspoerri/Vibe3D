@@ -2,8 +2,8 @@ import { useEffect, useRef } from 'react'
 import {
   AmbientLight, AxesHelper, Box3, BufferAttribute, BufferGeometry, DirectionalLight,
   DoubleSide, EdgesGeometry, GridHelper, Group, LineBasicMaterial, LineLoop, LineSegments,
-  Color, Fog, Mesh as ThreeMesh, MeshStandardMaterial, PerspectiveCamera, Quaternion, Scene,
-  SRGBColorSpace, Vector3, WebGLRenderer, type Material,
+  Color, Fog, Mesh as ThreeMesh, MeshBasicMaterial, MeshStandardMaterial, PerspectiveCamera,
+  Quaternion, Raycaster, Scene, SRGBColorSpace, Vector2, Vector3, WebGLRenderer, type Material,
 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { Mesh } from '../kernel/off'
@@ -23,6 +23,10 @@ const GRID_MINOR = 0xc8ccc4
 const PLATE_COLOR = 0x7f8578
 /** Matches DEFAULT_RGB in kernel/off.ts, so a partly coloured model keeps this for the rest. */
 const MODEL_COLOR = 0xf9d72c
+/** Over the selected part. Blue: distinct from the default yellow and from any color() a part wears. */
+const HIGHLIGHT = 0x3b6fd6
+/** A press that travels further than this is an orbit, not a click. */
+const CLICK_PX = 5
 
 /** Per-triangle sRGB bytes → one linear rgb per corner, which is what three reads. */
 function vertexColors(rgb: Uint8Array): Float32Array {
@@ -43,21 +47,30 @@ const disposeMaterial = (material: Material | Material[]) =>
 
 interface ViewportApi {
   setMesh(mesh: Mesh | null): void
+  setHighlight(triangles: Uint32Array | null): void
   fit(): void
 }
 
 export function Viewport({
   mesh,
   fitToken = 0,
+  highlight = null,
+  onPick,
 }: {
   mesh: Mesh | null
   /** Bump to re-frame. A turn replaces the whole part, so the camera the user
    *  left pointing at the last one is almost never the right one. */
   fitToken?: number
+  /** Triangles of `mesh` to draw the selection over. */
+  highlight?: Uint32Array | null
+  /** A click: the triangle under the pointer, or null for empty space. */
+  onPick?: (triangle: number | null) => void
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const cubeHostRef = useRef<HTMLDivElement>(null)
   const apiRef = useRef<ViewportApi | null>(null)
+  const onPickRef = useRef(onPick)
+  onPickRef.current = onPick
 
   // Scene is built once and reused; only the model group's contents change.
   useEffect(() => {
@@ -106,6 +119,8 @@ export function Viewport({
     scene.add(modelGroup)
     const modelBox = new Box3()
     let fitted = false
+    let modelMesh: ThreeMesh | null = null
+    let highlightMesh: ThreeMesh | null = null
 
     // Grid spacing follows the zoom, so it never collapses into a grey wash
     // when you pull back nor vanishes when you dive into a 0.4 mm feature.
@@ -204,6 +219,41 @@ export function Viewport({
     const cube = createViewCube(cubeHost, setView)
     controls.addEventListener('change', invalidate)
 
+    // A click picks a part; a drag is the orbit's. Told apart by travel, not
+    // timing, because OrbitControls already owns pointerdown on this canvas.
+    const raycaster = new Raycaster()
+    let down: { x: number; y: number } | null = null
+    const onDown = (e: PointerEvent) => {
+      down = e.button === 0 ? { x: e.clientX, y: e.clientY } : null
+    }
+    const onUp = (e: PointerEvent) => {
+      const pressed = down
+      down = null
+      if (!pressed || Math.hypot(e.clientX - pressed.x, e.clientY - pressed.y) > CLICK_PX) return
+      const rect = renderer.domElement.getBoundingClientRect()
+      raycaster.setFromCamera(
+        new Vector2(
+          ((e.clientX - rect.left) / rect.width) * 2 - 1,
+          -((e.clientY - rect.top) / rect.height) * 2 + 1,
+        ),
+        camera,
+      )
+      const hit = modelMesh ? raycaster.intersectObject(modelMesh, false)[0] : undefined
+      onPickRef.current?.(hit?.faceIndex ?? null)
+    }
+    renderer.domElement.addEventListener('pointerdown', onDown)
+    renderer.domElement.addEventListener('pointerup', onUp)
+
+    const clearHighlight = () => {
+      if (!highlightMesh) return
+      modelGroup.remove(highlightMesh)
+      // Shares the model's position attribute; disposing drops that GL buffer
+      // too, and three re-uploads it on the next frame. Cheaper than a copy.
+      highlightMesh.geometry.dispose()
+      disposeMaterial(highlightMesh.material)
+      highlightMesh = null
+    }
+
     const resize = () => {
       const { clientWidth: w, clientHeight: h } = host
       if (w === 0 || h === 0) return
@@ -218,7 +268,34 @@ export function Viewport({
 
     apiRef.current = {
       fit,
+      setHighlight(triangles) {
+        clearHighlight()
+        const base = modelMesh?.geometry
+        if (!triangles || !base) return invalidate()
+        // faceIndex t is triangle t in both layouts: the index buffer of the
+        // indexed geometry, or corners 3t..3t+2 of the de-indexed one.
+        const index = base.getIndex()
+        const corners = new Uint32Array(triangles.length * 3)
+        for (let i = 0; i < triangles.length; i++) {
+          const t = triangles[i]!
+          for (let k = 0; k < 3; k++) corners[i * 3 + k] = index ? index.getX(t * 3 + k) : t * 3 + k
+        }
+        const geometry = new BufferGeometry()
+        geometry.setAttribute('position', base.getAttribute('position'))
+        geometry.setIndex(new BufferAttribute(corners, 1))
+        highlightMesh = new ThreeMesh(
+          geometry,
+          new MeshBasicMaterial({
+            color: HIGHLIGHT, transparent: true, opacity: 0.55, side: DoubleSide,
+            polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+          }),
+        )
+        modelGroup.add(highlightMesh)
+        invalidate()
+      },
       setMesh(next) {
+        highlightMesh = null
+        modelMesh = null
         for (const child of [...modelGroup.children]) {
           modelGroup.remove(child)
           if (child instanceof ThreeMesh || child instanceof LineSegments) {
@@ -243,17 +320,16 @@ export function Viewport({
           geometry.computeBoundingBox()
           if (geometry.boundingBox) modelBox.copy(geometry.boundingBox)
 
-          modelGroup.add(
-            new ThreeMesh(
-              geometry,
-              // DoubleSide so an inverted winding never renders as an invisible hole.
-              new MeshStandardMaterial({
-                color: next.colors ? 0xffffff : MODEL_COLOR,
-                vertexColors: next.colors !== undefined,
-                roughness: 0.55, metalness: 0, side: DoubleSide,
-              }),
-            ),
+          modelMesh = new ThreeMesh(
+            geometry,
+            // DoubleSide so an inverted winding never renders as an invisible hole.
+            new MeshStandardMaterial({
+              color: next.colors ? 0xffffff : MODEL_COLOR,
+              vertexColors: next.colors !== undefined,
+              roughness: 0.55, metalness: 0, side: DoubleSide,
+            }),
           )
+          modelGroup.add(modelMesh)
           // Crease outline aids reading the shape; threshold keeps it sparse.
           modelGroup.add(
             new LineSegments(
@@ -278,6 +354,8 @@ export function Viewport({
       cancelAnimationFrame(snapFrame)
       apiRef.current = null
       observer.disconnect()
+      renderer.domElement.removeEventListener('pointerdown', onDown)
+      renderer.domElement.removeEventListener('pointerup', onUp)
       controls.removeEventListener('change', invalidate)
       controls.dispose()
       cube.dispose()
@@ -296,6 +374,11 @@ export function Viewport({
   useEffect(() => {
     apiRef.current?.setMesh(mesh)
   }, [mesh])
+
+  // After the mesh effect, so the overlay is built on the geometry it indexes.
+  useEffect(() => {
+    apiRef.current?.setHighlight(highlight)
+  }, [mesh, highlight])
 
   // Declared after the mesh effect so modelBox is already the new part's.
   useEffect(() => {

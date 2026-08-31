@@ -2,13 +2,22 @@
 html, body, #root { height: 100%; margin: 0; }
 body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea; }
 
-.app { display: grid; grid-template-rows: auto 1fr; height: 100%; }
+.app { display: grid; grid-template-rows: auto 1fr; grid-template-columns: minmax(0, 1fr); height: 100%; }
 .panes {
   grid-row: 2; grid-column: 1;
-  display: grid; grid-template-columns: minmax(320px, 34%) 1fr minmax(300px, 26%);
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto;
   min-height: 0; min-width: 0;
 }
 .pane { min-width: 0; min-height: 0; position: relative; }
+/* The side panes resize with the platform's own grip (bottom corner); the
+   viewport takes what is left. Pixel widths, not percentages: a percentage
+   on an item in an `auto` track resolves cyclically and collapses the grid.
+   38vw each leaves the viewport at least 24vw, enough for its HUD. The right
+   pane is laid out right-to-left so its grip sits on the inner corner, where
+   there is room to drag. */
+.pane.side { width: 440px; min-width: 300px; max-width: 38vw; resize: horizontal; overflow: hidden; }
+.pane.side.right { width: 360px; direction: rtl; }
+.pane.side.right > * { direction: ltr; }
 .pane + .pane { border-left: 1px solid #c8ccc4; }
 .view { background: #f6f7f4; }
 
@@ -268,6 +277,36 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
 .param input[type='checkbox'] { accent-color: #b8860b; justify-self: end; }
 .editor-pane { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .editor-host { flex: 1; min-height: 0; }
+
+/* Mesh files the source can import(), under the sliders. */
+.components {
+  border-top: 1px solid #c8ccc4; padding: 7px 10px; background: #f2f3ef;
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  font: 11px/1.3 ui-monospace, monospace;
+}
+.components[data-disabled='true'] { opacity: .5; }
+.component {
+  display: inline-flex; align-items: center; gap: 7px; padding: 3px 3px 3px 8px; color: #414741;
+  background: #fff; border: 1px solid #c8ccc4; border-radius: 2px;
+}
+.component-size { color: #7c827c; }
+.component button {
+  border: 0; background: none; cursor: pointer; color: #7c827c; font-size: 13px; padding: 0 4px;
+}
+.component button:hover:not(:disabled) { color: #a8256b; }
+.component-add { position: relative; cursor: pointer; color: #b8860b; padding: 3px 4px; }
+.component-add:hover { text-decoration: underline; }
+.component-add:has(input:focus-visible) { outline: 2px solid #b8860b; outline-offset: 1px; }
+.component-add input {
+  position: absolute; width: 1px; height: 1px; padding: 0; border: 0;
+  clip-path: inset(50%); overflow: hidden; white-space: nowrap;
+}
+
+/* The clicked part, above the composer: the next message is about it. */
+.chat-selection { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.chat-selection .chip { margin: 0; text-transform: none; letter-spacing: .03em; }
+.chat-selection button { background: none; border: 0; padding: 0; cursor: pointer; }
+.chat-selection button:hover { color: #a8256b; }
 
 /* One answer to "is anything happening", wherever it started: a compile, a
    turn, or an export. Indeterminate, because none of the three can report

@@ -4,8 +4,8 @@
 Leverages your LLM along with OpenSCAD to build your ideas into a 3D Model.
 
 Describe a part. The model writes OpenSCAD, your browser compiles it, and you get a mesh you can
-orbit and export as STL or 3MF. You can also just write the OpenSCAD yourself, or drag the sliders
-that the source's own parameters produce — those cost nothing at all.
+orbit and export as STL, 3MF or OBJ. You can also just write the OpenSCAD yourself, or drag the
+sliders that the source's own parameters produce — those cost nothing at all.
 
 OpenSCAD is the prompting language on purpose: it has roughly 25× the public corpus of any
 alternative, so a model writes it fluently and zero-shot, and it is code you can read, edit and
@@ -55,6 +55,28 @@ The start window offers two example models — a mounting plate and a potted pla
 A document is named after your first prompt while the model works, then after the title comment
 the model puts on the first line of the file; **Rename** makes a title yours for good.
 
+## Parts and imported meshes
+
+Every top-level statement in the source is a part of its own: they are shown together, the HUD
+counts them, and the 3MF carries each as a separate object — with its `color()` — so the slicer
+sees a box and its lid as two things. The model is told to lay parts out side by side on the plate
+and never to let two top-level statements overlap; a single solid keeps its union inside a module.
+
+Meshes you already have go in under the sliders: **Import mesh…** takes an STL, OBJ, 3MF or OFF,
+the kernel reads and measures it, and from then on `import("name.stl")` works in the source. The
+model sees the list with each file's bounding box and places it by those numbers. The files live
+with the document in this browser and travel in the project file.
+
+Click a part in the viewport to select it. The next message you send is headed by that part's
+number, bounding box and colour, so "make this 2 mm taller" means the one you clicked.
+
+## Partial updates
+
+For a small change to a large file the model can reply with an edit block that replaces just the
+lines it quotes, instead of rewriting the whole source. An edit has to match exactly one place;
+one that does not is reported back to the model like a compile error and costs it a repair
+attempt, so nothing is ever applied half-way.
+
 ## Reference images
 
 Paste an image into the composer, or pick one with the button beside it — up to four per message.
@@ -82,6 +104,11 @@ of the document, and nothing is ever deleted: the picker in the menu bar steps t
 `/undo` steps back one, and a change made from an older version simply becomes the next one.
 Documents, their versions and their conversations live in this browser's IndexedDB. **Export
 project** writes one `.json` you can keep or import anywhere; it never contains the key.
+
+## Layout
+
+The editor and chat panes resize from the grip at their bottom corner (the browser's own); the
+viewport takes what is left.
 
 ## Licensing
 

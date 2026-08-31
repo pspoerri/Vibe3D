@@ -13,6 +13,8 @@ export interface OpenSCADModule {
 export interface OpenSCADOptions {
   noInitialRun?: boolean
   locateFile?: (path: string) => string
+  /** The module bytes, for a host with no fetch — the web glue has no Node file reader. */
+  wasmBinary?: ArrayBuffer | Uint8Array
   print?: (text: string) => void
   printErr?: (text: string) => void
 }

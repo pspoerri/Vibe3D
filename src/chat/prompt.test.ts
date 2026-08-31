@@ -7,6 +7,14 @@ test('the prompt states the output contract and the $fn rule', () => {
   expect(SYSTEM_PROMPT).toMatch(/titles the part/)
 })
 
+test('the prompt teaches edits, parts, imported meshes and the selection reference', () => {
+  expect(SYSTEM_PROMPT).toContain('```openscad-edit')
+  expect(SYSTEM_PROMPT).toContain('<<<<<<< SEARCH')
+  expect(SYSTEM_PROMPT).toMatch(/one top-level (call|statement) per part/i)
+  expect(SYSTEM_PROMPT).toContain('import("')
+  expect(SYSTEM_PROMPT).toContain('[Selected part')
+})
+
 test('metric adds nothing — it is already the language OpenSCAD speaks', () => {
   expect(systemPromptFor('mm')).toBe(SYSTEM_PROMPT)
 })

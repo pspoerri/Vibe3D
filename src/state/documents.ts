@@ -19,6 +19,23 @@ export interface Version {
   compileOk: boolean
 }
 
+/**
+ * A mesh file the source can `import()` by name (design.md §8). Bytes stay
+ * bytes in IndexedDB — structured clone carries a Uint8Array — and become
+ * base64 only in the project file. The box is measured at attach time by
+ * compiling the import once, so the model can place the part by numbers.
+ */
+export interface Component {
+  /** Safe as a file name and as an OpenSCAD string literal: see COMPONENT_NAME. */
+  name: string
+  bytes: Uint8Array
+  min: [number, number, number]
+  max: [number, number, number]
+}
+
+/** One plain path segment with a mesh extension: no slashes, no quotes, nothing the kernel FS or a string literal could misread. */
+export const COMPONENT_NAME = /^[A-Za-z0-9][A-Za-z0-9._ -]*\.(stl|obj|3mf|off)$/i
+
 export interface Doc {
   /** A uuid. Opaque: nothing derives meaning from it, and nothing counts on it. */
   id: string
@@ -39,6 +56,8 @@ export interface Doc {
   head: string
   /** The transcript, images stripped (design.md §9). */
   chat: ChatEvent[]
+  /** Mesh files the source may import, by name. Document-level: a version is source alone. */
+  components: Component[]
 }
 
 export interface Session {
@@ -54,7 +73,9 @@ const LABEL_MAX = 48
 
 export function newDoc(name: string, source: string, id: string, now: number): Doc {
   const first: Version = { id: '1', parentId: null, ts: now, label: NEW, source, compileOk: false }
-  return { id, name, source, createdAt: now, updatedAt: now, versions: [first], head: '1', chat: [] }
+  return {
+    id, name, source, createdAt: now, updatedAt: now, versions: [first], head: '1', chat: [], components: [],
+  }
 }
 
 export function createSession(source: string, id: string, now: number): Session {
@@ -248,6 +269,28 @@ export function setChat(session: Session, chat: readonly ChatEvent[]): Session {
   return withDoc(session, { ...currentDoc(session), chat: chat.map(stripImages) })
 }
 
+// ---- components (design.md §8) ---------------------------------------------------
+
+/** Adds a mesh file, or replaces the one already under that name — which is how a component gets updated. */
+export function addComponent(session: Session, component: Component, now: number): Session {
+  const doc = currentDoc(session)
+  const taken = doc.components.some((c) => c.name === component.name)
+  const components = taken
+    ? doc.components.map((c) => (c.name === component.name ? component : c))
+    : [...doc.components, component]
+  return withDoc(session, { ...doc, components, updatedAt: now })
+}
+
+export function removeComponent(session: Session, name: string, now: number): Session {
+  const doc = currentDoc(session)
+  if (!doc.components.some((c) => c.name === name)) return session
+  return withDoc(session, {
+    ...doc,
+    components: doc.components.filter((c) => c.name !== name),
+    updatedAt: now,
+  })
+}
+
 // ---- the list ----------------------------------------------------------------
 
 /**
@@ -306,7 +349,48 @@ export function reviveDoc(raw: unknown, now: number, taken: string[] = []): Doc 
     updatedAt,
     ...reviveVersions(d.versions, d.head, d.source, createdAt),
     chat: reviveLog(d.chat),
+    components: reviveComponents(d.components),
     ...(d.named === true ? { named: true as const } : {}),
+  }
+}
+
+const isVec3 = (v: unknown): v is [number, number, number] =>
+  Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number' && Number.isFinite(n))
+
+/**
+ * Bytes arrive as a Uint8Array from IndexedDB and as base64 from a project
+ * file; both are accepted here so the file needs no decoding pass of its own.
+ * A name that fails COMPONENT_NAME is dropped whole: it would be written
+ * into the kernel FS and spliced into an import() string.
+ */
+function reviveComponents(raw: unknown): Component[] {
+  const out: Component[] = []
+  for (const item of Array.isArray(raw) ? raw : []) {
+    const c = item as Partial<Record<keyof Component, unknown>> | null
+    if (!c || typeof c !== 'object' || typeof c.name !== 'string' || !COMPONENT_NAME.test(c.name)) continue
+    if (!isVec3(c.min) || !isVec3(c.max)) continue
+    const bytes =
+      c.bytes instanceof Uint8Array ? c.bytes : typeof c.bytes === 'string' ? fromBase64(c.bytes) : null
+    if (!bytes || out.some((o) => o.name === c.name)) continue
+    out.push({ name: c.name, bytes, min: c.min, max: c.max })
+  }
+  return out
+}
+
+/** Chunked: String.fromCharCode(...bytes) overflows the call stack past ~100 KB. */
+export function toBase64(bytes: Uint8Array): string {
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  }
+  return btoa(binary)
+}
+
+function fromBase64(text: string): Uint8Array | null {
+  try {
+    return Uint8Array.from(atob(text), (ch) => ch.charCodeAt(0))
+  } catch {
+    return null
   }
 }
 

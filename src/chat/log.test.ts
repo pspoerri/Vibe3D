@@ -191,6 +191,39 @@ test('the source text appears exactly once, in a fenced block', () => {
   expect(joined).toContain(`\`\`\`openscad\n${SRC}\n\`\`\``)
 })
 
+const BRACKET = { name: 'bracket.stl', min: [0, 0, 0], max: [40, 20, 10] } as const
+
+test('components are listed after the source, by name and box, and never without it', () => {
+  const messages = buildWindow({ log: [], turn: 1, systemPrompt: SYS, source: SRC, components: [BRACKET] })
+  const tail = text(messages.at(-1)!.content)
+  expect(tail).toContain(SRC)
+  expect(tail).toContain('import("bracket.stl")')
+  expect(tail).toContain('40 × 20 × 10 mm')
+  expect(tail).toContain('[0, 0, 0]')
+  expect(tail).toContain('[40, 20, 10]')
+  // A live full reply owns the source, and the list goes with it.
+  const live = buildWindow({
+    log: [user(1, 'a'), assistant(1, reply('x'))], turn: 1, systemPrompt: SYS, source: SRC, components: [BRACKET],
+  })
+  expect(texts(live).join('\n')).not.toContain('bracket.stl')
+  // No components: byte-identical to before they existed.
+  expect(buildWindow({ log: [], turn: 1, systemPrompt: SYS, source: SRC, components: [] })).toEqual(win([], 1))
+})
+
+const EDIT_REPLY =
+  'Thinner:\n```openscad-edit\n<<<<<<< SEARCH\nwall = 2;\n=======\nwall = 1;\n>>>>>>> REPLACE\n```'
+
+test('after an edit reply the applied source is attached again, since the model never wrote it whole', () => {
+  const applied = 'wall = 1;\ncube([10, 10, wall]);'
+  const log = [user(1, 'thinner'), assistant(1, EDIT_REPLY), compiled(1, false, 'ERROR: x')]
+  const tail = texts(win(log, 1, applied)).at(-1)!
+  expect(tail).toContain(`\`\`\`openscad\n${applied}\n\`\`\``)
+  expect(tail).toMatch(/edits applied/)
+  expect(texts(win(log, 1, applied))).toContain('ERROR: x')
+  // An earlier turn's edit reply is history, not live: nothing is re-attached for it.
+  expect(count(texts(win([...log, user(2, 'more')], 2, applied)).join('\n'), applied)).toBe(1)
+})
+
 test('only the most recent summary is replayed', () => {
   const a = user(1, 'first')
   const b = user(2, 'second')

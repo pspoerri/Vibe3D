@@ -28,6 +28,8 @@ test('/export defaults to 3mf and accepts stl', () => {
   expect(parseCommand('/export stl')).toEqual({ name: 'export', format: 'binstl' })
   expect(parseCommand('/export STL')).toEqual({ name: 'export', format: 'binstl' })
   expect(parseCommand('/export binstl')).toEqual({ name: 'export', format: 'binstl' })
+  expect(parseCommand('/export obj')).toEqual({ name: 'export', format: 'obj' })
+  expect(parseCommand('/export OBJ')).toEqual({ name: 'export', format: 'obj' })
 })
 
 test('an unrecognised slash word never reaches the model', () => {

@@ -1,7 +1,9 @@
+import type { DownloadFormat } from '../export/download'
+
 export type Command =
   | { name: 'clear' }
   | { name: 'compact' }
-  | { name: 'export'; format: 'binstl' | '3mf' }
+  | { name: 'export'; format: DownloadFormat }
   | { name: 'model'; id: string | null }
   | { name: 'key' }
   | { name: 'undo' }
@@ -34,10 +36,12 @@ export function parseCommand(text: string): Command | null {
       // Not lowercased: model ids are case-sensitive slugs.
       return { name: 'model', id: arg || null }
     case 'export':
-      // 3mf is the default because it carries units; anything else is only
-      // ever the other button, so an unreadable argument falls back rather
-      // than erroring at someone who typed `/export mesh`.
-      return { name: 'export', format: /^(bin)?stl$/i.test(arg) ? 'binstl' : '3mf' }
+      // 3mf is the default because it carries units; an unreadable argument
+      // falls back to it rather than erroring at someone who typed `/export mesh`.
+      return {
+        name: 'export',
+        format: /^(bin)?stl$/i.test(arg) ? 'binstl' : /^obj$/i.test(arg) ? 'obj' : '3mf',
+      }
     default:
       return { name: 'unknown', word }
   }

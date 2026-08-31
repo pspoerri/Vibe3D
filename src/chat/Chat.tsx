@@ -7,7 +7,10 @@ import {
 } from '../llm/openrouter'
 import { loadKey, saveKey } from '../state/key'
 import { loadSettings, saveSettings } from '../state/settings'
+import type { DownloadFormat } from '../export/download'
+import type { Component } from '../state/documents'
 import { formatReport, inspect } from '../viewer/inspect'
+import { referenceLine, type Selection } from '../viewer/select'
 import { parseCommand, type Command } from './commands'
 import { COMPACT_AT, runCompact, runTurn } from './controller'
 import { addUsage, formatTokens, formatUsd, ZERO_SPEND, type Spend } from './cost'
@@ -22,6 +25,10 @@ const MAX_IMAGES = 4
 
 export function Chat({
   source,
+  files,
+  components,
+  selection,
+  onClearSelection,
   before,
   units,
   initialLog,
@@ -34,6 +41,13 @@ export function Chat({
   onPrompt,
 }: {
   source: string
+  /** The document's mesh files, for the kernel FS of every compile this pane runs. */
+  files: Readonly<Record<string, Uint8Array>>
+  /** The same files, as the model is told about them. */
+  components: readonly Component[]
+  /** The part the user clicked, if any: the next message is about it. */
+  selection: Selection | null
+  onClearSelection: () => void
   /** OFF of the mesh on screen — what a turn's inspection compares against. null when nothing has compiled. */
   before: Uint8Array | null
   /** Display units. The source stays metric; this is how to READ the user. */
@@ -47,7 +61,7 @@ export function Chat({
   onApply: (next: string, result: CompileResult, label: string) => void
   /** Steps the document back one version; the note to show, or null when there is nothing to undo. */
   onUndo: () => string | null
-  onExport: (format: 'binstl' | '3mf') => void
+  onExport: (format: DownloadFormat) => void
   onBusyChange: (busy: boolean) => void
   /** The user's words for the part. The document takes its name from the first. */
   onPrompt: (text: string) => void
@@ -241,7 +255,7 @@ export function Chat({
     const controller = new AbortController()
     abortRef.current = controller
     const outcome = await runCompact(
-      { log: logRef.current, turn: at, systemPrompt: systemPromptFor(units), source },
+      { log: logRef.current, turn: at, systemPrompt: systemPromptFor(units), source, components },
       {
         stream: (messages, signal) =>
           streamChat(messages, signal, {
@@ -294,6 +308,9 @@ export function Chat({
     setAttachments([])
     setChatError(null)
     onPrompt(text)
+    // The selection rides in the message itself, so the transcript records
+    // what the model was told — and it is what the system prompt describes.
+    const userText = selection ? `${referenceLine(selection)}\n\n${text}` : text
     const controller = new AbortController()
     abortRef.current = controller
     busyRef.current = true
@@ -304,12 +321,13 @@ export function Chat({
     try {
       const outcome = await runTurn(
         {
-          userText: text,
+          userText,
           images: attachments,
           log: logRef.current,
           turn,
           systemPrompt: systemPromptFor(units, attachments.length > 0),
           source,
+          components,
         },
         {
           stream: (messages, signal) =>
@@ -318,7 +336,7 @@ export function Chat({
               apiKey,
               model: settings.model,
             }),
-          compile: (candidate) => compiler.compile(candidate),
+          compile: (candidate) => compiler.compile(candidate, 'off', { files }),
           inspect: async (_candidate, off) => {
             const { report, image } = await inspect({
               before,
@@ -389,8 +407,9 @@ export function Chat({
       <div className="chat-log">
         {log.length === 0 && (
           <p className="chat-empty">
-            Describe the part you want. The model rewrites the whole source each turn; it gets two
-            attempts to fix a compile error before it hands the failure to you.
+            Describe the part you want. The model rewrites the source, or edits a section of it;
+            it gets two attempts to fix a compile error before it hands the failure to you. Click
+            a part in the viewport to talk about that one.
           </p>
         )}
         {log.map((event) => (
@@ -422,6 +441,17 @@ export function Chat({
           void send()
         }}
       >
+        {selection && (
+          <div className="chat-selection">
+            <span className="chip">
+              <b>part {selection.part} of {selection.of}</b>
+              {selection.max.map((hi, i) => Math.round((hi - selection.min[i]!) * 10) / 10).join(' × ')} mm
+            </span>
+            <button type="button" className="chat-note" onClick={onClearSelection} aria-label="Clear selection">
+              clear
+            </button>
+          </div>
+        )}
         {attachments.length > 0 && (
           <div className="chat-tray">
             {attachments.map((url, i) => (

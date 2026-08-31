@@ -40,7 +40,10 @@ function edgeCensus(indices: Uint32Array): { edges: number; watertight: boolean 
 }
 
 /** Connected components over the vertices a face touches. Union-find, path-compressed. */
-function partCensus(indices: Uint32Array, vertexCount: number): { parts: number; used: number } {
+function partCensus(
+  indices: Uint32Array,
+  vertexCount: number,
+): { parts: number; used: number; find: (vertex: number) => number } {
   const parent = new Uint32Array(vertexCount)
   for (let i = 0; i < vertexCount; i++) parent[i] = i
   const find = (i: number): number => {
@@ -64,7 +67,29 @@ function partCensus(indices: Uint32Array, vertexCount: number): { parts: number;
     used.add(indices[i]!)
     roots.add(find(indices[i]!))
   }
-  return { parts: roots.size, used: used.size }
+  return { parts: roots.size, used: used.size, find }
+}
+
+/**
+ * Which part each triangle belongs to, numbered 0.. in order of first
+ * appearance — with the lazy union, that is top-level statement order. What
+ * a click in the viewport resolves against (design.md §8).
+ */
+export function partLabels(mesh: Mesh): { labels: Uint32Array; count: number } {
+  const { indices } = mesh
+  const { find } = partCensus(indices, mesh.vertexCount)
+  const numbered = new Map<number, number>()
+  const labels = new Uint32Array(indices.length / 3)
+  for (let t = 0; t < labels.length; t++) {
+    const root = find(indices[t * 3]!)
+    let label = numbered.get(root)
+    if (label === undefined) {
+      label = numbered.size
+      numbered.set(root, label)
+    }
+    labels[t] = label
+  }
+  return { labels, count: numbered.size }
 }
 
 /** Signed sum of tetrahedra from the origin. Only meaningful for a closed mesh. */

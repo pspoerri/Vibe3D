@@ -1,8 +1,9 @@
 import type { CompileResult } from '../kernel/compile'
 import { stderrForModel } from '../kernel/noise'
 import type { ChatMessage, StreamEvent, Usage } from '../llm/openrouter'
+import { applyEdits, parseEdits } from './edits'
 import { extractSource } from './fence'
-import { buildWindow, type ChatEvent } from './log'
+import { buildWindow, type ChatEvent, type ComponentRef } from './log'
 import { COMPACT_PROMPT } from './prompt'
 
 /** 1 initial call + 2 repairs = 3 LLM calls and 3 compiles, per turn, ever. */
@@ -57,6 +58,8 @@ export interface TurnInput {
   readonly systemPrompt: string
   /** The committed document at turn start. Read once; never re-read. */
   readonly source: string
+  /** The document's mesh files, listed for the model with the source. */
+  readonly components?: readonly ComponentRef[]
 }
 
 /** Distributes over the union, so each variant keeps its own fields. */
@@ -89,6 +92,9 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   let attempt = 0
   // Starts in the past so the first delta always drafts, whatever the clock's origin.
   let lastDraftAt = -Infinity
+  // The source the model last produced or was last shown, whole: what a
+  // partial update applies to, and what is re-attached after one.
+  let base = committed
 
   type Verified = { source: string; result: Extract<CompileResult, { ok: true }> }
   let verified: Verified | null = null
@@ -115,7 +121,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         log: [...input.log, ...turnEvents],
         turn,
         systemPrompt: input.systemPrompt,
-        source: committed,
+        source: base,
+        components: input.components,
       })
 
       let text = ''
@@ -161,10 +168,32 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         return { status: 'error', message }
       }
 
-      const { source: candidate, complete } = extractSource(text)
+      const full = extractSource(text)
+      const edits = parseEdits(text)
+      let candidate = full.source
+      let complete = full.complete
+      // A partial update: applied here, to the source the model was shown,
+      // and the result is the candidate. A malformed or non-matching edit
+      // is a diagnostic for the model, on the compile budget and wire path.
+      let editError: string | null = null
+      if (candidate === null && edits.complete && (edits.edits.length > 0 || edits.error !== null)) {
+        const applied = edits.error !== null ? { error: edits.error } : applyEdits(base, edits.edits)
+        if ('error' in applied) editError = applied.error
+        else {
+          candidate = applied.source
+          complete = true
+        }
+      }
       deps.onDraft(candidate)
       deps.onText(text)
       emit({ kind: 'assistant', text })
+
+      if (editError !== null) {
+        emit({ kind: 'compile', ok: false, ms: 0, attempt, stderr: editError })
+        if (attempt === MAX_RETRIES) return { status: 'error', message: editError }
+        attempt++
+        continue
+      }
 
       // A reply with no code block at all answers a question; it is not a
       // failure, and there is nothing to compile. But a reply that OPENED a
@@ -187,6 +216,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       }
       // Echoing the document, or the source just inspected, is a confirmation.
       if (candidate === committed || candidate === verified?.source) return { status: 'answered' }
+      base = candidate
 
       const result = await deps.compile(candidate)
 
@@ -253,6 +283,7 @@ export interface CompactInput {
   readonly turn: number
   readonly systemPrompt: string
   readonly source: string
+  readonly components?: readonly ComponentRef[]
 }
 
 export type CompactOutcome =
@@ -288,6 +319,7 @@ export async function runCompact(
       turn: input.turn,
       systemPrompt: input.systemPrompt,
       source: input.source,
+      components: input.components,
       // Belt and braces. The caller passes the real next turn, so the turn that
       // just ran is no longer live here — but auto-compact fires unattended at
       // 60% of context, and re-billing an image with nobody watching is the one
