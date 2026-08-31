@@ -9,6 +9,13 @@ export const OPEN_FENCE = /^```[^\n]*$/
 export const CLOSE_FENCE = /^```\s*$/
 /** A partial update (edits.ts). Never a document: extractSource steps over it. */
 export const EDIT_FENCE = /^```openscad-edit\s*$/i
+/** A PART replacement (parts.ts). The number is checked there; here any `openscad-part` is an aside. */
+export const PART_FENCE = /^```openscad-part\b.*$/i
+/** A look request (views.ts). */
+export const VIEW_FENCE = /^```view\s*$/i
+/** A block that is not a document. */
+export const isAside = (line: string): boolean =>
+  EDIT_FENCE.test(line) || PART_FENCE.test(line) || VIEW_FENCE.test(line)
 
 /** An OpenSCAD comment, so a stub can never be mistaken for code. */
 const STUB = '// ... superseded source elided; the current version appears later ...'
@@ -37,7 +44,7 @@ export function extractSource(text: string): { source: string | null; complete: 
     if (skipping) {
       if (CLOSE_FENCE.test(line)) skipping = false
     } else if (body === null) {
-      if (EDIT_FENCE.test(line)) skipping = true
+      if (isAside(line)) skipping = true
       else if (OPEN_FENCE.test(line)) body = []
     } else if (CLOSE_FENCE.test(line)) {
       // A closed but empty block is not a document. Reporting '' here would

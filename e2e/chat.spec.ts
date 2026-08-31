@@ -49,6 +49,14 @@ async function seedKey(page: Page): Promise<void> {
   )
 }
 
+/** Thinking is off by default — one call per message. Looks need it on. */
+async function seedThinking(page: Page, thinking = 'low'): Promise<void> {
+  await page.addInitScript(
+    (settings) => window.localStorage.setItem('vibe3d.settings', JSON.stringify(settings)),
+    { thinking },
+  )
+}
+
 const compiles = async (page: Page): Promise<number> =>
   Number(await page.locator('.app').getAttribute('data-compiles'))
 
@@ -133,6 +141,7 @@ test('a failed compile is retried with the verbatim stderr and no second copy of
   page,
 }) => {
   await seedKey(page)
+  await seedThinking(page)
   const bodies: string[] = []
   let call = 0
   await page.route(CHAT_URL, (route) => {
@@ -153,6 +162,8 @@ test('a failed compile is retried with the verbatim stderr and no second copy of
   await expect(page.locator('.tag', { hasText: '7.0 × 7.0 × 7.0 mm' })).toBeVisible({
     timeout: 90_000,
   })
+  // The tag appears when the candidate compiles; the turn's calls end later.
+  await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
   // The failed attempt, the repair, and the repair's verification round — which
   // this stub answers with the same source again, and that is a confirmation.
   expect(call).toBe(3)
@@ -457,6 +468,7 @@ test('the reply text appears in the transcript before the turn settles', async (
 
 test('the session meter reports tokens and what they cost', async ({ page }) => {
   await seedKey(page)
+  await seedThinking(page)
   await page.route(CHAT_URL, (route) =>
     route.fulfill({
       status: 200,
@@ -505,6 +517,7 @@ test('a picked image reaches the model as a data URL, after the text, exactly on
   page,
 }) => {
   await seedKey(page)
+  await seedThinking(page)
   const bodies: string[] = []
   await page.route(CHAT_URL, (route) => {
     bodies.push(JSON.stringify(route.request().postDataJSON()))
@@ -530,6 +543,7 @@ test('a picked image reaches the model as a data URL, after the text, exactly on
   await expect(page.locator('.tag', { hasText: '11.0 × 11.0 × 11.0 mm' })).toBeVisible({
     timeout: 60_000,
   })
+  await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
 
   // The reply and its verification round: two requests for one turn.
   expect(bodies).toHaveLength(2)
@@ -855,6 +869,7 @@ test('a compiled turn is verified against a report and a render before it commit
   page,
 }) => {
   await seedKey(page)
+  await seedThinking(page)
   const bodies: string[] = []
   let call = 0
   await page.route(CHAT_URL, (route) => {
@@ -907,6 +922,7 @@ test('a compiled turn is verified against a report and a render before it commit
 
 test('a correction from the verification round is compiled and committed', async ({ page }) => {
   await seedKey(page)
+  await seedThinking(page)
   let call = 0
   await page.route(CHAT_URL, (route) => {
     call += 1
@@ -925,13 +941,14 @@ test('a correction from the verification round is compiled and committed', async
     timeout: 90_000,
   })
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
-  // One look, no second: the correction commits without a third call.
-  expect(call).toBe(2)
+  // The correction gets its own look; echoing it back is the confirmation.
+  expect(call).toBe(3)
   await expect(page.locator('.cm-content')).toContainText('cube([12, 8, 5]);')
 })
 
 test("opening another document never shows the previous document's mesh", async ({ page }) => {
   await seedKey(page)
+  await seedThinking(page)
   // Two turns in two documents, each followed by a verification round.
   const replies = ['cube([21, 21, 21]);', null, 'cube([9, 9, 9]);', null]
   let call = 0
@@ -950,11 +967,14 @@ test("opening another document never shows the previous document's mesh", async 
   await expect(page.locator('.tag', { hasText: '21.0 × 21.0 × 21.0 mm' })).toBeVisible({
     timeout: 60_000,
   })
+  // Wait the turn out: New would abort it and eat the next scripted reply.
+  await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
   await page.getByRole('button', { name: 'New', exact: true }).click()
   await send(page, 'a small cube')
   await expect(page.locator('.tag', { hasText: '9.0 × 9.0 × 9.0 mm' })).toBeVisible({
     timeout: 60_000,
   })
+  await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
   // Let the save debounce write both documents before the reload.
   await page.waitForTimeout(1000)
 
@@ -988,6 +1008,7 @@ test("opening another document never shows the previous document's mesh", async 
 
 test('an edit reply changes one section and leaves the rest of the source alone', async ({ page }) => {
   await seedKey(page)
+  await seedThinking(page)
   const edit =
     'Thicker.\n\n```openscad-edit\n<<<<<<< SEARCH\nplate_z = 3;   // [1:0.5:10]\n=======\nplate_z = 5;   // [1:0.5:10]\n>>>>>>> REPLACE\n```\n'
   const bodies: string[] = []
@@ -1053,4 +1074,162 @@ test('/help lists the commands in the transcript, and an unknown command points 
   await expect(page.locator('.chat-note').last()).toContainText('/export')
   await send(page, '/nope')
   await expect(page.locator('.chat-note').last()).toContainText('Type /help')
+})
+
+test('draw mode attaches the marked-up view to the next message', async ({ page }) => {
+  await seedKey(page)
+  let posted = ''
+  await page.route(CHAT_URL, (route) => {
+    posted = JSON.stringify(route.request().postDataJSON())
+    return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sseBody('Noted.') })
+  })
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await page.getByRole('button', { name: 'DRAW' }).click()
+  const box = await page.locator('.draw-overlay').boundingBox()
+  if (!box) throw new Error('no overlay')
+  await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.5)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.35, { steps: 10 })
+  await page.mouse.up()
+  await page.getByRole('button', { name: 'ATTACH', exact: true }).click()
+
+  await expect(page.locator('.chat-thumb.markup')).toBeVisible()
+  // Attaching leaves the mode; the orbit is the user's again.
+  await expect(page.getByRole('button', { name: 'DRAW' })).toBeVisible()
+  await send(page, 'a bigger hole here')
+  await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
+
+  const body = JSON.parse(posted) as {
+    messages: {
+      role: string
+      content: string | { type: string; text?: string; image_url?: { url: string } }[]
+    }[]
+  }
+  expect(body.messages[0]?.content).toContain('the viewport with my markup')
+  const user = body.messages.find((m) => m.role === 'user' && Array.isArray(m.content))
+  const parts = Array.isArray(user?.content) ? user.content : []
+  expect(parts.map((p) => p.type)).toEqual(['text', 'image_url'])
+  expect(parts[0]?.text).toContain('[Attached: the viewport with my markup in red]')
+  expect(parts[0]?.text).toContain('a bigger hole here')
+  const url = parts[1]?.image_url?.url ?? ''
+  expect(url).toMatch(/^data:image\/jpeg;base64,/)
+  expect(url.length).toBeGreaterThan(2000)
+  await writeFile(
+    test.info().outputPath('markup.jpg'),
+    Buffer.from(url.slice(url.indexOf(',') + 1), 'base64'),
+  )
+})
+
+test('with thinking on, the model can ask for a cut view and gets a render back', async ({
+  page,
+}) => {
+  await seedKey(page)
+  await seedThinking(page, 'medium')
+  const bodies: string[] = []
+  let call = 0
+  await page.route(CHAT_URL, (route) => {
+    bodies.push(JSON.stringify(route.request().postDataJSON()))
+    call += 1
+    const reply =
+      call === 1
+        ? 'Let me look inside first.\n\n```view\n{"view": "front", "section": {"axis": "y", "at": 20}}\n```\n'
+        : call === 2
+          ? fenced('cube([12, 8, 4]);')
+          : 'Looks right.'
+    return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sseBody(reply) })
+  })
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await send(page, 'a block')
+  await expect(page.locator('.tag', { hasText: '12.0 × 8.0 × 4.0 mm' })).toBeVisible({
+    timeout: 90_000,
+  })
+  await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
+  // The look, the source, the verification round's confirmation.
+  expect(call).toBe(3)
+  await expect(page.locator('.chat-inspect')).toHaveCount(2)
+
+  type Body = {
+    reasoning?: { effort: string }
+    messages: {
+      role: string
+      content: string | { type: string; text?: string; image_url?: { url: string } }[]
+    }[]
+  }
+  const first = JSON.parse(bodies[0] ?? '{}') as Body
+  expect(first.reasoning).toEqual({ effort: 'medium' })
+  expect(first.messages[0]?.content).toContain('Looking at the part')
+
+  // The render rides as an inspection, and the source follows it: the reply
+  // that asked carried no source, so the next call needs it again.
+  const second = JSON.parse(bodies[1] ?? '{}') as Body
+  const look = second.messages.at(-2)
+  expect(look?.role).toBe('user')
+  const parts = Array.isArray(look?.content) ? look.content : []
+  expect(parts.map((p) => p.type)).toEqual(['text', 'image_url'])
+  expect(parts[0]?.text).toContain('front view, cut at y = 20 mm')
+  const url = parts[1]?.image_url?.url ?? ''
+  expect(url).toMatch(/^data:image\/jpeg;base64,/)
+  expect(url.length).toBeGreaterThan(2000)
+  expect(second.messages.at(-1)?.content).toContain('This is the current source')
+  await writeFile(
+    test.info().outputPath('view.jpg'),
+    Buffer.from(url.slice(url.indexOf(',') + 1), 'base64'),
+  )
+})
+
+test('the status line says what the turn is doing, look by look', async ({ page }) => {
+  await seedKey(page)
+  await seedThinking(page)
+  let call = 0
+  await page.route(CHAT_URL, async (route) => {
+    call += 1
+    // Hold the look's reply so the status line can be read while it waits.
+    if (call === 2) await page.waitForTimeout(1500)
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: sseBody(call === 1 ? fenced('cube([12, 8, 4]);') : 'Looks right.'),
+    })
+  })
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await send(page, 'a block')
+
+  const phase = page.locator('.chat-phase')
+  await expect(phase).toContainText('look 1 · waiting for the model', { timeout: 90_000 })
+  await expect(phase.locator('.spinner')).toBeVisible()
+  // A click on the status line shows what the model actually sent, code included.
+  await phase.click()
+  await expect(page.locator('.chat-raw')).toContainText('cube([12, 8, 4]);')
+  await phase.click()
+  await expect(page.locator('.chat-raw')).toBeHidden()
+  // The candidate is already on screen while the model looks at it.
+  await expect(page.locator('.tag', { hasText: 'candidate' })).toBeVisible()
+  await expect(page.locator('.tag', { hasText: '12.0 × 8.0 × 4.0 mm' })).toBeVisible()
+  // Kept for a human eye: the status line and its spinner, mid-turn.
+  await page.screenshot({ path: test.info().outputPath('phase.png') })
+  await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
+  await expect(phase).toBeHidden()
+  await expect(page.locator('.tag', { hasText: 'candidate' })).toBeHidden()
+  expect(call).toBe(2)
+})
+
+test('construction geometry is a ghost: on screen, out of the stats', async ({ page }) => {
+  await page.goto('/')
+  await waitForStarter(page)
+  await expect(page.locator('.viewport')).toHaveAttribute('data-ghost', '0')
+
+  await page.locator('.cm-content').click()
+  await page.keyboard.press('ControlOrMeta+a')
+  await page.keyboard.type(
+    'cube(5);\n// ---- CONSTRUCTION ----\n%translate([10, 0, 0]) cube(30);\n// ---- CONSTRUCTION END ----',
+  )
+  // The part alone sizes the HUD; the 30 mm ghost is neither measured nor exported.
+  await expect(page.locator('.tag', { hasText: '5.0 × 5.0 × 5.0 mm' })).toBeVisible({ timeout: 60_000 })
+  await expect(page.locator('.viewport')).toHaveAttribute('data-ghost', '1', { timeout: 60_000 })
 })

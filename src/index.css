@@ -72,6 +72,36 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
 .view-cube button:hover { border-color: #b8860b; color: #b8860b; }
 .view-cube button:focus-visible { outline: 2px solid #b8860b; outline-offset: 1px; }
 
+/* Draw mode: a 2D canvas over the frame that only exists to the pointer while
+   the mode is on. Its buttons stack under FIT — the HUD owns the top-left. */
+.draw-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.viewport.drawing .draw-overlay { pointer-events: auto; cursor: crosshair; touch-action: none; }
+.view-cube button.primary { border-color: #e0242a; color: #e0242a; }
+.chat-thumb.markup { border-color: #e0242a; }
+
+/* The turn's current phase, in monospace so "look 3 · compiling" reads as a readout.
+   A button, because a click opens the raw output — but dressed as the note it is. */
+.chat-phase {
+  font-family: ui-monospace, monospace; letter-spacing: .02em;
+  background: none; border: 0; padding: 0; cursor: pointer; text-align: left;
+}
+.chat-phase:hover { color: #b8860b; }
+.chat-phase:focus-visible { outline: 2px solid #b8860b; outline-offset: 2px; }
+.chat-raw {
+  font: 11px/1.5 ui-monospace, monospace; white-space: pre-wrap; margin: 0 0 8px; padding: 8px 10px;
+  background: #f6f7f4; border: 1px solid #dfe2db; border-radius: 2px; color: #414741;
+  max-height: 240px; overflow: auto;
+}
+
+/* Something is happening: a ring that turns. Pure CSS, one element, no library. */
+.spinner {
+  display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px;
+  border: 2px solid #c8ccc4; border-top-color: #b8860b; border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+
 /* ── Chat ──────────────────────────────────────────────────────────────────
    The transcript is a log of readings, not a log of code. The source lives one
    pane to the left, so an assistant turn collapses its code block to a

@@ -769,9 +769,9 @@ test('a compiled reply is inspected once, and a prose confirmation commits it', 
   expect(kinds(h.appended)).toEqual(['user', 'assistant', 'compile', 'inspect', 'assistant'])
 })
 
-test('a correction after inspection is compiled and committed without a second look', async () => {
+test('a correction after inspection is compiled and looked at again, until the model confirms', async () => {
   const h = harness({
-    replies: [says(fenced('a')), says(fenced('b'))],
+    replies: [says(fenced('a')), says(fenced('b')), says('Now it is right.')],
     compiles: [okResult(), okResult()],
     inspect: REPORT,
   })
@@ -779,8 +779,131 @@ test('a correction after inspection is compiled and committed without a second l
 
   expect(outcome).toMatchObject({ status: 'committed', source: 'b' })
   expect(h.compiled).toEqual(['a', 'b'])
-  expect(h.inspected).toEqual(['a'])
-  expect(h.windows).toHaveLength(2)
+  expect(h.inspected).toEqual(['a', 'b'])
+  expect(h.windows).toHaveLength(3)
+})
+
+test('looks off is one call: the compile commits with no look, and a view request is refused', async () => {
+  const h = harness({ replies: [says(fenced('a'))], compiles: [okResult()], inspect: REPORT })
+  expect(await runTurn({ ...turnInput(), looks: false }, h.deps)).toMatchObject({ status: 'committed', source: 'a' })
+  expect(h.inspected).toEqual([])
+
+  const g = harness({ replies: [says('Let me see.\n\n```view\n{"view": "top"}\n```')] })
+  expect(await runTurn({ ...turnInput(), looks: false }, g.deps)).toEqual({ status: 'answered' })
+  expect(g.appended.at(-1)).toMatchObject({ kind: 'note', text: expect.stringContaining('thinking') })
+})
+
+test('a view request is rendered from the part on screen and handed back as an inspection', async () => {
+  const h = harness({
+    replies: [says('Let me see.\n\n```view\n{"view": "front", "section": {"axis": "z", "at": 2}}\n```'), says(fenced('a'))],
+    compiles: [okResult()],
+  })
+  const rendered: [unknown, Uint8Array | null][] = []
+  const deps: TurnDeps = {
+    ...h.deps,
+    render: async (request, off) => {
+      rendered.push([request, off])
+      return IMG
+    },
+  }
+  const outcome = await runTurn(turnInput(), deps)
+
+  expect(outcome).toMatchObject({ status: 'committed', source: 'a' })
+  expect(rendered).toEqual([[{ view: 'front', section: { axis: 'z', at: 2 }, box: null }, null]])
+  expect(kinds(h.appended)).toEqual(['user', 'assistant', 'inspect', 'assistant', 'compile'])
+  expect(h.windows[1]?.at(-2)).toEqual({
+    role: 'user',
+    content: [
+      { type: 'text', text: expect.stringContaining('front view, cut at z = 2 mm') },
+      { type: 'image_url', image_url: { url: IMG } },
+    ],
+  })
+})
+
+test('a malformed view block is fed back, and a view without a renderer says so', async () => {
+  const h = harness({ replies: [says('```view\n{"view": "side"}\n```'), says('```view\n{}\n```'), says('Fine.')] })
+  expect(await runTurn(turnInput(), h.deps)).toEqual({ status: 'answered' })
+  expect(h.appended[2]).toMatchObject({ kind: 'inspect', text: expect.stringContaining('"side" is not a view') })
+  expect(h.appended[4]).toMatchObject({ kind: 'inspect', text: expect.stringContaining('No render is available') })
+})
+
+test('looks go on until the model confirms, and the status line names each phase', async () => {
+  const phases: string[] = []
+  const h = harness({
+    replies: [says(fenced('a')), says(fenced('b')), says(fenced('c')), says('ok')],
+    compiles: [okResult(), okResult(), okResult()],
+    inspect: REPORT,
+  })
+  const deps: TurnDeps = { ...h.deps, onPhase: (phase) => phases.push(phase) }
+  expect(await runTurn(turnInput(), deps)).toMatchObject({ status: 'committed', source: 'c' })
+  expect(h.inspected).toEqual(['a', 'b', 'c'])
+  expect(phases).toEqual([
+    'waiting for the model',
+    'the model is writing',
+    'compiling',
+    'look 1 · measuring the part',
+    'look 1 · waiting for the model',
+    'look 1 · the model is writing',
+    'look 1 · compiling',
+    'look 2 · measuring the part',
+    'look 2 · waiting for the model',
+    'look 2 · the model is writing',
+    'look 2 · compiling',
+    'look 3 · measuring the part',
+    'look 3 · waiting for the model',
+    'look 3 · the model is writing',
+  ])
+})
+
+test('a repair and a view each get their own status line', async () => {
+  const phases: string[] = []
+  const h = harness({
+    replies: [
+      says('```view\n{"view": "top"}\n```'),
+      says(fenced('a')),
+      says(fenced('b')),
+      says('ok'),
+    ],
+    compiles: [failResult('ERROR: a'), okResult()],
+    inspect: REPORT,
+  })
+  const deps: TurnDeps = { ...h.deps, render: async () => IMG, onPhase: (phase) => phases.push(phase) }
+  expect(await runTurn(turnInput(), deps)).toMatchObject({ status: 'committed', source: 'b' })
+  expect(phases).toEqual([
+    'waiting for the model',
+    'the model is writing',
+    'look 1 · rendering top view',
+    'look 1 · waiting for the model',
+    'look 1 · the model is writing',
+    'look 1 · compiling',
+    'repair 1 of 2 · waiting for the model',
+    'repair 1 of 2 · the model is writing',
+    'repair 1 of 2 · compiling',
+    'look 2 · measuring the part',
+    'look 2 · waiting for the model',
+    'look 2 · the model is writing',
+  ])
+})
+
+test('a part block replaces one section and the applied source is re-attached', async () => {
+  const src = 'w = 1;\n// ---- PART 1 ----\ncube(w);\n// ---- PART 1 END ----'
+  const h = harness({
+    replies: [says('```openscad-part 1\nsphere(w);\n```'), says('```openscad-part 3\nx\n```'), says('ok')],
+    compiles: [okResult()],
+    inspect: REPORT,
+  })
+  const outcome = await runTurn({ ...turnInput(), source: src }, h.deps)
+  expect(outcome).toMatchObject({ status: 'committed', source: 'w = 1;\n// ---- PART 1 ----\nsphere(w);\n// ---- PART 1 END ----' })
+  expect(h.windows[1]?.at(-1)).toMatchObject({ role: 'user', content: expect.stringContaining('with your edits applied') })
+  expect(h.appended.at(-2)).toMatchObject({ kind: 'compile', ok: false, stderr: expect.stringContaining('Part 3 is not in the current source') })
+})
+
+test('part checks are noted and ride the inspection', async () => {
+  const src = '// ---- PART 1 ----\nmodule a() { cube(1); }\n// ---- PART 1 END ----'
+  const h = harness({ replies: [says(fenced(src)), says('ok')], compiles: [okResult()], inspect: REPORT })
+  await runTurn(turnInput(), h.deps)
+  expect(h.appended[3]).toMatchObject({ kind: 'note', text: expect.stringContaining('PART 1 has no top-level call') })
+  expect(h.appended[4]).toMatchObject({ kind: 'inspect', text: expect.stringContaining('Source checks:\n- PART 1 has no top-level call') })
 })
 
 test('re-emitting the inspected source is a confirmation, not a recompile', async () => {

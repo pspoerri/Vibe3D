@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   AmbientLight, AxesHelper, Box3, BufferAttribute, BufferGeometry, DirectionalLight,
   DoubleSide, EdgesGeometry, GridHelper, Group, LineBasicMaterial, LineLoop, LineSegments,
@@ -7,6 +7,7 @@ import {
 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { Mesh } from '../kernel/off'
+import { fit as fitImage } from '../llm/images'
 import {
   chooseGridSpacing, fitDistance, VIEW_DIRECTIONS, viewUp, worldPerPixel, type StandardView,
 } from './camera'
@@ -27,6 +28,11 @@ const MODEL_COLOR = 0xf9d72c
 const HIGHLIGHT = 0x3b6fd6
 /** A press that travels further than this is an orbit, not a click. */
 const CLICK_PX = 5
+/** Construction geometry: a blue no part wears, faint enough to read as "not here". */
+export const GHOST = 0x4f79b8
+/** Markup strokes: a red no part wears, wide enough to survive the downscale. */
+const INK = '#e0242a'
+const INK_PX = 3
 
 /** Per-triangle sRGB bytes → one linear rgb per corner, which is what three reads. */
 function vertexColors(rgb: Uint8Array): Float32Array {
@@ -47,17 +53,27 @@ const disposeMaterial = (material: Material | Material[]) =>
 
 interface ViewportApi {
   setMesh(mesh: Mesh | null): void
+  setGhost(mesh: Mesh | null): void
   setHighlight(triangles: Uint32Array | null): void
   fit(): void
+  setDrawing(on: boolean): void
+  undoStroke(): void
+  clearStrokes(): void
+  /** The frame with the strokes on it, as a JPEG data URL sized for the wire. */
+  capture(): string | null
 }
 
 export function Viewport({
   mesh,
+  ghost = null,
   fitToken = 0,
   highlight = null,
   onPick,
+  onMarkup,
 }: {
   mesh: Mesh | null
+  /** Construction geometry, drawn translucent: never picked, never framed, never in the stats. */
+  ghost?: Mesh | null
   /** Bump to re-frame. A turn replaces the whole part, so the camera the user
    *  left pointing at the last one is almost never the right one. */
   fitToken?: number
@@ -65,18 +81,23 @@ export function Viewport({
   highlight?: Uint32Array | null
   /** A click: the triangle under the pointer, or null for empty space. */
   onPick?: (triangle: number | null) => void
+  /** Draw mode's ATTACH: the view with the user's strokes on it. */
+  onMarkup?: (dataUrl: string) => void
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const cubeHostRef = useRef<HTMLDivElement>(null)
+  const overlayRef = useRef<HTMLCanvasElement>(null)
   const apiRef = useRef<ViewportApi | null>(null)
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick
+  const [drawing, setDrawing] = useState(false)
 
   // Scene is built once and reused; only the model group's contents change.
   useEffect(() => {
     const host = hostRef.current
     const cubeHost = cubeHostRef.current
-    if (!host || !cubeHost) return
+    const overlay = overlayRef.current
+    if (!host || !cubeHost || !overlay) return
 
     const scene = new Scene()
     scene.background = new Color(BACKGROUND)
@@ -117,6 +138,17 @@ export function Viewport({
 
     const modelGroup = new Group()
     scene.add(modelGroup)
+    const ghostGroup = new Group()
+    scene.add(ghostGroup)
+    const clearGroup = (group: Group): void => {
+      for (const child of [...group.children]) {
+        group.remove(child)
+        if (child instanceof ThreeMesh || child instanceof LineSegments) {
+          child.geometry.dispose()
+          disposeMaterial(child.material)
+        }
+      }
+    }
     const modelBox = new Box3()
     let fitted = false
     let modelMesh: ThreeMesh | null = null
@@ -244,6 +276,48 @@ export function Viewport({
     renderer.domElement.addEventListener('pointerdown', onDown)
     renderer.domElement.addEventListener('pointerup', onUp)
 
+    // Draw mode: freehand strokes on a 2D canvas over the frame, in CSS px so a
+    // resize redraws them in place. The overlay only takes pointer events while
+    // the mode is on (CSS), and the orbit is off for the same span.
+    const strokes: { x: number; y: number }[][] = []
+    const ink = overlay.getContext('2d')
+    const redraw = () => {
+      if (!ink) return
+      const scale = overlay.width / Math.max(1, host.clientWidth)
+      ink.clearRect(0, 0, overlay.width, overlay.height)
+      ink.lineWidth = INK_PX * scale
+      ink.strokeStyle = INK
+      ink.lineJoin = 'round'
+      ink.lineCap = 'round'
+      for (const stroke of strokes) {
+        ink.beginPath()
+        stroke.forEach((p, i) => (i ? ink.lineTo(p.x * scale, p.y * scale) : ink.moveTo(p.x * scale, p.y * scale)))
+        ink.stroke()
+      }
+    }
+    const at = (e: PointerEvent) => {
+      const rect = overlay.getBoundingClientRect()
+      return { x: e.clientX - rect.left, y: e.clientY - rect.top }
+    }
+    const onInkDown = (e: PointerEvent) => {
+      if (e.button !== 0) return
+      overlay.setPointerCapture(e.pointerId)
+      strokes.push([at(e)])
+      redraw()
+    }
+    const onInkMove = (e: PointerEvent) => {
+      if (!overlay.hasPointerCapture(e.pointerId)) return
+      strokes[strokes.length - 1]?.push(at(e))
+      redraw()
+    }
+    const onInkUp = (e: PointerEvent) => {
+      if (overlay.hasPointerCapture(e.pointerId)) overlay.releasePointerCapture(e.pointerId)
+    }
+    overlay.addEventListener('pointerdown', onInkDown)
+    overlay.addEventListener('pointermove', onInkMove)
+    overlay.addEventListener('pointerup', onInkUp)
+    overlay.addEventListener('pointercancel', onInkUp)
+
     const clearHighlight = () => {
       if (!highlightMesh) return
       modelGroup.remove(highlightMesh)
@@ -260,6 +334,9 @@ export function Viewport({
       renderer.setSize(w, h)
       camera.aspect = w / h
       camera.updateProjectionMatrix()
+      overlay.width = renderer.domElement.width
+      overlay.height = renderer.domElement.height
+      redraw()
       draw()
     }
     const observer = new ResizeObserver(resize)
@@ -268,6 +345,53 @@ export function Viewport({
 
     apiRef.current = {
       fit,
+      setGhost(next) {
+        clearGroup(ghostGroup)
+        if (next && next.triangleCount > 0) {
+          const geometry = new BufferGeometry()
+          geometry.setAttribute('position', new BufferAttribute(next.positions, 3))
+          geometry.setIndex(new BufferAttribute(next.indices, 1))
+          ghostGroup.add(
+            new ThreeMesh(
+              geometry,
+              new MeshBasicMaterial({
+                color: GHOST, transparent: true, opacity: 0.16, depthWrite: false, side: DoubleSide,
+              }),
+            ),
+            new LineSegments(
+              new EdgesGeometry(geometry, 30),
+              new LineBasicMaterial({ color: GHOST, transparent: true, opacity: 0.7 }),
+            ),
+          )
+        }
+        invalidate()
+      },
+      setDrawing(on) {
+        controls.enabled = !on
+      },
+      undoStroke() {
+        strokes.pop()
+        redraw()
+      },
+      clearStrokes() {
+        strokes.length = 0
+        redraw()
+      },
+      capture() {
+        // Rendered and read in one task: the WebGL buffer is still intact until
+        // the browser composites, so no preserveDrawingBuffer is needed.
+        draw()
+        const frame = renderer.domElement
+        const out = document.createElement('canvas')
+        const [w, h] = fitImage(frame.width, frame.height)
+        out.width = w
+        out.height = h
+        const ctx = out.getContext('2d')
+        if (!ctx) return null
+        ctx.drawImage(frame, 0, 0, w, h)
+        ctx.drawImage(overlay, 0, 0, w, h)
+        return out.toDataURL('image/jpeg', 0.85)
+      },
       setHighlight(triangles) {
         clearHighlight()
         const base = modelMesh?.geometry
@@ -296,13 +420,7 @@ export function Viewport({
       setMesh(next) {
         highlightMesh = null
         modelMesh = null
-        for (const child of [...modelGroup.children]) {
-          modelGroup.remove(child)
-          if (child instanceof ThreeMesh || child instanceof LineSegments) {
-            child.geometry.dispose()
-            disposeMaterial(child.material)
-          }
-        }
+        clearGroup(modelGroup)
         modelBox.makeEmpty()
 
         if (next && next.triangleCount > 0) {
@@ -356,6 +474,10 @@ export function Viewport({
       observer.disconnect()
       renderer.domElement.removeEventListener('pointerdown', onDown)
       renderer.domElement.removeEventListener('pointerup', onUp)
+      overlay.removeEventListener('pointerdown', onInkDown)
+      overlay.removeEventListener('pointermove', onInkMove)
+      overlay.removeEventListener('pointerup', onInkUp)
+      overlay.removeEventListener('pointercancel', onInkUp)
       controls.removeEventListener('change', invalidate)
       controls.dispose()
       cube.dispose()
@@ -375,6 +497,10 @@ export function Viewport({
     apiRef.current?.setMesh(mesh)
   }, [mesh])
 
+  useEffect(() => {
+    apiRef.current?.setGhost(ghost)
+  }, [ghost])
+
   // After the mesh effect, so the overlay is built on the geometry it indexes.
   useEffect(() => {
     apiRef.current?.setHighlight(highlight)
@@ -385,14 +511,58 @@ export function Viewport({
     if (fitToken > 0) apiRef.current?.fit()
   }, [fitToken])
 
+  const leaveDrawing = () => {
+    apiRef.current?.clearStrokes()
+    setDrawing(false)
+  }
+  useEffect(() => {
+    apiRef.current?.setDrawing(drawing)
+    if (!drawing) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') leaveDrawing()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [drawing])
+
   return (
-    <div className="viewport">
+    <div className={drawing ? 'viewport drawing' : 'viewport'} data-ghost={ghost ? '1' : '0'}>
       <div ref={hostRef} className="viewport-canvas" />
+      <canvas ref={overlayRef} className="draw-overlay" aria-label="Markup" />
       <div className="view-cube">
         <div ref={cubeHostRef} />
         <button type="button" onClick={() => apiRef.current?.fit()} title="Frame the model">
           FIT
         </button>
+        {drawing ? (
+          <>
+            <button type="button" onClick={() => apiRef.current?.undoStroke()} title="Remove the last stroke">
+              UNDO
+            </button>
+            <button type="button" onClick={() => apiRef.current?.clearStrokes()} title="Remove every stroke">
+              CLEAR
+            </button>
+            <button
+              type="button"
+              className="primary"
+              title="Attach this view, strokes and all, to your next message"
+              onClick={() => {
+                const url = apiRef.current?.capture()
+                if (url) onMarkup?.(url)
+                leaveDrawing()
+              }}
+            >
+              ATTACH
+            </button>
+            <button type="button" onClick={leaveDrawing} title="Leave draw mode (Esc)" aria-label="Leave draw mode">
+              ✕
+            </button>
+          </>
+        ) : (
+          <button type="button" onClick={() => setDrawing(true)} title="Draw on the view to mark up a change">
+            DRAW
+          </button>
+        )}
       </div>
     </div>
   )

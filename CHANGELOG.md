@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- **Draw mode**: **DRAW** in the viewport turns the view into a sketchpad; **ATTACH** puts the
+  marked-up view (red strokes) into the next message, headed so the model reads the strokes as
+  annotations of where a change goes.
+- **Thinking**: a setting, and `/think off|low|medium|high`. Off — the default — is one model
+  call per message with no verification round. Any other level sets OpenRouter's
+  `reasoning.effort` and lets the model look at what it built, ask for views and cuts, and
+  correct itself until it is satisfied.
+- **Model-requested views**: with thinking on, a reply may be a ```` ```view ```` block naming a
+  view (iso, iso_back, front, back, left, right, top, bottom), an optional section cut and an
+  optional box to frame; the app renders it and hands it back as an inspection.
+- **A status line** under the transcript says what the turn is doing — `look 2 · measuring the
+  part`, `repair 1 of 2 · compiling`, `look 3 · rendering front view, cut at z = 12 mm` — with a
+  spinner, as has the HUD's `compiling…` tag — so a long chain of looks reads as progress.
+  Click it to see the model's output so far, raw: reasoning and code included.
+  Nothing interrupts a turn but **Stop**. The viewport shows each version that compiles as the
+  turn goes (tagged **candidate** until it commits), and the transcript only follows the newest
+  message while you are at the bottom of it — scrolling up to re-read stays put.
+- **PART sections**: the source wraps each part in `// ---- PART N ----` … `// ---- PART N END ----`,
+  one top-level call each, so viewport part N is source PART N; a reply may replace one with a
+  ```` ```openscad-part N ```` block (one past the last adds a part, an empty body deletes one).
+  The same block takes a **module name** — ```` ```openscad-part lid ```` — and replaces that whole
+  `module lid(...) { … }`, found by parsing (braceless one-liners too); an unknown name appends.
+  After a compile the chat notes a section with no call, a call outside the sections, or a module
+  nothing calls. The examples carry markers.
+- **Construction geometry**: a `// ---- CONSTRUCTION ----` section of `%`-prefixed statements
+  — reference shapes the part must fit — compiled on its own kernel and drawn as a translucent
+  blue ghost in the viewport and in the model's looks. The `%` keeps it out of every export
+  (verified on the pinned kernel); the checks flag a construction statement that forgot it.
+  Replace it with ```` ```openscad-part construction ````.
+- Repairs are per candidate: every source that compiles gets two of its own.
+- Deleting the open document goes back to the start window instead of silently opening a
+  neighbour.
+
 - **Parts**: every top-level statement is its own part — shown together, counted in the HUD,
   and exported as separate objects in the 3MF (each with its colour). The model is told to
   lay parts out side by side on the plate and never to overlap two top-level statements.

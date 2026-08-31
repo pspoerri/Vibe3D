@@ -210,4 +210,6 @@ module potted_plant_with_saucer() {
   }
 }
 
+// ---- PART 1 ----
 potted_plant_with_saucer();
+// ---- PART 1 END ----

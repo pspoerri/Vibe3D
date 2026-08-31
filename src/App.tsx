@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Chat } from './chat/Chat'
 import { COMMANDS } from './chat/commands'
+import { constructionSource } from './chat/parts'
 import { Help } from './help/Help'
 import { Compiler, type CompileResult } from './kernel/compile'
 import { parseOff, type Mesh } from './kernel/off'
@@ -65,10 +66,15 @@ export function App() {
     [components],
   )
   const [mesh, setMesh] = useState<Mesh | null>(null)
+  /** Construction geometry (design.md §8): the `%` shapes, compiled on their own, drawn as a ghost. */
+  const [ghost, setGhost] = useState<Mesh | null>(null)
+  /** A turn's latest candidate that compiled: on screen while the turn runs, gone when it ends. */
+  const [turnMesh, setTurnMesh] = useState<Mesh | null>(null)
+  const shown = turnMesh ?? mesh
   // The part the user clicked. Dropped with the mesh: a recompile may have
   // changed which part is which.
   const [selected, setSelected] = useState<Selection | null>(null)
-  useEffect(() => setSelected(null), [mesh])
+  useEffect(() => setSelected(null), [shown])
   // design.md §6: the "was" of a turn's inspection. Only a define-free compile
   // or a turn sets it, so a slider drag's reduced-$fn preview is never the before.
   const [before, setBefore] = useState<Uint8Array | null>(null)
@@ -80,6 +86,8 @@ export function App() {
   const [chatBusy, setChatBusy] = useState(false)
   const [compiles, setCompiles] = useState(0)
   const [fitToken, setFitToken] = useState(0)
+  /** In transit from the viewport's Draw mode to the chat's tray. */
+  const [markup, setMarkup] = useState<string | null>(null)
   const [units, setUnits] = useState(loadUnits)
   // The launcher is the entry point: nothing is open until a document is picked.
   const [open, setOpen] = useState(false)
@@ -89,6 +97,10 @@ export function App() {
 
   const compiler = useMemo(() => new Compiler(), [])
   useEffect(() => () => compiler.dispose(), [compiler])
+  // Its own kernel: compile() cancels whatever that instance has in flight,
+  // and the ghost must never cancel the part, nor the part the ghost.
+  const ghostCompiler = useMemo(() => new Compiler(), [])
+  useEffect(() => () => ghostCompiler.dispose(), [ghostCompiler])
 
   useEffect(() => {
     let live = true
@@ -234,7 +246,36 @@ export function App() {
     return () => clearTimeout(timer)
   }, [source, previewDefines, components, files, compiler, ready, currentId])
 
-  const stats = useMemo(() => (mesh ? meshStats(mesh) : null), [mesh])
+  // The construction section, if any, compiled without its parts. A failure
+  // just means no ghost: the part's own compile reports the error.
+  const ghostSource = useMemo(() => constructionSource(source), [source])
+  const ghostDocRef = useRef(currentId)
+  useEffect(() => {
+    if (ghostDocRef.current !== currentId) {
+      ghostDocRef.current = currentId
+      setGhost(null)
+    }
+    if (!ready || ghostSource === null) {
+      setGhost(null)
+      return
+    }
+    let live = true
+    const timer = setTimeout(async () => {
+      try {
+        const result = await ghostCompiler.compile(ghostSource, 'off', { defines: previewDefines, files })
+        if (!live) return
+        setGhost(result.ok ? parseOff(new TextDecoder().decode(result.data)) : null)
+      } catch {
+        if (live) setGhost(null)
+      }
+    }, previewDefines.length > 0 ? DRAG_DEBOUNCE_MS : DEBOUNCE_MS)
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [ghostSource, previewDefines, files, ghostCompiler, ready, currentId])
+
+  const stats = useMemo(() => (shown ? meshStats(shown) : null), [shown])
 
   // Export runs its own compile so the exported bytes always match the current
   // source, and never reuses the viewport's OFF. The file is named after the
@@ -331,10 +372,12 @@ export function App() {
 
       <section className="pane view">
         <Viewport
-          mesh={mesh}
+          mesh={shown}
+          ghost={ghost}
           fitToken={fitToken}
           highlight={selected?.triangles ?? null}
-          onPick={(triangle) => setSelected(triangle !== null && mesh ? selectPart(mesh, triangle) : null)}
+          onPick={(triangle) => setSelected(triangle !== null && shown ? selectPart(shown, triangle) : null)}
+          onMarkup={setMarkup}
         />
         <div className="actions">
           {(['3mf', 'binstl', 'obj'] as const).map((format) => (
@@ -363,7 +406,13 @@ export function App() {
           >
             {units === 'mm' ? 'metric' : 'imperial'}
           </button>
-          {busy && <span className="tag busy">compiling…</span>}
+          {busy && (
+            <span className="tag busy">
+              <span className="spinner" aria-hidden="true" />
+              compiling…
+            </span>
+          )}
+          {turnMesh && <span className="tag busy" title="The turn's latest version that compiled; not committed yet">candidate</span>}
           {!busy && ms !== null && <span className="tag">{ms} ms</span>}
           {stats && (
             <span className={error ? 'stats stale' : 'stats'}>
@@ -393,6 +442,10 @@ export function App() {
           components={components}
           selection={selected}
           onClearSelection={() => setSelected(null)}
+          markup={markup}
+          onClearMarkup={() => setMarkup(null)}
+          construction={ghost}
+          onCandidate={setTurnMesh}
           before={before}
           units={units}
           initialLog={session ? currentDoc(session).chat : []}
@@ -538,6 +591,9 @@ function MenuBar({
           if (!session || !doc) return
           if (!window.confirm(`Delete "${doc.name}"? This cannot be undone.`)) return
           onChange(deleteDoc(session, doc.id, crypto.randomUUID(), Date.now()))
+          // What was open is gone; whichever neighbour became current was not
+          // chosen by the user, so the start window is where to pick next.
+          onOpen()
         }}
       >
         Delete

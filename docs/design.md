@@ -382,6 +382,32 @@ Milestone 4 built points 1, 2 and 5 as written, and took a different shape on th
   is live for its own turn only and stripped at the store boundary, exactly like a reference
   image. Earlier turns' inspections are dropped from the window, like their stderr (§12).
 
+### Revised 2026-08-31: the model looks until it is done
+
+The "one round per turn" and "no model-invoked tools" bullets above are superseded.
+
+- **`render_view` is built, in-band.** A reply that is only a ```` ```view ```` block —
+  `{"view", "section", "box"}`: point 4's arguments minus `fit`, plus a box, because the model
+  has the report's numbers — is rendered by `capture.ts` (orthographic, shaded, a clipping-plane
+  cut with the interior as flat back faces, uncapped) and appended as an `inspect` event; then
+  the loop continues. Carried like `openscad-edit`, not as a tool call: the reasons the bullet
+  above gave still hold. `measure()` needs no tool — the report rides every verification message.
+- **Rounds are unbounded; Stop is the cap.** `TurnInput.looks` lets the model inspect, request
+  views and correct as often as it likes; nothing asks the user mid-turn — an "N looks, keep
+  going?" banner was built and removed the same day, because it stopped the chat. What the user
+  gets instead is the phase: `deps.onPhase` reports "look 3 · rendering front view, cut at
+  z = 12 mm", "repair 1 of 2 · compiling", and the chat shows it under the transcript while the
+  turn runs. `looks: false` is thinking off — one call, compile repairs only, no verification
+  round: the pre-M4 shape, and the default.
+- **Thinking** is one setting: off, or OpenRouter's `reasoning.effort`. The looking clause of
+  the system prompt and the view hint in `verifyMessage` are appended only when it is on, so an
+  off session's prefix is byte-identical to v0.1's.
+- Repairs reset per candidate (`attempt = 0` after a successful compile), or a turn of several
+  looks would run out of them on its third correction.
+- A reply without a full source — an edit, a part block, a view request — gets the source
+  re-attached on the next call. Before, only edits did; a view-only reply would have left the
+  model with nothing to edit.
+
 ---
 
 ## 7. State, time travel, persistence
@@ -521,6 +547,43 @@ Everything below was verified against the pinned kernel first, under Node with `
   (its children reset to `ltr`) so the grip sits on its inner corner, where there is room to
   drag. Widths are not persisted.
 
+### Shipped 2026-08-31: PART sections and draw mode
+
+- **PART sections.** The system prompt has the model wrap each part — the modules only it uses
+  and its ONE top-level call — in `// ---- PART N ----` / `// ---- PART N END ----`, numbered in
+  order, with parameters and shared helpers above the first marker, so viewport part N (statement
+  order under the lazy union) is source PART N. The `[Selected part N …]` line now names a
+  section, and the selection rule became "reply with an openscad-part block for it". A
+  ```` ```openscad-part N ```` block replaces the lines between the markers (`parts.ts`); N one
+  past the last appends, an empty body deletes and the rest renumber. The same fence takes a
+  module name — ```` ```openscad-part lid ```` — and `moduleSpan` finds `module lid(` and
+  brace-matches to its end (or to the `;` of a braceless one-statement module) on
+  comment-stripped lines; the body must be the whole definition, the caption above it stays, an
+  unknown name appends (modules are hoisted, so placement is free). Applied after edits, on the
+  same wire path and repair budget. A last open marker with no END — models do leave one — is
+  read as a section running to the end of the file, reported by the checks, and closed by the
+  next replacement of it; `src/chat/fixtures/ferrari-tractor.scad` is such a file, kept as the
+  test bed for module replacement inside real nesting. `checkParts` runs after every successful compile — a
+  section with no top-level call, a call outside every section, a module nothing calls — noted
+  in the chat and appended to the verification message as "Source checks". A comment-stripping
+  line scanner that counts brackets, not a parser.
+- **Construction geometry.** OpenSCAD's own mechanism, the `%` background modifier: the kernel
+  drops such subtrees from every export (`kernel.node.test.ts` pins this — OFF volume, 3MF
+  object count, and the empty-top-level exit for a construction-only file). The convention is
+  one `// ---- CONSTRUCTION ----` section of `%` statements after the parts. `constructionSource`
+  is the file minus its PART sections with the `%` unmasked; App compiles it on a third kernel
+  (never sharing one with the part: `compile()` cancels), and the viewport draws the mesh as a
+  translucent blue ghost — not picked, not framed, not measured — as does `renderView`, so the
+  model's looks show the part against what it fits. `checkParts` flags a construction statement
+  without `%`, the one mistake that would print.
+- **Draw mode.** A 2D canvas over the WebGL canvas: `pointer-events` only while the mode is on,
+  OrbitControls disabled for the same span, strokes kept in CSS px so a resize redraws them in
+  place. ATTACH renders a frame and reads it in the same task (no `preserveDrawingBuffer`),
+  composites the strokes, downsizes through `images.fit`, and hands a JPEG up App → Chat, where
+  it is an attachment flagged `markup`: the message is headed
+  `[Attached: the viewport with my markup in red]` and the image clause tells the model what the
+  red is.
+
 ---
 
 ## 9. LLM client
@@ -614,6 +677,7 @@ desyncing.
 | `/undo` | Steps the head to the previous version — the same operation as the version picker, implemented once (§7). The window is not truncated: the current source is re-attached verbatim on every turn, so the model sees the truth either way, and the transcript keeps the failed turn visible. |
 | `/export` | Pure client action. No LLM call, no history entry. |
 | `/model`, `/key` | Switch model / re-enter key. |
+| `/think` | `off` is one call per message; `low`, `medium`, `high` set `reasoning.effort` and let the model look, request views and correct until satisfied (§6, revised). Without an argument, opens the settings. |
 
 `/compact` rewrites the message array and so invalidates OpenRouter's prompt cache. Cheap, not
 free — don't rewrite history every turn.
@@ -683,7 +747,8 @@ Skip component tests and Vitest browser mode at MVP.
   to *state its interpretation* of ambiguous dimensions before building, so the user can correct it
   cheaply instead of after a 13-second compile.
 - **Render style has no published ablation.** The 4–8 canonical-view convention is convergent
-  practice, not evidence. Worth one internal A/B once there is a working loop.
+  practice, not evidence. Worth one internal A/B once there is a working loop. Model-requested
+  views are in (§6, revised) — the loop exists; the A/B still does not.
 
 ---
 

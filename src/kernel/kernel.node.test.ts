@@ -96,3 +96,20 @@ test('an unreadable mesh file is the kernel error, never a silent empty part', a
   expect(code).toBe(1)
   expect(stderr).toContain('STL format not recognized')
 })
+
+test('the % background modifier is dropped from every export: construction geometry never prints', async () => {
+  const off = await compile('%cube(10); cube(5);', 'off')
+  expect(off.code).toBe(0)
+  const stats = meshStats(parseOff(text(off.data)))
+  expect(stats.parts).toBe(1)
+  expect(stats.volume).toBe(125)
+
+  const mf = await compile('%cube(10); cube(5); module guide() { %sphere(20); } guide();', '3mf')
+  expect(mf.code).toBe(0)
+  expect(strFromU8(unzipSync(mf.data)['3D/3dmodel.model']!).match(/<object /g)).toHaveLength(1)
+
+  // Only construction: the same empty-top-level exit inspect.ts already reads.
+  const none = await compile('%cube(10);', 'off')
+  expect(none.code).toBe(1)
+  expect(none.stderr).toMatch(/top level object is empty/i)
+})

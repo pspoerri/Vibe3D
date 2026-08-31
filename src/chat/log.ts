@@ -1,5 +1,5 @@
 import type { ChatMessage, ContentPart } from '../llm/openrouter'
-import { EDIT_FENCE, stubFences } from './fence'
+import { EDIT_FENCE, extractSource, PART_FENCE, stubFences } from './fence'
 
 /** A document component as the model needs it: a name to import() and a measured box. */
 export interface ComponentRef {
@@ -127,8 +127,10 @@ export function buildWindow({
   }
 
   let liveReply = false
-  // Whether the latest live reply was a partial update: its source is not on
-  // the wire, so the applied result has to be attached for the next attempt.
+  // Whether the latest live reply carries the whole source. An edit, a part
+  // block or a view request does not, so the source — the applied result, for
+  // the first two — has to be attached for the next call.
+  let liveSource = false
   let liveEdits = false
   for (let i = start; i < log.length; i++) {
     const event = log[i]!
@@ -173,6 +175,7 @@ export function buildWindow({
         })
         if (event.turn === turn) {
           liveReply = true
+          liveSource = extractSource(event.text).source !== null
           liveEdits = EDIT_REPLY.test(event.text)
         }
         break
@@ -205,14 +208,15 @@ export function buildWindow({
   // design.md §5: on a retry the model already has the source it just wrote,
   // so the document crosses the wire exactly once per request either way —
   // and a failed candidate is never mislabelled as the current source.
-  if (!liveReply || liveEdits) {
+  if (!liveReply || !liveSource) {
     messages.push({ role: 'user', content: sourceMessage(source, components, liveEdits) })
   }
 
   return messages
 }
 
-const EDIT_REPLY = new RegExp(EDIT_FENCE.source, 'im')
+/** An edit or a part reply: its source is not on the wire, so the applied result is re-attached. */
+const EDIT_REPLY = new RegExp(`${EDIT_FENCE.source}|${PART_FENCE.source}`, 'im')
 
 /** Whole numbers stay whole; anything else gets one decimal, like the measured report. */
 const num = (n: number): string => String(Math.round(n * 10) / 10)

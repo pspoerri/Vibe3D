@@ -54,10 +54,18 @@ export class ChatError extends Error {
   }
 }
 
+export type Effort = 'low' | 'medium' | 'high'
+
 export interface ChatOptions {
   readonly baseUrl: string
   readonly apiKey: string
   readonly model: string
+  /**
+   * OpenRouter's unified reasoning knob, `reasoning: { effort }`. Absent keeps
+   * the body byte-identical to a plain request; a model without reasoning
+   * ignores it (the docs say so; nothing here requires the parameter).
+   */
+  readonly reasoning?: Effort
 }
 
 /** JSON.parse that answers null instead of throwing. Every body here is untrusted. */
@@ -130,7 +138,8 @@ function readChunk(payload: string): StreamEvent[] {
 /**
  * POST {baseUrl}/chat/completions.
  *
- * The body is `{ model, messages, stream: true }` and nothing else. No
+ * The body is `{ model, messages, stream: true }` plus `reasoning` when the user
+ * asked for thinking, and nothing else. No
  * `provider: {require_parameters}` — it filters on request-body parameters we
  * do not send and can only produce a 503. No `usage: {include:true}` and no
  * `stream_options` — both are documented no-ops, and usage arrives on the
@@ -157,7 +166,12 @@ export async function* streamChat(
       'HTTP-Referer': location.origin + location.pathname,
       'X-OpenRouter-Title': 'Vibe3D',
     },
-    body: JSON.stringify({ model: options.model, messages, stream: true }),
+    body: JSON.stringify({
+      model: options.model,
+      messages,
+      stream: true,
+      ...(options.reasoning ? { reasoning: { effort: options.reasoning } } : {}),
+    }),
   })
 
   // Checked before response.body is touched: a stream:true request that fails

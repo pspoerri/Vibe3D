@@ -226,3 +226,15 @@ test('Help lists the commands on hover and opens the manual on click', async ({ 
   await page.keyboard.press('Escape')
   await expect(manual).toBeHidden()
 })
+
+test('deleting the open document goes back to the start window', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('.start-open').first().click({ timeout: 90_000 })
+  await expect(page.locator('.start-card')).toBeHidden()
+  page.once('dialog', (dialog) => void dialog.accept())
+  await page.getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(page.locator('.start-card')).toBeVisible()
+  // The document row is gone; the example of the same name is not a document.
+  await expect(page.locator('.start-open', { hasText: 'A mounting plate' })).toHaveCount(0)
+  await expect(page.locator('.start-open')).toHaveCount(1)
+})

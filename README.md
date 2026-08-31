@@ -67,13 +67,29 @@ the kernel reads and measures it, and from then on `import("name.stl")` works in
 model sees the list with each file's bounding box and places it by those numbers. The files live
 with the document in this browser and travel in the project file.
 
+The source keeps each part between `// ---- PART 1 ----` and `// ---- PART 1 END ----` markers,
+one top-level call per section, so part 1 in the viewport is PART 1 in the source and the model
+can replace one section without touching the rest. After a compile the chat notes a section with
+no top-level call, a call outside every section, or a module nothing calls.
+
 Click a part in the viewport to select it. The next message you send is headed by that part's
 number, bounding box and colour, so "make this 2 mm taller" means the one you clicked.
+
+**Construction geometry** — the shelf a bracket hangs on, the box a lid must fit — goes in a
+`// ---- CONSTRUCTION ----` section, every statement prefixed with OpenSCAD's `%` modifier. It
+shows as a translucent blue ghost in the viewport and in the model's own looks, and is never in
+the tags, the exports or a print; the chat notes a construction statement that forgot its `%`.
+
+**DRAW** turns the viewport into a sketchpad: drag to draw in red, then **ATTACH** to put the
+marked-up view into your next message — the model reads the strokes as "here", and your words say
+what.
 
 ## Partial updates
 
 For a small change to a large file the model can reply with an edit block that replaces just the
-lines it quotes, instead of rewriting the whole source. An edit has to match exactly one place;
+lines it quotes, or with a part block that replaces one PART section — or one module, by name —
+whole, instead of rewriting the source. An edit has to match exactly one place, a part block has to
+name a section that exists (or the next number, to add one) or a module (an unknown name adds it);
 one that does not is reported back to the model like a compile error and costs it a repair
 attempt, so nothing is ever applied half-way.
 
@@ -86,16 +102,21 @@ image at all. An image is sent with the turn you attach it to and with no later 
 for it once — across that turn's repair attempts and its verification round, and never again. The images are not saved — the
 conversation is, without them.
 
-## Checking its work
+## Thinking, and checking its work
 
-Valid code of the wrong shape is the failure that actually happens, so once a turn's source
-compiles the model gets one look at it before the turn commits: a measured report (bounding box,
-volume, part count, genus, and what was added and removed compared with the part that was on
-screen) and — for models that can read an image — one before/after render, green over magenta.
-It has to answer a few yes/no questions about your request from those numbers, and may reply with
-one correction; the correction is compiled and committed without a second look. The report and
-the picture sit in the transcript behind the **inspected** chip. If you press Stop during that
-round, you keep the part that already compiled.
+With thinking **off** — the default, and `/think off` — a message is one model call: the reply is
+compiled, repaired if it has to be, and committed.
+
+Valid code of the wrong shape is the failure that actually happens, so with thinking on (`low`,
+`medium` or `high`, which is also the reasoning effort the model is asked for) every source that
+compiles gets a look before the turn commits: a measured report (bounding box, volume, part
+count, genus, and what was added and removed compared with the part that was on screen) and —
+for models that can read an image — a before/after render, green over magenta. The model answers
+a few yes/no questions about your request from those numbers and may correct itself, ask for
+another angle or a cut through the part, and look again, until it says the part is right. A
+status line under the transcript says what it is doing — `look 2 · rendering front view, cut at
+z = 12 mm` — and the reports and pictures sit in the transcript behind the **inspected** chips.
+Nothing interrupts it but **Stop**, which keeps the last version that compiled.
 
 ## Versions
 

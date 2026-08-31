@@ -6,10 +6,13 @@ import {
   contextLimit, fetchModels, streamChat, type ModelInfo, type Usage,
 } from '../llm/openrouter'
 import { loadKey, saveKey } from '../state/key'
-import { loadSettings, saveSettings } from '../state/settings'
+import { loadSettings, saveSettings, THINKING, type PortableSettings, type Thinking } from '../state/settings'
 import type { DownloadFormat } from '../export/download'
 import type { Component } from '../state/documents'
-import { formatReport, inspect } from '../viewer/inspect'
+import { parseOff, type Mesh } from '../kernel/off'
+import { meshStats } from '../kernel/stats'
+import { renderView } from '../viewer/capture'
+import { boxOf, formatReport, inspect } from '../viewer/inspect'
 import { referenceLine, type Selection } from '../viewer/select'
 import { COMMANDS, parseCommand, type Command } from './commands'
 import { COMPACT_AT, runCompact, runTurn } from './controller'
@@ -22,6 +25,11 @@ const REVOKE_HOME = 'https://openrouter.ai/settings/keys'
 /** A plain cap, chosen over reasoning about 413 payload_too_large: OpenRouter
  *  documents no inline size limit and providers enforce their own. */
 const MAX_IMAGES = 4
+/** A picked or pasted image, or the viewport with the user's strokes — which the message names. */
+interface Attachment {
+  url: string
+  markup?: true
+}
 
 export function Chat({
   source,
@@ -39,6 +47,10 @@ export function Chat({
   onExport,
   onBusyChange,
   onPrompt,
+  markup,
+  onClearMarkup,
+  construction,
+  onCandidate,
 }: {
   source: string
   /** The document's mesh files, for the kernel FS of every compile this pane runs. */
@@ -48,6 +60,13 @@ export function Chat({
   /** The part the user clicked, if any: the next message is about it. */
   selection: Selection | null
   onClearSelection: () => void
+  /** A viewport screenshot with the user's strokes on it: attached to the next message. */
+  markup: string | null
+  onClearMarkup: () => void
+  /** Construction geometry on screen, for the looks the model asks for. */
+  construction: Mesh | null
+  /** The turn's latest candidate that compiled, for the viewport while the turn runs; null when it ends. */
+  onCandidate: (mesh: Mesh | null) => void
   /** OFF of the mesh on screen — what a turn's inspection compares against. null when nothing has compiled. */
   before: Uint8Array | null
   /** Display units. The source stays metric; this is how to READ the user. */
@@ -69,7 +88,11 @@ export function Chat({
   const [log, setLog] = useState<ChatEvent[]>(() => [...initialLog])
   const [turn, setTurn] = useState(() => nextTurn(initialLog))
   const [input, setInput] = useState('')
-  const [attachments, setAttachments] = useState<readonly string[]>([])
+  const [attachments, setAttachments] = useState<readonly Attachment[]>([])
+  /** What the turn is doing right now — "look 2 · compiling" — while it runs. */
+  const [phase, setPhase] = useState('')
+  /** The status line toggles this: the model's output so far, raw, code and reasoning included. */
+  const [showRaw, setShowRaw] = useState(false)
   // Slots claimed by a normalisation still in flight. Reserved synchronously,
   // in the event handler, so a second pick cannot claim the same room — and so
   // sending cannot outrun a decode and push the image onto the NEXT turn.
@@ -96,7 +119,11 @@ export function Chat({
   const usageRef = useRef<Usage | null>(null)
   const compactedRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
-  const logEndRef = useRef<HTMLDivElement>(null)
+  const logBoxRef = useRef<HTMLDivElement>(null)
+  // Follows the newest message only while the reader is at the bottom: someone
+  // scrolling up to re-read an earlier turn must not be dragged back by every
+  // streamed token. Re-armed by their own scroll back down.
+  const stickRef = useRef(true)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   // The document owns the transcript (design.md §7); this pane owns the live
@@ -151,7 +178,7 @@ export function Chat({
       // allSettled, not all: one undecodable file must not take the rest of the
       // batch down with it, which is the whole of a four-image pick.
       const settled = await Promise.allSettled(taking.map(toDataUrl))
-      const urls = settled.flatMap((one) => (one.status === 'fulfilled' ? [one.value] : []))
+      const urls = settled.flatMap((one) => (one.status === 'fulfilled' ? [{ url: one.value }] : []))
       if (urls.length > 0) setAttachments((current) => [...current, ...urls])
       const unreadable = taking.length - urls.length
       if (unreadable > 0) {
@@ -163,7 +190,8 @@ export function Chat({
   }
 
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ block: 'end' })
+    const box = logBoxRef.current
+    if (box && stickRef.current) box.scrollTop = box.scrollHeight
   }, [log, thinking, liveText, liveReasoning])
 
   // Grow to the content, capped in CSS. Reset to auto first or scrollHeight
@@ -212,10 +240,20 @@ export function Chat({
     compiler.cancel()
   }
 
-  const persistSettings = (next: { baseUrl: string; model: string }) => {
+  const persistSettings = (next: PortableSettings) => {
     setSettings(next)
     saveSettings(next)
   }
+
+  // A markup from the viewport joins the tray like a picked file, flagged so
+  // the message can say what it is. Consumed at once: App holds it only in transit.
+  useEffect(() => {
+    if (!markup) return
+    if (attachments.length >= MAX_IMAGES) note(`Already at ${MAX_IMAGES} images.`, 'error')
+    else setAttachments((current) => [...current, { url: markup, markup: true }])
+    onClearMarkup()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markup])
 
   const runCommand = async (command: Command) => {
     switch (command.name) {
@@ -236,6 +274,18 @@ export function Chat({
         return
       case 'key':
         setShowSettings(true)
+        return
+      case 'think':
+        if (command.level) {
+          persistSettings({ ...settings, thinking: command.level })
+          note(
+            command.level === 'off'
+              ? 'Thinking off: one call per message.'
+              : `Thinking ${command.level}: the model looks, cuts and corrects until it is satisfied. Stop ends it early.`,
+          )
+        } else {
+          setShowSettings(true)
+        }
         return
       case 'unknown':
         note(`Unknown command /${command.word}. Type /help for the list.`, 'error')
@@ -311,9 +361,16 @@ export function Chat({
     setAttachments([])
     setChatError(null)
     onPrompt(text)
-    // The selection rides in the message itself, so the transcript records
-    // what the model was told — and it is what the system prompt describes.
-    const userText = selection ? `${referenceLine(selection)}\n\n${text}` : text
+    // The selection and the markup ride in the message itself, so the transcript
+    // records what the model was told — and it is what the system prompt describes.
+    const heads = [
+      ...(selection ? [referenceLine(selection)] : []),
+      ...(attachments.some((a) => a.markup) ? ['[Attached: the viewport with my markup in red]'] : []),
+    ]
+    const userText = [...heads, text].filter(Boolean).join('\n\n')
+    const images = attachments.map((a) => a.url)
+    const looks = settings.thinking !== 'off'
+    const vision = models.find((m) => m.id === settings.model)?.vision ?? false
     const controller = new AbortController()
     abortRef.current = controller
     busyRef.current = true
@@ -325,12 +382,13 @@ export function Chat({
       const outcome = await runTurn(
         {
           userText,
-          images: attachments,
+          images,
           log: logRef.current,
           turn,
-          systemPrompt: systemPromptFor(units, attachments.length > 0),
+          systemPrompt: systemPromptFor(units, images.length > 0, looks),
           source,
           components,
+          looks,
         },
         {
           stream: (messages, signal) =>
@@ -338,20 +396,43 @@ export function Chat({
               baseUrl: settings.baseUrl,
               apiKey,
               model: settings.model,
+              ...(looks ? { reasoning: settings.thinking as Exclude<Thinking, 'off'> } : {}),
             }),
-          compile: (candidate) => compiler.compile(candidate, 'off', { files }),
+          compile: async (candidate) => {
+            const result = await compiler.compile(candidate, 'off', { files })
+            // Shown at once, so the user orbits what the model is looking at
+            // instead of waiting for the commit to see any of it.
+            if (result.ok && !controller.signal.aborted) {
+              try {
+                onCandidate(parseOff(new TextDecoder().decode(result.data)))
+              } catch {
+                // An unreadable OFF is the turn's problem to report, not the preview's.
+              }
+            }
+            return result
+          },
           inspect: async (_candidate, off) => {
             const { report, image } = await inspect({
               before,
               after: off,
-              vision: models.find((m) => m.id === settings.model)?.vision ?? false,
+              vision,
               signal: controller.signal,
             })
             return {
-              text: verifyMessage(formatReport(report), image !== null),
+              text: verifyMessage(formatReport(report), image !== null, looks),
               ...(image ? { image } : {}),
             }
           },
+          // The latest mesh of the turn, else the one on screen. The vision
+          // flag gates this like the composite: a render nobody can read is a
+          // failed turn after a compile the user waited for.
+          render: async (request, off) => {
+            const bytes = off ?? before
+            if (!bytes || !vision) return null
+            const mesh = parseOff(new TextDecoder().decode(bytes))
+            return renderView(mesh, request, boxOf(meshStats(mesh)), construction)
+          },
+          onPhase: setPhase,
           append,
           onDraft: onStreamSource,
           onText: setLiveText,
@@ -395,7 +476,9 @@ export function Chat({
       }
     } finally {
       onStreamSource(null)
+      onCandidate(null)
       setThinking(false)
+      setPhase('')
       setLiveText('')
       setLiveReasoning('')
       busyRef.current = false
@@ -407,7 +490,14 @@ export function Chat({
 
   return (
     <div className="chat">
-      <div className="chat-log">
+      <div
+        className="chat-log"
+        ref={logBoxRef}
+        onScroll={(e) => {
+          const box = e.currentTarget
+          stickRef.current = box.scrollHeight - box.scrollTop - box.clientHeight < 40
+        }}
+      >
         {log.length === 0 && (
           <p className="chat-empty">
             Describe the part you want. The model rewrites the source, or edits a section of it;
@@ -418,24 +508,43 @@ export function Chat({
         {log.map((event) => (
           <ChatEventView key={event.id} event={event} />
         ))}
-        {thinking && (liveText || liveReasoning) ? (
+        {thinking && (liveText || liveReasoning) && !showRaw && (
           <div className="msg msg-assistant">
             {/* Reasoning only until real content starts: it is the answer to
                 "why is nothing happening", not part of the reply. */}
             {!liveText && <div className="chat-reasoning">{liveReasoning}</div>}
             <Markdown text={liveText} caret />
           </div>
-        ) : (
-          thinking && (
-            <div className="chat-note">
-              thinking<span className="caret" />
-            </div>
-          )
         )}
-        <div ref={logEndRef} />
+        {thinking && showRaw && (
+          // Verbatim: the rendering above collapses code to a chip and drops
+          // the reasoning once content starts; this is what actually arrived.
+          <pre className="chat-raw" id="chat-raw">
+            {liveReasoning && `# reasoning\n${liveReasoning}\n\n`}
+            {liveText || '(nothing from the model yet)'}
+          </pre>
+        )}
+        {thinking && (
+          // The turn's current phase, so a long chain of looks reads as
+          // progress rather than as a hang. Stop is the only brake. A click
+          // opens the raw output.
+          <button
+            type="button"
+            className="chat-note chat-phase"
+            aria-live="polite"
+            aria-expanded={showRaw}
+            aria-controls="chat-raw"
+            title={showRaw ? "Hide the model's output" : "Show the model's output so far"}
+            onClick={() => setShowRaw((open) => !open)}
+          >
+            <span className="spinner" aria-hidden="true" />
+            {phase || 'thinking'}
+          </button>
+        )}
       </div>
 
       {chatError && <div className="chat-error">{chatError}</div>}
+
 
       <form
         className="chat-form"
@@ -457,17 +566,17 @@ export function Chat({
         )}
         {attachments.length > 0 && (
           <div className="chat-tray">
-            {attachments.map((url, i) => (
+            {attachments.map((a, i) => (
               <button
                 key={i}
                 type="button"
-                className="chat-thumb"
-                title="Remove"
+                className={a.markup ? 'chat-thumb markup' : 'chat-thumb'}
+                title={a.markup ? 'Viewport markup — remove' : 'Remove'}
                 aria-label="Remove image"
                 disabled={busy}
                 onClick={() => setAttachments((current) => current.filter((_, j) => j !== i))}
               >
-                <img src={url} alt="" />
+                <img src={a.url} alt="" />
               </button>
             ))}
           </div>
@@ -534,6 +643,7 @@ export function Chat({
       <div className="chat-meter">
         <button type="button" onClick={() => setShowSettings((open) => !open)}>
           {settings.model}
+          {settings.thinking !== 'off' && ` · ${settings.thinking}`}
         </button>
         <span className="sep">·</span>
         <span title="Prompt + completion tokens this session">
@@ -600,6 +710,25 @@ export function Chat({
                 onChange={(e) => persistSettings({ ...settings, baseUrl: e.target.value })}
               />
             </label>
+            <label>
+              Thinking
+              <select
+                value={settings.thinking}
+                onChange={(e) => persistSettings({ ...settings, thinking: e.target.value as Thinking })}
+              >
+                {THINKING.map((level) => (
+                  <option key={level} value={level}>
+                    {level}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <p className="chat-hint">
+              Thinking <b>off</b> is one model call per message. Any other level is the model's
+              reasoning effort, and lets it look at what it built, ask for views and cuts, and
+              correct itself until it is satisfied. The line under the transcript says what it
+              is doing; <b>Stop</b> ends it and keeps the last version that compiled.
+            </p>
             <p className="chat-hint">
               The key is stored in this browser only, under <code>vibe3d.key</code>. Revoke it
               at <a href={revoke} target="_blank" rel="noreferrer">openrouter.ai</a>. This app

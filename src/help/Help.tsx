@@ -50,12 +50,21 @@ export function Help({ onClose }: { onClose: () => void }) {
 
         <h2>What happens on a turn</h2>
         <p>
-          The model replies with the complete source, or with an edit that replaces a section of
-          it. The browser compiles it; a compile error goes back to the model verbatim for up to
-          two repairs. Once the source compiles, the model gets one look at the result — a
-          measured report and, for vision models, a before/after render — and answers a few
-          yes/no questions about your request before the turn commits. It may reply with one
-          correction. Everything it saw sits in the transcript behind the <b>inspected</b> chip.
+          The model replies with the complete source, with <code>openscad-part</code> blocks that
+          replace whole PART sections or whole modules by name, or with an edit that replaces a
+          quoted section. The browser
+          compiles it; a compile error goes back to the model verbatim for up to two repairs.
+        </p>
+        <p>
+          With thinking <b>off</b> — the default — that is the whole turn: one model call. Set
+          thinking to low, medium or high in the settings, or with <code>/think</code>, and the
+          model also gets a look at what it built — a measured report and, for vision models, a
+          render — answers a few yes/no questions about your request, and may correct itself, ask
+          for another angle or a cut through the part, and look again, until it is satisfied.
+          The line under the transcript says what it is doing — <code>look 2 · compiling</code>{' '}
+          — click it to see the model's raw output so far; the viewport shows each version that compiles as it goes (tagged <b>candidate</b>{' '}
+          until it commits), and nothing interrupts it but <b>Stop</b>. Everything it saw sits in the transcript
+          behind the <b>inspected</b> chip.
         </p>
         <p>
           <b>Stop</b> aborts the request. If a version had already compiled, you keep it. Prices
@@ -85,6 +94,11 @@ export function Help({ onClose }: { onClose: () => void }) {
             and your next message is headed by that part's number, size, position and colour, so
             "make this taller" means that one. Click empty space or <b>clear</b> to deselect.
           </li>
+          <li>
+            <b>DRAW</b> turns the view into a sketchpad: drag to draw in red, <b>UNDO</b> and{' '}
+            <b>CLEAR</b> fix a stroke, <b>ATTACH</b> puts the marked-up view into your next message,
+            where the model reads the strokes as "here". <kbd>Esc</kbd> leaves without attaching.
+          </li>
           <li><b>Export 3MF</b> (carries units, one object per part), <b>STL</b>, or <b>OBJ</b>.</li>
         </ul>
 
@@ -94,6 +108,21 @@ export function Help({ onClose }: { onClose: () => void }) {
           the tags, and a separate object in the 3MF — a box and its lid arrive in the slicer as two
           things. The model is told to lay parts out side by side on the plate, never overlapping,
           and to keep a single solid's union inside a module.
+        </p>
+        <p>
+          The source keeps each part between <code>// ---- PART 1 ----</code> and{' '}
+          <code>// ---- PART 1 END ----</code>, one top-level call per section, so part 1 in the
+          viewport is PART 1 in the source and the model can replace one section without touching
+          the rest. After a compile the chat notes a section with no top-level call, a call outside
+          every section, or a module nothing calls.
+        </p>
+        <p>
+          <b>Construction geometry</b> — the shelf a bracket hangs on, the box a lid must fit, a
+          clearance zone — lives in a <code>// ---- CONSTRUCTION ----</code> section after the
+          parts, every statement prefixed with OpenSCAD's <code>%</code> modifier. It shows as a
+          translucent blue ghost in the viewport and in the model's own looks, and it is never in
+          the tags, the exports or a print. Ask for it: "the bracket hangs on a 18 mm shelf — show
+          the shelf".
         </p>
 
         <h2>Imported meshes</h2>
@@ -109,7 +138,9 @@ export function Help({ onClose }: { onClose: () => void }) {
         <p>
           Paste an image into the composer or pick one with the button beside it, up to four per
           message. They carry layout and intent; dimensions still have to come from your words. An
-          image is sent with the turn it belongs to and never again, and it is not saved.
+          image is sent with the turn it belongs to and never again, and it is not saved. A view
+          attached from <b>DRAW</b> travels the same way, headed so the model knows it is this app's
+          own render with your strokes on it.
         </p>
 
         <h2>Versions and documents</h2>
@@ -139,7 +170,7 @@ export function Help({ onClose }: { onClose: () => void }) {
         <h2>Keys</h2>
         <ul>
           <li><kbd>Enter</kbd> sends, <kbd>Shift</kbd>+<kbd>Enter</kbd> breaks a line.</li>
-          <li><kbd>Esc</kbd> closes this page.</li>
+          <li><kbd>Esc</kbd> closes this page, and leaves draw mode.</li>
           <li>The editor has its own undo; a turn's rewrite is one step of it.</li>
         </ul>
       </article>

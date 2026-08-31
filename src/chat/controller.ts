@@ -4,12 +4,12 @@ import type { ChatMessage, StreamEvent, Usage } from '../llm/openrouter'
 import { applyEdits, parseEdits } from './edits'
 import { extractSource } from './fence'
 import { buildWindow, type ChatEvent, type ComponentRef } from './log'
+import { applyParts, checkParts, parsePartBlocks } from './parts'
 import { COMPACT_PROMPT } from './prompt'
+import { describeView, parseView, type ViewRequest } from './views'
 
-/** 1 initial call + 2 repairs = 3 LLM calls and 3 compiles, per turn, ever. */
+/** Repairs per candidate: 2 compile failures in a row and the turn gives up on it. */
 export const MAX_RETRIES = 2
-/** One look at the compiled part per turn (design.md §6). A correction is committed without a second. */
-export const MAX_VERIFY = 1
 export const DRAFT_INTERVAL_MS = 100
 export const COMPACT_AT = 0.6
 
@@ -34,6 +34,13 @@ export interface TurnDeps {
    * round, which is the shape the pre-M4 tests exercise.
    */
   readonly inspect?: (source: string, off: Uint8Array) => Promise<{ text: string; image?: string }>
+  /**
+   * A render the model asked for, of the latest source that compiled this turn
+   * — or, when `off` is null, of the part on screen. null: nothing to show.
+   */
+  readonly render?: (request: ViewRequest, off: Uint8Array | null) => Promise<string | null>
+  /** What the turn is doing right now, for the status line: "look 2 · compiling". */
+  readonly onPhase?: (phase: string) => void
   readonly append: (event: ChatEvent) => void
   /** Streamed partial. NEVER compiled, NEVER written into `source`. */
   readonly onDraft: (source: string | null) => void
@@ -60,6 +67,12 @@ export interface TurnInput {
   readonly source: string
   /** The document's mesh files, listed for the model with the source. */
   readonly components?: readonly ComponentRef[]
+  /**
+   * Whether the model may look — inspections and requested views — as often
+   * as it likes; Stop is the only cap. False is thinking off: one call, compile
+   * repairs only, no look at all.
+   */
+  readonly looks?: boolean
 }
 
 /** Distributes over the union, so each variant keeps its own fields. */
@@ -98,7 +111,16 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
 
   type Verified = { source: string; result: Extract<CompileResult, { ok: true }> }
   let verified: Verified | null = null
-  let verifyRounds = 0
+  const looks = input.looks ?? true
+  let rounds = 0
+
+  /** "look 3", "repair 1 of 2", or nothing: the prefix of every status line. */
+  const stage = (): string =>
+    attempt > 0 ? `repair ${attempt} of ${MAX_RETRIES}` : rounds > 0 ? `look ${rounds}` : ''
+  const phase = (doing: string): void => {
+    const prefix = stage()
+    deps.onPhase?.(prefix ? `${prefix} · ${doing}` : doing)
+  }
 
   // Once a candidate has compiled, the turn commits it unless a later candidate
   // compiles. A stop, an error, or an unrepairable correction after that point
@@ -128,6 +150,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       let text = ''
       let reasoning = ''
       let finishReason: string | null = null
+      phase('waiting for the model')
 
       const pushProgress = (): void => {
         if (deps.now() - lastDraftAt < DRAFT_INTERVAL_MS) return
@@ -143,11 +166,13 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       try {
         for await (const event of deps.stream(messages, deps.signal)) {
           if (event.type === 'delta') {
+            if (text === '') phase('the model is writing')
             text += event.text
             pushProgress()
           } else if (event.type === 'reasoning') {
             // A reasoning model can think for many seconds before its first
             // content token. Without this the UI has nothing to show at all.
+            if (reasoning === '' && text === '') phase('the model is thinking')
             reasoning += event.text
             pushProgress()
           } else if (event.type === 'usage') {
@@ -170,14 +195,21 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
 
       const full = extractSource(text)
       const edits = parseEdits(text)
+      const parts = parsePartBlocks(text)
       let candidate = full.source
       let complete = full.complete
       // A partial update: applied here, to the source the model was shown,
       // and the result is the candidate. A malformed or non-matching edit
       // is a diagnostic for the model, on the compile budget and wire path.
       let editError: string | null = null
-      if (candidate === null && edits.complete && (edits.edits.length > 0 || edits.error !== null)) {
-        const applied = edits.error !== null ? { error: edits.error } : applyEdits(base, edits.edits)
+      const partial =
+        edits.edits.length + parts.blocks.length > 0 || edits.error !== null || parts.error !== null
+      if (candidate === null && edits.complete && parts.complete && partial) {
+        let applied: { source: string } | { error: string } =
+          edits.error !== null ? { error: edits.error } : applyEdits(base, edits.edits)
+        if (!('error' in applied)) {
+          applied = parts.error !== null ? { error: parts.error } : applyParts(applied.source, parts.blocks)
+        }
         if ('error' in applied) editError = applied.error
         else {
           candidate = applied.source
@@ -187,11 +219,46 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       deps.onDraft(candidate)
       deps.onText(text)
       emit({ kind: 'assistant', text })
+      if (candidate !== null) phase('compiling')
 
       if (editError !== null) {
         emit({ kind: 'compile', ok: false, ms: 0, attempt, stderr: editError })
         if (attempt === MAX_RETRIES) return { status: 'error', message: editError }
         attempt++
+        continue
+      }
+
+      // A look request, and no source with it: render what it asked for and
+      // hand it back as an inspection. A source beside it wins — the
+      // verification round after the compile is the look.
+      const view = parseView(text)
+      if (candidate === null && (view.request !== null || view.error !== null)) {
+        if (!looks) {
+          emit({
+            kind: 'note',
+            tone: 'info',
+            text: 'The model asked to see the part. Set thinking above off to allow that.',
+          })
+          return { status: 'answered' }
+        }
+        rounds++
+        let image: string | null = null
+        if (view.request && deps.render) {
+          phase(`rendering ${describeView(view.request)}`)
+          try {
+            image = await deps.render(view.request, verified?.result.data ?? null)
+          } catch {
+            image = null
+          }
+        }
+        if (deps.signal.aborted) return { status: 'stopped' }
+        const caption = view.request ? describeView(view.request) : ''
+        const evidence =
+          view.error ??
+          (image
+            ? `Requested view: ${caption}. Layout and proportion only — read every dimension from the report.`
+            : `No render is available for the requested view (${caption}). Work from the numbers.`)
+        emit({ kind: 'inspect', text: evidence, ...(image ? { image } : {}) })
         continue
       }
 
@@ -253,15 +320,21 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       })
       if (result.ok) {
         verified = { source: candidate, result }
-        if (!deps.inspect || verifyRounds >= MAX_VERIFY) {
-          return { status: 'committed', source: candidate, result }
-        }
-        verifyRounds++
+        // Each candidate gets its own repairs: a turn of several looks would
+        // otherwise run out of them on the third correction.
+        attempt = 0
+        // Static, so the user sees it even when the model gets no look.
+        const issues = checkParts(candidate)
+        if (issues.length > 0) emit({ kind: 'note', tone: 'info', text: issues.join(' ') })
+        if (!deps.inspect || !looks) return { status: 'committed', source: candidate, result }
+        rounds++
+        phase('measuring the part')
         const evidence = await deps.inspect(candidate, result.data)
         if (deps.signal.aborted) return { status: 'stopped' }
+        const checks = issues.length > 0 ? `\n\nSource checks:\n${issues.map((i) => `- ${i}`).join('\n')}` : ''
         emit({
           kind: 'inspect',
-          text: evidence.text,
+          text: evidence.text + checks,
           ...(evidence.image ? { image: evidence.image } : {}),
         })
         continue
