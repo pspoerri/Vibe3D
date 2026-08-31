@@ -108,7 +108,11 @@ export function Help({ onClose }: { onClose: () => void }) {
             material — and, for Bambu Studio and PrusaSlicer, as painting: each colour region is
             a filament slot, the largest region filament 1), <b>STL</b> (colours per facet, the VisCAM/SolidView
             way — MeshLab reads them, slicers ignore them), or <b>OBJ</b> (a coloured model brings
-            a <code>.mtl</code> file along, one material per colour, which slicers read).
+            a <code>.mtl</code> file along, one material per colour, which slicers read). Bambu
+            Studio greets every 3MF it did not write itself — Fusion's and PrusaSlicer's included —
+            with "invalid config, load geometry data only": click OK, the parts and colours all
+            load. Only a full Bambu project file avoids it, and that would carry printer settings
+            this app should not choose for you.
           </li>
         </ul>
 
