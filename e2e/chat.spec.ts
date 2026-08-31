@@ -929,3 +929,59 @@ test('a correction from the verification round is compiled and committed', async
   expect(call).toBe(2)
   await expect(page.locator('.cm-content')).toContainText('cube([12, 8, 5]);')
 })
+
+test("opening another document never shows the previous document's mesh", async ({ page }) => {
+  await seedKey(page)
+  // Two turns in two documents, each followed by a verification round.
+  const replies = ['cube([21, 21, 21]);', null, 'cube([9, 9, 9]);', null]
+  let call = 0
+  await page.route(CHAT_URL, (route) => {
+    const source = replies[call++] ?? null
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: sseBody(source ? fenced(source) : 'Looks right.'),
+    })
+  })
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await send(page, 'make me a knurled knob')
+  await expect(page.locator('.tag', { hasText: '21.0 × 21.0 × 21.0 mm' })).toBeVisible({
+    timeout: 60_000,
+  })
+  await page.getByRole('button', { name: 'New', exact: true }).click()
+  await send(page, 'a small cube')
+  await expect(page.locator('.tag', { hasText: '9.0 × 9.0 × 9.0 mm' })).toBeVisible({
+    timeout: 60_000,
+  })
+  // Let the save debounce write both documents before the reload.
+  await page.waitForTimeout(1000)
+
+  await page.reload()
+  // The last-current document (the small cube) compiles behind the launcher.
+  await expect(page.locator('.tag', { hasText: '9.0 × 9.0 × 9.0 mm' })).toBeVisible({
+    timeout: 90_000,
+  })
+  await page.locator('.start-open', { hasText: 'Knurled knob' }).click()
+
+  // Not retried: the moment the other document is open, its predecessor's mesh
+  // must already be gone — not still there until the new compile lands.
+  expect(await page.locator('.tag', { hasText: '9.0 × 9.0 × 9.0 mm' }).count()).toBe(0)
+  await expect(page.locator('.tag', { hasText: '21.0 × 21.0 × 21.0 mm' })).toBeVisible({
+    timeout: 60_000,
+  })
+  await expect(page.locator('.cm-content')).toContainText('cube([21, 21, 21]);')
+
+  // Opening a document is not an edit. Undo must not replay the switch and put
+  // the other document's source — or, one step further back, the boot-time
+  // starter — into this one, where it would then be committed and compiled.
+  await page.locator('.cm-content').click()
+  await page.keyboard.press('ControlOrMeta+z')
+  await page.keyboard.press('ControlOrMeta+z')
+  await page.waitForTimeout(1500)
+  await expect(page.locator('.cm-content')).toContainText('cube([21, 21, 21]);')
+  await expect(page.locator('.cm-content')).not.toContainText('cube([9, 9, 9]);')
+  await expect(page.locator('.cm-content')).not.toContainText('plate_x = 60')
+  await expect(page.locator('.tag', { hasText: '21.0 × 21.0 × 21.0 mm' })).toBeVisible()
+})

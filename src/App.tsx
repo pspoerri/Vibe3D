@@ -159,11 +159,26 @@ export function App() {
     setCompiles((n) => n + 1)
   }
 
-  // Depends on `ready`, not `session`: a chat event or a version commit changes
-  // the session without changing the source, and must not restart a compile
-  // that is already in flight.
+  // Depends on `ready` and the document id, not `session`: a chat event or a
+  // version commit changes the session without changing the source, and must
+  // not restart a compile that is already in flight.
+  const currentId = session?.currentId ?? null
+  const docRef = useRef<string | null>(null)
   useEffect(() => {
     if (!ready) return
+    // A document switch. What is on screen belongs to the document that just
+    // left, and must not sit under the new one until its compile lands —
+    // seconds on a cold kernel, forever when the new source does not compile.
+    // The identity guard resets too, or a document switched back to before its
+    // predecessor's compile landed would never compile again.
+    if (docRef.current !== currentId) {
+      docRef.current = currentId
+      appliedKeyRef.current = null
+      setMesh(null)
+      setBefore(null)
+      setMs(null)
+      setError(null)
+    }
     const key = compileKey(source, previewDefines)
     // FIRST statement, before the run id and before setBusy: a turn commits its
     // source together with the result it already paid for, and recompiling it
@@ -209,7 +224,7 @@ export function App() {
     )
 
     return () => clearTimeout(timer)
-  }, [source, previewDefines, compiler, ready])
+  }, [source, previewDefines, compiler, ready, currentId])
 
   const stats = useMemo(() => (mesh ? meshStats(mesh) : null), [mesh])
 
@@ -269,7 +284,16 @@ export function App() {
       <section className="pane">
         <div className="editor-pane">
           <div className="editor-host">
-            <Editor value={streamSource ?? source} onChange={setSource} editable={!chatBusy} />
+            {/* Remounts on a document switch, like the chat pane: a fresh
+                CodeMirror state, so undo cannot replay the switch and put the
+                previous document's source — or the boot-time starter — into
+                this one. A turn's whole-document replace stays undoable. */}
+            <Editor
+              key={session?.currentId ?? 'boot'}
+              value={streamSource ?? source}
+              onChange={setSource}
+              editable={!chatBusy}
+            />
           </div>
           <ParamsPanel
             source={source}
