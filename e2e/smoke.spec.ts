@@ -119,6 +119,27 @@ test('the code pane slides away and back', async ({ page }) => {
   await expect(page.locator('.cm-content')).toBeVisible()
 })
 
+// The mobile view (index.css): no editor pane, the model above the chat,
+// export still one tap away.
+test.describe('on a phone', () => {
+  test.use({ viewport: { width: 390, height: 844 } })
+
+  test('keeps the prompt, the model and export', async ({ page }) => {
+    await page.goto('/')
+    await page.locator('.start-open').first().click({ timeout: 90_000 })
+    await expect(page.locator('.tag', { hasText: '60.0 × 40.0 × 3.0 mm' })).toBeVisible({
+      timeout: 90_000,
+    })
+    await expect(page.locator('.pane.side:not(.right)')).toBeHidden()
+    await expect(page.locator('.chat-input textarea')).toBeVisible()
+    const download = page.waitForEvent('download')
+    await page.getByRole('button', { name: 'Export 3MF' }).click()
+    expect((await download).suggestedFilename()).toBe('A mounting plate.3mf')
+    // Nothing lays out wider than the phone.
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
+  })
+})
+
 async function openStarter(page: Page): Promise<void> {
   await page.goto('/')
   await page.locator('.start-open').first().click({ timeout: 90_000 })

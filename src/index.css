@@ -516,6 +516,32 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
   outline: 2px solid #b8860b; outline-offset: 1px;
 }
 
+/* ── Mobile ────────────────────────────────────────────────────────────────
+   One column: the model above, the chat below. The editor pane is desktop —
+   prompting is the workflow here; the source is untouched and waiting when the
+   document is opened on a wide screen again. */
+@media (max-width: 720px) {
+  /* 100% is the large viewport under mobile browser toolbars; dvh is what shows. */
+  #root { height: 100dvh; }
+  .menubar { overflow-x: auto; }
+  .menubar button { white-space: nowrap; }
+  .panes { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 45%) minmax(0, 1fr); }
+  .pane.side { display: none; }
+  .pane.side.right {
+    display: block; width: auto; min-width: 0; max-width: none; resize: none; direction: ltr;
+    border-left: 0; border-top: 1px solid #c8ccc4;
+  }
+  .pane.view { border-left: 0; }
+  /* The export row moves to the bottom edge: stacked top-right it would cover
+     the view cube. The error overlay covers it only while export is disabled
+     by that same error, so nothing usable is ever hidden. */
+  .actions { top: auto; bottom: 10px; flex-wrap: wrap; justify-content: flex-end; }
+  /* Only the view cube shares the top now. */
+  .hud { max-width: calc(100% - 104px); }
+  /* There is no editor pane to slide. */
+  .code-toggle { display: none; }
+}
+
 /* Version picker (design.md §7). */
 .menubar select {
   font: 500 11px/1 ui-monospace, monospace; padding: 5px 6px; color: #414741; background: #fff;
