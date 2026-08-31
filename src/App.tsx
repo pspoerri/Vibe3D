@@ -28,6 +28,10 @@ import { exportProject, importProject } from './state/project'
 import { loadAll, persistRequested, saveSession } from './state/store'
 import { EXAMPLES, STARTER } from './examples'
 
+/** Injected by vite.config.ts from package.json. */
+declare const __APP_VERSION__: string
+const REPO_URL = 'https://github.com/pspoerri/Vibe3D'
+
 
 const DEBOUNCE_MS = 600
 /** A 600 ms slider preview is not a preview. */
@@ -766,6 +770,15 @@ function StartWindow({
               {ex.name}
             </button>
           ))}
+        </p>
+        <p className="start-footer">
+          <a href={`${REPO_URL}/releases/tag/v${__APP_VERSION__}`} target="_blank" rel="noreferrer">
+            v{__APP_VERSION__}
+          </a>
+          {' · '}
+          <a href={REPO_URL} target="_blank" rel="noreferrer">
+            GitHub
+          </a>
         </p>
       </div>
     </div>

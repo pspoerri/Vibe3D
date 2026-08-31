@@ -502,3 +502,6 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
 .menubar select:disabled { opacity: .35; }
 .menubar select:focus-visible { outline: 2px solid #b8860b; outline-offset: 1px; }
 .start-durability { margin: 0 0 14px; font: 12px/1.5 system-ui, sans-serif; color: #8a5a00; }
+.start-footer { margin: 14px 0 0; font: 12px/1.4 system-ui, sans-serif; color: #6a706a; }
+.start-footer a { color: inherit; }
+.start-footer a:hover { color: #b8860b; }
