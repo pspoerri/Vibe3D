@@ -332,6 +332,7 @@ export function App() {
 
       <MenuBar
         session={session}
+        atStart={!open}
         busy={chatBusy}
         onChange={(next) => {
           setSession(next)
@@ -531,24 +532,27 @@ const fileName = (name: string): string => name.replace(/[\\/:*?"<>|]+/g, '_')
  */
 function MenuBar({
   session,
+  atStart,
   busy,
   onChange,
   onOpen,
   onHelp,
 }: {
   session: Session | null
+  /** The start window is up: no document is on screen, so no document controls. */
+  atStart: boolean
   /** A turn owns the document: nothing here may move its head under it. */
   busy: boolean
   onChange: (next: Session) => void
   onOpen: () => void
   onHelp: () => void
 }) {
-  const doc = session ? currentDoc(session) : null
+  const doc = !atStart && session ? currentDoc(session) : null
   const fileRef = useRef<HTMLInputElement>(null)
 
   return (
     <div className="menubar">
-      <button type="button" className="brand" title="Back to the start window" onClick={onOpen} disabled={!session}>
+      <button type="button" className="brand" title="Back to the start window" onClick={onOpen} disabled={!session || atStart}>
         Vibe3D
       </button>
       <button
@@ -565,7 +569,7 @@ function MenuBar({
       >
         New
       </button>
-      <button type="button" onClick={onOpen} disabled={!session}>
+      <button type="button" onClick={onOpen} disabled={!session || atStart}>
         Open
       </button>
       <button
