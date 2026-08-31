@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import type { ChatMessage } from '../llm/openrouter'
-import { buildWindow, type ChatEvent } from './log'
+import { buildWindow, nextTurn, reviveLog, stripImages, type ChatEvent } from './log'
 
 const SYS = 'system prompt'
 const SRC = 'wall = 2;\ncube([10, 10, wall]);'
@@ -294,4 +294,60 @@ test('images: false strips them even from the live turn', () => {
     images: false,
   })
   expect(messages[1]).toEqual({ role: 'user', content: 'like this' })
+})
+
+test('the next turn continues a revived transcript instead of restarting at 1', () => {
+  expect(nextTurn([])).toBe(1)
+  expect(nextTurn([user(1, 'a'), assistant(1, 'b'), user(4, 'c')])).toBe(5)
+})
+
+test('stripping images leaves every other event untouched, by identity', () => {
+  const plain = user(1, 'no image')
+  expect(stripImages(plain)).toBe(plain)
+  const withImage = user(2, 'like this', ['data:image/jpeg;base64,AAA'])
+  expect(stripImages(withImage)).toEqual({
+    id: withImage.id, ts: 0, turn: 2, kind: 'user', text: 'like this',
+  })
+  expect('images' in stripImages(withImage)).toBe(false)
+})
+
+test('a revived log keeps every well-formed event and drops the rest', () => {
+  const good: ChatEvent[] = [
+    user(1, 'a box'),
+    { id: 'x1', ts: 1, turn: 1, kind: 'assistant', text: 'here', stopped: true },
+    compiled(1, false, 'ERROR: boom'),
+    { id: 'x2', ts: 1, turn: 1, kind: 'note', text: 'n', tone: 'error' },
+    { id: 'x3', ts: 1, turn: 1, kind: 'clear' },
+    { id: 'x4', ts: 1, turn: 2, kind: 'summary', text: 's', coversThrough: 'x1' },
+  ]
+  expect(reviveLog(JSON.parse(JSON.stringify(good)))).toEqual(good)
+  const bad = [
+    null,
+    'text',
+    42,
+    // No text: it would put `undefined` on the wire on every later request.
+    { id: 'b1', turn: 1, kind: 'user' },
+    { id: 'b2', turn: 1, kind: 'user', text: 42 },
+    { id: 'b3', turn: 'one', kind: 'user', text: 'x' },
+    // No boundary: buildWindow could not tell what it replaces.
+    { id: 'b4', turn: 1, kind: 'summary', text: 's' },
+    { id: 'b5', turn: 1, kind: 'compile', ok: true },
+    { id: 'b6', turn: 1, kind: 'wat', text: 'x' },
+    { turn: 1, kind: 'user', text: 'no id' },
+  ]
+  expect(reviveLog(bad)).toEqual([])
+  expect(reviveLog(undefined)).toEqual([])
+  expect(reviveLog({ length: 2 })).toEqual([])
+})
+
+test('a revived log never carries two events with one id, so React keys stay unique', () => {
+  const twice = [user(1, 'a'), user(1, 'a')].map((e) => ({ ...e, id: 'same' }))
+  expect(reviveLog(twice)).toHaveLength(1)
+})
+
+test('a revived user event has no images, whatever the file said', () => {
+  const raw = [
+    { id: 'u', ts: 0, turn: 1, kind: 'user', text: 't', images: ['data:image/jpeg;base64,AAA'] },
+  ]
+  expect(reviveLog(raw)).toEqual([{ id: 'u', ts: 0, turn: 1, kind: 'user', text: 't' }])
 })

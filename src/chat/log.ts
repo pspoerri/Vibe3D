@@ -165,3 +165,75 @@ export function buildWindow({
 
   return messages
 }
+
+/** The next turn number for a log, so a revived transcript continues rather than restarts. */
+export function nextTurn(log: readonly ChatEvent[]): number {
+  let max = 0
+  for (const event of log) if (event.turn > max) max = event.turn
+  return max + 1
+}
+
+/** The persisted form of a user event — design.md §9: images never reach the store. */
+export function stripImages(event: ChatEvent): ChatEvent {
+  if (event.kind !== 'user' || !event.images) return event
+  return { id: event.id, ts: event.ts, turn: event.turn, kind: 'user', text: event.text }
+}
+
+/**
+ * Trust boundary for a transcript read back from the store or a project file.
+ * An event with a missing text would put `undefined` on the wire on every later
+ * request, so a malformed event is dropped rather than repaired.
+ */
+export function reviveLog(raw: unknown): ChatEvent[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const events: ChatEvent[] = []
+  for (const item of raw) {
+    const event = reviveEvent(item)
+    if (event && !seen.has(event.id)) {
+      seen.add(event.id)
+      events.push(event)
+    }
+  }
+  return events
+}
+
+function reviveEvent(raw: unknown): ChatEvent | null {
+  const e = raw as Record<string, unknown> | null
+  if (!e || typeof e !== 'object' || typeof e.id !== 'string' || typeof e.turn !== 'number') {
+    return null
+  }
+  const base = { id: e.id, ts: typeof e.ts === 'number' ? e.ts : 0, turn: e.turn }
+  const text = typeof e.text === 'string' ? e.text : null
+  switch (e.kind) {
+    case 'user':
+      return text === null ? null : { ...base, kind: 'user', text }
+    case 'assistant':
+      return text === null
+        ? null
+        : { ...base, kind: 'assistant', text, ...(e.stopped === true ? { stopped: true as const } : {}) }
+    case 'note':
+      return text === null
+        ? null
+        : { ...base, kind: 'note', text, tone: e.tone === 'error' ? 'error' : 'info' }
+    case 'summary':
+      return text === null || typeof e.coversThrough !== 'string'
+        ? null
+        : { ...base, kind: 'summary', text, coversThrough: e.coversThrough }
+    case 'compile':
+      return typeof e.stderr !== 'string'
+        ? null
+        : {
+            ...base,
+            kind: 'compile',
+            ok: e.ok === true,
+            ms: typeof e.ms === 'number' ? e.ms : 0,
+            attempt: typeof e.attempt === 'number' ? e.attempt : 0,
+            stderr: e.stderr,
+          }
+    case 'clear':
+      return { ...base, kind: 'clear' }
+    default:
+      return null
+  }
+}
