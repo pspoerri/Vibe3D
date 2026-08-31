@@ -5,7 +5,15 @@ export interface Mesh {
   indices: Uint32Array
   vertexCount: number
   triangleCount: number
+  /**
+   * Flat rgb bytes, one triplet per triangle. Present only when some face had a
+   * `color()`; faces without one get DEFAULT_RGB.
+   */
+  colors?: Uint8Array
 }
+
+/** The model's own yellow, 0xf9d72c — what an uncoloured face renders as. */
+export const DEFAULT_RGB: readonly [number, number, number] = [249, 215, 44]
 
 /**
  * Parses the OFF that `openscad --export-format=off` produces.
@@ -50,6 +58,8 @@ export function parseOff(text: string): Mesh {
   }
 
   const indices: number[] = []
+  const colors: number[] = []
+  let coloured = false
   for (let f = 0; f < faceCount; f++) {
     const parts = nextLine().split(/\s+/)
     const n = Number(parts[0])
@@ -68,9 +78,20 @@ export function parseOff(text: string): Mesh {
       }
       face.push(index)
     }
-    // parts beyond index n are the per-face colour, which we still discard.
+    // parts beyond index n are the per-face colour, `r g b [a]` as 0–255, on
+    // exactly the faces that had a color(). Alpha is dropped. A colour that
+    // does not parse is cosmetic, so it is ignored rather than fatal.
+    let rgb: readonly number[] = DEFAULT_RGB
+    if (parts.length >= n + 4) {
+      const c = parts.slice(n + 1, n + 4).map(Number)
+      if (c.every((v) => Number.isInteger(v) && v >= 0 && v <= 255)) {
+        rgb = c
+        coloured = true
+      }
+    }
     for (let k = 1; k <= n - 2; k++) {
       indices.push(face[0]!, face[k]!, face[k + 1]!)
+      colors.push(rgb[0]!, rgb[1]!, rgb[2]!)
     }
   }
 
@@ -79,5 +100,6 @@ export function parseOff(text: string): Mesh {
     indices: Uint32Array.from(indices),
     vertexCount,
     triangleCount: indices.length / 3,
+    ...(coloured && { colors: Uint8Array.from(colors) }),
   }
 }

@@ -3,7 +3,7 @@ import {
   AmbientLight, AxesHelper, Box3, BufferAttribute, BufferGeometry, DirectionalLight,
   DoubleSide, EdgesGeometry, GridHelper, Group, LineBasicMaterial, LineLoop, LineSegments,
   Color, Fog, Mesh as ThreeMesh, MeshStandardMaterial, PerspectiveCamera, Quaternion, Scene,
-  Vector3, WebGLRenderer, type Material,
+  SRGBColorSpace, Vector3, WebGLRenderer, type Material,
 } from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { Mesh } from '../kernel/off'
@@ -21,6 +21,19 @@ const GRID_CELLS = 160
 const GRID_MAJOR = 0xa4ab9c
 const GRID_MINOR = 0xc8ccc4
 const PLATE_COLOR = 0x7f8578
+/** Matches DEFAULT_RGB in kernel/off.ts, so a partly coloured model keeps this for the rest. */
+const MODEL_COLOR = 0xf9d72c
+
+/** Per-triangle sRGB bytes → one linear rgb per corner, which is what three reads. */
+function vertexColors(rgb: Uint8Array): Float32Array {
+  const out = new Float32Array(rgb.length * 3)
+  const c = new Color()
+  for (let t = 0; t < rgb.length / 3; t++) {
+    c.setRGB(rgb[t * 3]! / 255, rgb[t * 3 + 1]! / 255, rgb[t * 3 + 2]! / 255, SRGBColorSpace)
+    for (let k = 0; k < 3; k++) c.toArray(out, (t * 3 + k) * 3)
+  }
+  return out
+}
 /** Matches the .view pane behind it, so the fog fades the grid into the page. */
 const BACKGROUND = 0xf6f7f4
 const SNAP_MS = 260
@@ -216,10 +229,17 @@ export function Viewport({
         modelBox.makeEmpty()
 
         if (next && next.triangleCount > 0) {
-          const geometry = new BufferGeometry()
-          geometry.setAttribute('position', new BufferAttribute(next.positions, 3))
-          geometry.setIndex(new BufferAttribute(next.indices, 1))
-          geometry.computeVertexNormals()
+          const indexed = new BufferGeometry()
+          indexed.setAttribute('position', new BufferAttribute(next.positions, 3))
+          indexed.setIndex(new BufferAttribute(next.indices, 1))
+          indexed.computeVertexNormals()
+          // A per-face colour needs a vertex per corner. De-indexing after the
+          // normals exist keeps the smooth shading of the indexed mesh.
+          const geometry = next.colors ? indexed.toNonIndexed() : indexed
+          if (next.colors) {
+            indexed.dispose()
+            geometry.setAttribute('color', new BufferAttribute(vertexColors(next.colors), 3))
+          }
           geometry.computeBoundingBox()
           if (geometry.boundingBox) modelBox.copy(geometry.boundingBox)
 
@@ -228,7 +248,9 @@ export function Viewport({
               geometry,
               // DoubleSide so an inverted winding never renders as an invisible hole.
               new MeshStandardMaterial({
-                color: 0xf9d72c, roughness: 0.55, metalness: 0, side: DoubleSide,
+                color: next.colors ? 0xffffff : MODEL_COLOR,
+                vertexColors: next.colors !== undefined,
+                roughness: 0.55, metalness: 0, side: DoubleSide,
               }),
             ),
           )
