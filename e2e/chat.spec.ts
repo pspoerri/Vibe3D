@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
 
 const CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions'
@@ -153,7 +153,9 @@ test('a failed compile is retried with the verbatim stderr and no second copy of
   await expect(page.locator('.tag', { hasText: '7.0 × 7.0 × 7.0 mm' })).toBeVisible({
     timeout: 90_000,
   })
-  expect(call).toBe(2)
+  // The failed attempt, the repair, and the repair's verification round — which
+  // this stub answers with the same source again, and that is a confirmation.
+  expect(call).toBe(3)
 
   // The retry carries the kernel's own words, with the kernel's own path — the
   // model has to be able to trust the diagnostic against what it just wrote.
@@ -473,9 +475,10 @@ test('the session meter reports tokens and what they cost', async ({ page }) => 
   })
 
   // sseBody bills 10 prompt + 20 completion at the stubbed catalogue's prices:
-  // 10 * 7.5e-7 + 20 * 3.75e-6 = 0.0000825, which rounds to $0.0001.
-  await expect(page.locator('.chat-meter')).toContainText('30 tok')
-  await expect(page.locator('.chat-meter')).toContainText('$0.0001')
+  // 10 * 7.5e-7 + 20 * 3.75e-6 = 0.0000825 per call. A compiled turn makes two
+  // calls — the reply and its verification round — so the meter shows both.
+  await expect(page.locator('.chat-meter')).toContainText('60 tok')
+  await expect(page.locator('.chat-meter')).toContainText('$0.0002')
 })
 
 test('the composer grows with a long prompt instead of clipping it', async ({ page }) => {
@@ -502,9 +505,9 @@ test('a picked image reaches the model as a data URL, after the text, exactly on
   page,
 }) => {
   await seedKey(page)
-  let posted = ''
+  const bodies: string[] = []
   await page.route(CHAT_URL, (route) => {
-    posted = JSON.stringify(route.request().postDataJSON())
+    bodies.push(JSON.stringify(route.request().postDataJSON()))
     return route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
@@ -528,7 +531,9 @@ test('a picked image reaches the model as a data URL, after the text, exactly on
     timeout: 60_000,
   })
 
-  const body = JSON.parse(posted) as {
+  // The reply and its verification round: two requests for one turn.
+  expect(bodies).toHaveLength(2)
+  const body = JSON.parse(bodies[0] ?? '{}') as {
     messages: { role: string; content: unknown }[]
   }
   const parts = body.messages.find((m) => Array.isArray(m.content))?.content as
@@ -540,11 +545,14 @@ test('a picked image reaches the model as a data URL, after the text, exactly on
   // without erroring, so nothing else would catch it.
   expect(parts[0]).toEqual({ type: 'text', text: 'like this bracket' })
   expect(parts[1]?.type).toBe('image_url')
-  expect(parts[1]?.image_url?.url.startsWith('data:image/jpeg')).toBe(true)
+  const ref = parts[1]?.image_url?.url ?? ''
+  expect(ref.startsWith('data:image/jpeg')).toBe(true)
   // Normalised, not passed through: the input was a PNG.
-  expect(posted).not.toContain('data:image/png')
-  // Exactly once — a second copy is a doubled bill on every turn.
-  expect(posted.split('data:image/jpeg').length - 1).toBe(1)
+  expect(bodies.join('')).not.toContain('data:image/png')
+  // Exactly once per request — a second copy is a doubled bill. The reference
+  // rides along on the verification call (it is that turn's), which also
+  // carries the app's own composite render: a different image, not a copy.
+  for (const posted of bodies) expect(posted.split(ref).length - 1).toBe(1)
 
   // The tray is emptied by the send, not left staged for a double-send.
   await expect(page.locator('.chat-thumb')).toHaveCount(0)
@@ -841,4 +849,83 @@ test('a corrupt session still restores the last source', async ({ page }) => {
     timeout: 90_000,
   })
   await expect(page.locator('.cm-content')).toContainText('cube([33, 33, 33]);')
+})
+
+test('a compiled turn is verified against a report and a render before it commits', async ({
+  page,
+}) => {
+  await seedKey(page)
+  const bodies: string[] = []
+  let call = 0
+  await page.route(CHAT_URL, (route) => {
+    bodies.push(JSON.stringify(route.request().postDataJSON()))
+    call += 1
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: sseBody(
+        call === 1 ? fenced('cube([12, 8, 4]);') : 'Looks right: 12 × 8 × 4 mm, one part, no holes.',
+      ),
+    })
+  })
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await send(page, 'a 12 by 8 by 4 mm block')
+
+  await expect(page.locator('.chat-inspect img')).toBeVisible({ timeout: 90_000 })
+  await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
+  expect(call).toBe(2)
+  await expect(page.locator('.tag', { hasText: '12.0 × 8.0 × 4.0 mm' })).toBeVisible()
+
+  // The second call is the verification round: the report, then the render,
+  // as one user message with the text part first.
+  const verify = JSON.parse(bodies[1] ?? '{}') as {
+    messages: {
+      role: string
+      content: string | { type: string; text?: string; image_url?: { url: string } }[]
+    }[]
+  }
+  const last = verify.messages.at(-1)
+  expect(last?.role).toBe('user')
+  const parts = Array.isArray(last?.content) ? last.content : []
+  expect(parts.map((p) => p.type)).toEqual(['text', 'image_url'])
+  const text = parts[0]?.text ?? ''
+  expect(text).toContain('"volume_mm3": 384')
+  // The starter plate was on screen, so there is a "was" and a removed volume.
+  expect(text).toMatch(/"removed_volume_mm3": \d/)
+  expect(text).toContain('Unclear')
+  const url = parts[1]?.image_url?.url ?? ''
+  expect(url).toMatch(/^data:image\/jpeg;base64,/)
+  expect(url.length).toBeGreaterThan(2000)
+  // Kept on disk for a human eye: test-results/<this test>/composite.jpg.
+  await writeFile(
+    test.info().outputPath('composite.jpg'),
+    Buffer.from(url.slice(url.indexOf(',') + 1), 'base64'),
+  )
+})
+
+test('a correction from the verification round is compiled and committed', async ({ page }) => {
+  await seedKey(page)
+  let call = 0
+  await page.route(CHAT_URL, (route) => {
+    call += 1
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: sseBody(fenced(call === 1 ? 'cube([12, 8, 4]);' : 'cube([12, 8, 5]);')),
+    })
+  })
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await send(page, 'a block')
+
+  await expect(page.locator('.tag', { hasText: '12.0 × 8.0 × 5.0 mm' })).toBeVisible({
+    timeout: 90_000,
+  })
+  await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
+  // One look, no second: the correction commits without a third call.
+  expect(call).toBe(2)
+  await expect(page.locator('.cm-content')).toContainText('cube([12, 8, 5]);')
 })

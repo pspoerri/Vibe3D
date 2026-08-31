@@ -40,6 +40,16 @@ export type ChatEvent =
       attempt: number
       stderr: string
     }
+  | {
+      id: string
+      ts: number
+      turn: number
+      kind: 'inspect'
+      /** The measured report wrapped in the verification questions — what the model was handed. */
+      text: string
+      /** The composite render, live for this turn only and never persisted, like a user event's images. */
+      image?: string
+    }
   | { id: string; ts: number; turn: number; kind: 'note'; text: string; tone: 'info' | 'error' }
   | { id: string; ts: number; turn: number; kind: 'clear' }
   | { id: string; ts: number; turn: number; kind: 'summary'; text: string; coversThrough: string }
@@ -150,6 +160,24 @@ export function buildWindow({
         // which no longer exists does not just waste tokens, it misleads.
         if (!event.ok && event.turn === turn) messages.push({ role: 'user', content: event.stderr })
         break
+      case 'inspect': {
+        // Live only, like stderr: a report about a mesh that no longer exists
+        // does not just waste tokens, it misleads (design.md §12).
+        if (event.turn !== turn) break
+        const url = images ? event.image : undefined
+        if (!url) {
+          messages.push({ role: 'user', content: event.text })
+          break
+        }
+        messages.push({
+          role: 'user',
+          content: [
+            { type: 'text', text: event.text },
+            { type: 'image_url', image_url: { url } },
+          ],
+        })
+        break
+      }
     }
   }
 
@@ -175,8 +203,13 @@ export function nextTurn(log: readonly ChatEvent[]): number {
 
 /** The persisted form of a user event — design.md §9: images never reach the store. */
 export function stripImages(event: ChatEvent): ChatEvent {
-  if (event.kind !== 'user' || !event.images) return event
-  return { id: event.id, ts: event.ts, turn: event.turn, kind: 'user', text: event.text }
+  if (event.kind === 'user' && event.images) {
+    return { id: event.id, ts: event.ts, turn: event.turn, kind: 'user', text: event.text }
+  }
+  if (event.kind === 'inspect' && event.image) {
+    return { id: event.id, ts: event.ts, turn: event.turn, kind: 'inspect', text: event.text }
+  }
+  return event
 }
 
 /**
@@ -216,6 +249,8 @@ function reviveEvent(raw: unknown): ChatEvent | null {
       return text === null
         ? null
         : { ...base, kind: 'note', text, tone: e.tone === 'error' ? 'error' : 'info' }
+    case 'inspect':
+      return text === null ? null : { ...base, kind: 'inspect', text }
     case 'summary':
       return text === null || typeof e.coversThrough !== 'string'
         ? null

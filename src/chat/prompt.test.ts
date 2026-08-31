@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { COMPACT_PROMPT, SYSTEM_PROMPT, systemPromptFor } from './prompt'
+import { COMPACT_PROMPT, SYSTEM_PROMPT, systemPromptFor, verifyMessage } from './prompt'
 
 test('the prompt states the output contract and the $fn rule', () => {
   expect(SYSTEM_PROMPT).toMatch(/```/)
@@ -41,4 +41,22 @@ test('the image clause composes with imperial rather than replacing it', () => {
   const prompt = systemPromptFor('in', true)
   expect(prompt).toContain('1 in = 25.4 mm')
   expect(prompt).toContain('Do NOT read dimensions')
+})
+
+test('the verification message wraps the report in structured questions, never a bare look', () => {
+  const text = verifyMessage('{ "volume_mm3": 1 }', true)
+  expect(text).toContain('{ "volume_mm3": 1 }')
+  expect(text).toContain('green')
+  expect(text).toContain('magenta')
+  expect(text).toMatch(/Yes, No or Unclear/)
+  expect(text).toMatch(/never from a picture/)
+  expect(text).toMatch(/NO code block/)
+  expect(text).not.toMatch(/look right/i)
+})
+
+test('without a render the message says so and asks the same questions', () => {
+  const text = verifyMessage('{}', false)
+  expect(text).toContain('No render is attached')
+  expect(text).not.toContain('magenta')
+  expect(text).toMatch(/Yes, No or Unclear/)
 })

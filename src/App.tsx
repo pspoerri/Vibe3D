@@ -62,6 +62,9 @@ export function App() {
   const setSource = (next: string) =>
     setSession((s) => (s ? updateSource(s, next, Date.now()) : s))
   const [mesh, setMesh] = useState<Mesh | null>(null)
+  // design.md §6: the "was" of a turn's inspection. Only a define-free compile
+  // or a turn sets it, so a slider drag's reduced-$fn preview is never the before.
+  const [before, setBefore] = useState<Uint8Array | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [ms, setMs] = useState<number | null>(null)
@@ -198,6 +201,7 @@ export function App() {
         applyCompiled(key, result)
         // design.md §7 (c): a successful compile of manual edits is a version.
         if (result.ok && previewDefines.length === 0) {
+          setBefore(result.data)
           setSession((s) => (s ? commitEdit(s, source, Date.now()) : s))
         }
       },
@@ -330,6 +334,7 @@ export function App() {
           // that just left the screen, and the new one brings its own.
           key={session?.currentId ?? 'boot'}
           source={source}
+          before={before}
           units={units}
           initialLog={session ? currentDoc(session).chat : []}
           onLogChange={(log) => setSession((s) => (s ? setChat(s, log) : s))}
@@ -343,6 +348,7 @@ export function App() {
             compiler.cancel()
             setSession((s) => (s ? commitTurn(s, next, label, result.ok, Date.now()) : s))
             applyCompiled(compileKey(next, NO_DEFINES), result)
+            if (result.ok) setBefore(result.data)
             setFitToken((n) => n + 1)
           }}
           onUndo={() => {

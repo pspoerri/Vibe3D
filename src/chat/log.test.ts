@@ -351,3 +351,69 @@ test('a revived user event has no images, whatever the file said', () => {
   ]
   expect(reviveLog(raw)).toEqual([{ id: 'u', ts: 0, turn: 1, kind: 'user', text: 't' }])
 })
+
+const inspected = (turn: number, text: string, image?: string): ChatEvent => ({
+  id: nextId(),
+  ts: 0,
+  turn,
+  kind: 'inspect',
+  text,
+  ...(image ? { image } : {}),
+})
+
+test('a live inspection is one user message, text first, then its render', () => {
+  const log = [
+    user(1, 'a box'),
+    assistant(1, reply('cube(1);')),
+    inspected(1, 'REPORT', 'data:image/jpeg;base64,AAAA'),
+  ]
+  const messages = win(log, 1)
+  expect(messages.at(-1)).toEqual({
+    role: 'user',
+    content: [
+      { type: 'text', text: 'REPORT' },
+      { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AAAA' } },
+    ],
+  })
+  // The live reply is on the wire, so the source is not re-attached after it.
+  expect(count(texts(messages).join('\n'), SRC)).toBe(0)
+})
+
+test('an inspection without a render is a plain user message, and images:false strips one', () => {
+  const plain = win([user(1, 'a'), assistant(1, reply('cube(1);')), inspected(1, 'REPORT')], 1)
+  expect(plain.at(-1)).toEqual({ role: 'user', content: 'REPORT' })
+  const stripped = buildWindow({
+    log: [user(1, 'a'), assistant(1, reply('cube(1);')), inspected(1, 'REPORT', 'data:x')],
+    turn: 1,
+    systemPrompt: SYS,
+    source: SRC,
+    images: false,
+  })
+  expect(stripped.at(-1)).toEqual({ role: 'user', content: 'REPORT' })
+})
+
+test("an earlier turn's inspection is dropped entirely, like its stderr", () => {
+  const log = [
+    user(1, 'a'),
+    assistant(1, reply('cube(1);')),
+    inspected(1, 'REPORT', 'data:x'),
+    user(2, 'b'),
+  ]
+  expect(texts(win(log, 2))).toEqual([SYS, 'a', expect.any(String), 'b', expect.stringContaining(SRC)])
+  expect(texts(win(log, 2)).join('\n')).not.toContain('REPORT')
+})
+
+test('stripping an inspection keeps its report and drops its render', () => {
+  const event = inspected(1, 'REPORT', 'data:x')
+  expect(stripImages(event)).toEqual({ id: event.id, ts: 0, turn: 1, kind: 'inspect', text: 'REPORT' })
+  const plain = inspected(1, 'REPORT')
+  expect(stripImages(plain)).toBe(plain)
+})
+
+test('a revived inspection has its report and never a render', () => {
+  const revived = reviveLog([
+    { id: 'i1', ts: 1, turn: 1, kind: 'inspect', text: 'REPORT', image: 'data:x' },
+    { id: 'i2', ts: 1, turn: 1, kind: 'inspect' },
+  ])
+  expect(revived).toEqual([{ id: 'i1', ts: 1, turn: 1, kind: 'inspect', text: 'REPORT' }])
+})

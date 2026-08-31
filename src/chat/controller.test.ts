@@ -57,6 +57,8 @@ interface Harness {
   reasonings: string[]
   usages: Usage[]
   compiled: string[]
+  /** The sources handed to inspect, in order. */
+  inspected: string[]
   abort: () => void
 }
 
@@ -65,8 +67,11 @@ function harness(options: {
   compiles?: CompileResult[]
   /** Clock advance before each delta. 0 keeps every delta inside one interval. */
   tickMs?: number
+  /** What inspect answers. Absent: no inspect port, no verification round. */
+  inspect?: { text: string; image?: string } | 'throws'
 }): Harness {
-  const { replies = [], compiles = [], tickMs = 0 } = options
+  const { replies = [], compiles = [], tickMs = 0, inspect } = options
+  const inspected: string[] = []
   const windows: ChatMessage[][] = []
   const signals: (AbortSignal | undefined)[] = []
   const appended: ChatEvent[] = []
@@ -107,6 +112,15 @@ function harness(options: {
     now: () => clock,
     newId: () => `id${++ids}`,
     signal: controller.signal,
+    ...(inspect === undefined
+      ? {}
+      : {
+          inspect: async (source: string) => {
+            inspected.push(source)
+            if (inspect === 'throws') throw new Error('no WebGL')
+            return inspect
+          },
+        }),
   }
 
   return {
@@ -119,6 +133,7 @@ function harness(options: {
     reasonings,
     usages,
     compiled,
+    inspected,
     abort: () => controller.abort(),
   }
 }
@@ -653,4 +668,90 @@ test('a compaction never re-sends the images of the turn it is summarising', asy
 
   expect(h.windows).toHaveLength(1)
   expect(JSON.stringify(h.windows[0])).not.toContain(IMG)
+})
+
+const REPORT = { text: 'REPORT', image: IMG }
+const abortError = (): Error => Object.assign(new Error('Aborted'), { name: 'AbortError' })
+
+test('a compiled reply is inspected once, and a prose confirmation commits it', async () => {
+  const h = harness({
+    replies: [says(fenced('cube(3);')), says('Looks right: 3 mm cube, one part.')],
+    compiles: [okResult()],
+    inspect: REPORT,
+  })
+  const outcome = await runTurn(turnInput(), h.deps)
+
+  expect(outcome).toEqual({ status: 'committed', source: 'cube(3);', result: okResult() })
+  expect(h.inspected).toEqual(['cube(3);'])
+  expect(h.windows).toHaveLength(2)
+  expect(h.windows[1]?.at(-1)).toEqual({
+    role: 'user',
+    content: [
+      { type: 'text', text: 'REPORT' },
+      { type: 'image_url', image_url: { url: IMG } },
+    ],
+  })
+  expect(kinds(h.appended)).toEqual(['user', 'assistant', 'compile', 'inspect', 'assistant'])
+})
+
+test('a correction after inspection is compiled and committed without a second look', async () => {
+  const h = harness({
+    replies: [says(fenced('a')), says(fenced('b'))],
+    compiles: [okResult(), okResult()],
+    inspect: REPORT,
+  })
+  const outcome = await runTurn(turnInput(), h.deps)
+
+  expect(outcome).toMatchObject({ status: 'committed', source: 'b' })
+  expect(h.compiled).toEqual(['a', 'b'])
+  expect(h.inspected).toEqual(['a'])
+  expect(h.windows).toHaveLength(2)
+})
+
+test('re-emitting the inspected source is a confirmation, not a recompile', async () => {
+  const h = harness({
+    replies: [says(fenced('a')), says(fenced('a'))],
+    compiles: [okResult()],
+    inspect: REPORT,
+  })
+  const outcome = await runTurn(turnInput(), h.deps)
+
+  expect(outcome).toMatchObject({ status: 'committed', source: 'a' })
+  expect(h.compiled).toEqual(['a'])
+})
+
+test('a stop during verification keeps the part that compiled', async () => {
+  const h = harness({
+    replies: [says(fenced('a')), { events: [], error: abortError() }],
+    compiles: [okResult()],
+    inspect: REPORT,
+  })
+  const outcome = await runTurn(turnInput(), h.deps)
+
+  expect(outcome).toMatchObject({ status: 'committed', source: 'a' })
+  expect(kinds(h.appended)).toEqual(['user', 'assistant', 'compile', 'inspect', 'assistant', 'note'])
+})
+
+test('a correction that cannot be repaired keeps the part that compiled', async () => {
+  const h = harness({
+    replies: [says(fenced('a')), says(fenced('b')), says(fenced('c')), says(fenced('d'))],
+    compiles: [okResult(), failResult('ERROR: b'), failResult('ERROR: c'), failResult('ERROR: d')],
+    inspect: REPORT,
+  })
+  const outcome = await runTurn(turnInput(), h.deps)
+
+  expect(outcome).toEqual({ status: 'committed', source: 'a', result: okResult() })
+  // 1 initial + 1 verification + MAX_RETRIES repairs, and no more.
+  expect(h.windows).toHaveLength(2 + MAX_RETRIES)
+  expect(h.compiled).toEqual(['a', 'b', 'c', 'd'])
+  expect(h.appended.at(-1)).toMatchObject({ kind: 'note', text: expect.stringContaining('Kept') })
+})
+
+test('an inspection that throws still commits what compiled', async () => {
+  const h = harness({ replies: [says(fenced('a'))], compiles: [okResult()], inspect: 'throws' })
+  const outcome = await runTurn(turnInput(), h.deps)
+
+  expect(outcome).toMatchObject({ status: 'committed', source: 'a' })
+  expect(h.windows).toHaveLength(1)
+  expect(kinds(h.appended)).toEqual(['user', 'assistant', 'compile', 'note'])
 })

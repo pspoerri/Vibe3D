@@ -7,12 +7,13 @@ import {
 } from '../llm/openrouter'
 import { loadKey, saveKey } from '../state/key'
 import { loadSettings, saveSettings } from '../state/settings'
+import { formatReport, inspect } from '../viewer/inspect'
 import { parseCommand, type Command } from './commands'
 import { COMPACT_AT, runCompact, runTurn } from './controller'
 import { addUsage, formatTokens, formatUsd, ZERO_SPEND, type Spend } from './cost'
 import { parseMarkdown, type Inline } from './markdown'
 import { nextTurn, type ChatEvent } from './log'
-import { systemPromptFor } from './prompt'
+import { systemPromptFor, verifyMessage } from './prompt'
 
 const REVOKE_HOME = 'https://openrouter.ai/settings/keys'
 /** A plain cap, chosen over reasoning about 413 payload_too_large: OpenRouter
@@ -21,6 +22,7 @@ const MAX_IMAGES = 4
 
 export function Chat({
   source,
+  before,
   units,
   initialLog,
   onLogChange,
@@ -32,6 +34,8 @@ export function Chat({
   onPrompt,
 }: {
   source: string
+  /** OFF of the mesh on screen — what a turn's inspection compares against. null when nothing has compiled. */
+  before: Uint8Array | null
   /** Display units. The source stays metric; this is how to READ the user. */
   units: 'mm' | 'in'
   /** The transcript this document had when it was opened. Read once. */
@@ -315,6 +319,18 @@ export function Chat({
               model: settings.model,
             }),
           compile: (candidate) => compiler.compile(candidate),
+          inspect: async (_candidate, off) => {
+            const { report, image } = await inspect({
+              before,
+              after: off,
+              vision: models.find((m) => m.id === settings.model)?.vision ?? false,
+              signal: controller.signal,
+            })
+            return {
+              text: verifyMessage(formatReport(report), image !== null),
+              ...(image ? { image } : {}),
+            }
+          },
           append,
           onDraft: onStreamSource,
           onText: setLiveText,
@@ -653,6 +669,16 @@ function ChatEventView({ event }: { event: ChatEvent }) {
         <span className="chip ok">compiled · {event.ms} ms</span>
       ) : (
         <pre className="chat-stderr">{event.stderr}</pre>
+      )
+    case 'inspect':
+      return (
+        <div className="chat-inspect">
+          {event.image && <img src={event.image} alt="Before in green, after in magenta" />}
+          <details>
+            <summary className="chip">inspected</summary>
+            <pre>{event.text}</pre>
+          </details>
+        </div>
       )
     case 'note':
       return <div className={event.tone === 'error' ? 'chat-note bad' : 'chat-note'}>{event.text}</div>

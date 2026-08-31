@@ -137,3 +137,26 @@ factor. Where you name a dimension back to the user in prose, give the inch
 figure they asked for, with the millimetre value in brackets.`
   return images ? `${base}\n\n${IMAGE_CLAUSE}` : base
 }
+
+/**
+ * design.md §6.5, the non-negotiable: every render the app sends is wrapped in
+ * 2–5 binary questions derived from the request, answered with reasoning,
+ * "Unclear" permitted, then a correction or a confirmation. The bare "does
+ * this look right" is the measured −20% regression and never goes out.
+ */
+export function verifyMessage(reportJson: string, withImage: boolean): string {
+  const legend = withImage
+    ? 'The image is one orthographic render framed on the changed region: the previous version in green, this version in magenta, unchanged material in grey, with crease outlines. It shows layout and proportion only.'
+    : 'No render is attached; work from the numbers.'
+  return `The source compiled. Measured from the mesh (millimetres, mm³):
+
+${reportJson}
+
+${legend} Read every dimension from the report, never from a picture. If bbox_min_shift_mm is not zero the whole part moved, and the added and removed volumes include that move.
+
+Check the part against the request:
+1. Write 2 to 5 yes/no questions the request implies — about dimensions, features, and where they sit.
+2. Answer each Yes, No or Unclear, with one line of reasoning from the report or the render.
+3. If any answer is No, reply with the corrected COMPLETE source in one fenced block.
+   If every answer is Yes or Unclear, reply with one sentence and NO code block — the source on screen stays as it is.`
+}

@@ -7,6 +7,8 @@ import { COMPACT_PROMPT } from './prompt'
 
 /** 1 initial call + 2 repairs = 3 LLM calls and 3 compiles, per turn, ever. */
 export const MAX_RETRIES = 2
+/** One look at the compiled part per turn (design.md §6). A correction is committed without a second. */
+export const MAX_VERIFY = 1
 export const DRAFT_INTERVAL_MS = 100
 export const COMPACT_AT = 0.6
 
@@ -25,6 +27,12 @@ export interface TurnDeps {
   /** MUST be a Compiler the preview does not share: compile() cancels whatever
    *  is in flight, so a stray preview would settle a paid-for turn as cancelled. */
   readonly compile: (source: string) => Promise<CompileResult>
+  /**
+   * The verification round's evidence for a source that compiled: the report,
+   * and the render where the model can read one. Optional — absent means no
+   * round, which is the shape the pre-M4 tests exercise.
+   */
+  readonly inspect?: (source: string, off: Uint8Array) => Promise<{ text: string; image?: string }>
   readonly append: (event: ChatEvent) => void
   /** Streamed partial. NEVER compiled, NEVER written into `source`. */
   readonly onDraft: (source: string | null) => void
@@ -82,7 +90,24 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   // Starts in the past so the first delta always drafts, whatever the clock's origin.
   let lastDraftAt = -Infinity
 
-  try {
+  type Verified = { source: string; result: Extract<CompileResult, { ok: true }> }
+  let verified: Verified | null = null
+  let verifyRounds = 0
+
+  // Once a candidate has compiled, the turn commits it unless a later candidate
+  // compiles. A stop, an error, or an unrepairable correction after that point
+  // would otherwise throw away a part the user already waited for.
+  const settle = (outcome: TurnOutcome): TurnOutcome => {
+    if (!verified || outcome.status === 'committed') return outcome
+    // 'answered' here is the model confirming its part; everything else is a
+    // round that did not finish, which the user should be told.
+    if (outcome.status !== 'answered') {
+      emit({ kind: 'note', tone: 'info', text: 'Kept the last version that compiled.' })
+    }
+    return { status: 'committed', source: verified.source, result: verified.result }
+  }
+
+  const run = async (): Promise<TurnOutcome> => {
     emit({ kind: 'user', text: input.userText, images: input.images })
 
     for (;;) {
@@ -160,7 +185,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         emit({ kind: 'note', tone: 'error', text: message })
         return { status: 'error', message }
       }
-      if (candidate === committed) return { status: 'answered' }
+      // Echoing the document, or the source just inspected, is a confirmation.
+      if (candidate === committed || candidate === verified?.source) return { status: 'answered' }
 
       const result = await deps.compile(candidate)
 
@@ -195,12 +221,30 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         attempt,
         stderr: stderrForModel(result.stderrRaw),
       })
-      if (result.ok) return { status: 'committed', source: candidate, result }
+      if (result.ok) {
+        verified = { source: candidate, result }
+        if (!deps.inspect || verifyRounds >= MAX_VERIFY) {
+          return { status: 'committed', source: candidate, result }
+        }
+        verifyRounds++
+        const evidence = await deps.inspect(candidate, result.data)
+        if (deps.signal.aborted) return { status: 'stopped' }
+        emit({
+          kind: 'inspect',
+          text: evidence.text,
+          ...(evidence.image ? { image: evidence.image } : {}),
+        })
+        continue
+      }
       if (attempt === MAX_RETRIES) return { status: 'failed', source: candidate, result }
       attempt++
     }
+  }
+
+  try {
+    return settle(await run())
   } catch (error) {
-    return { status: 'error', message: messageOf(error) }
+    return settle({ status: 'error', message: messageOf(error) })
   }
 }
 
