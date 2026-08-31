@@ -47,6 +47,14 @@ The source, the kernel and the exported file are always millimetres — that is 
 speaks. The metric/imperial toggle changes the readout, and it tells the model how to read *you*:
 in imperial, "a two inch knob" means 50.8 mm in the source it writes.
 
+## Examples, colour and names
+
+The start window offers two example models — a mounting plate and a potted plant — from
+[`src/examples`](src/examples); each is a plain `.scad` file that also opens in desktop OpenSCAD.
+`color()` in the source is what the viewport shows, per face, through unions and differences.
+A document is named after your first prompt while the model works, then after the title comment
+the model puts on the first line of the file; **Rename** makes a title yours for good.
+
 ## Reference images
 
 Paste an image into the composer, or pick one with the button beside it — up to four per message.
