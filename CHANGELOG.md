@@ -34,6 +34,12 @@
 - Repairs are per candidate: every source that compiles gets two of its own.
 - Deleting the open document goes back to the start window instead of silently opening a
   neighbour.
+- The thinking level is remembered **per model**: switching models no longer carries the last
+  model's level along (a model without reasoning wants none). The reasoning and raw-output boxes
+  under the transcript are taller.
+- **copy** in the chat's footer puts a debug report on the clipboard: settings, the source and
+  the whole transcript raw — replies verbatim, stderr, inspection reports — with no key and no
+  images. Paste it into an issue.
 
 - **Parts**: every top-level statement is its own part — shown together, counted in the HUD,
   and exported as separate objects in the 3MF (each with its colour). The model is told to

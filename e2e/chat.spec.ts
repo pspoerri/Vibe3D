@@ -1233,3 +1233,90 @@ test('construction geometry is a ghost: on screen, out of the stats', async ({ p
   await expect(page.locator('.tag', { hasText: '5.0 × 5.0 × 5.0 mm' })).toBeVisible({ timeout: 60_000 })
   await expect(page.locator('.viewport')).toHaveAttribute('data-ghost', '1', { timeout: 60_000 })
 })
+
+test('switching the model applies to the meter and to the next request', async ({ page }) => {
+  await seedKey(page)
+  // A second model in the catalogue, so the dropdown has somewhere to go.
+  await page.route('**/api/v1/models', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: [
+          {
+            id: 'google/gemini-3.7-flash',
+            name: 'Gemini 3.7 Flash',
+            context_length: 1048576,
+            architecture: { input_modalities: ['text', 'image'] },
+            pricing: { prompt: '0.00000075', completion: '0.00000375' },
+          },
+          {
+            id: 'qwen/qwen3-coder',
+            name: 'Qwen3 Coder',
+            context_length: 262144,
+            architecture: { input_modalities: ['text'] },
+            pricing: { prompt: '0.0000003', completion: '0.0000012' },
+          },
+        ],
+      }),
+    }),
+  )
+  const bodies: string[] = []
+  await page.route(CHAT_URL, (route) => {
+    bodies.push(JSON.stringify(route.request().postDataJSON()))
+    return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sseBody('Noted.') })
+  })
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await page.locator('.chat-meter button').first().click()
+  const modelSelect = page.locator('.chat-settings select').nth(0)
+  const thinkingSelect = page.locator('.chat-settings select').nth(1)
+  // Thinking is per model: low on Gemini must not follow us to Qwen.
+  await thinkingSelect.selectOption('low')
+  await expect(page.locator('.chat-meter')).toContainText('google/gemini-3.7-flash · low')
+  await modelSelect.selectOption('qwen/qwen3-coder')
+  await expect(page.locator('.chat-meter')).toContainText('qwen/qwen3-coder')
+  await expect(page.locator('.chat-meter')).not.toContainText('· low')
+  await expect(thinkingSelect).toHaveValue('off')
+
+  await send(page, 'hello')
+  await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
+  expect(bodies).toHaveLength(1)
+  const body = JSON.parse(bodies[0] ?? '{}') as { model: string; reasoning?: unknown }
+  expect(body.model).toBe('qwen/qwen3-coder')
+  expect(body.reasoning).toBeUndefined()
+
+  // And Gemini still remembers its own level (the settings panel is still open).
+  await modelSelect.selectOption('google/gemini-3.7-flash')
+  await expect(thinkingSelect).toHaveValue('low')
+  await expect(page.locator('.chat-meter')).toContainText('google/gemini-3.7-flash · low')
+})
+
+test('copy puts a debug report on the clipboard: settings, source, transcript — and no key', async ({
+  page,
+  context,
+}) => {
+  await seedKey(page)
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+  await page.route(CHAT_URL, (route) =>
+    route.fulfill({ status: 200, contentType: 'text/event-stream', body: sseBody(fenced('cube([3, 3, 3]);')) }),
+  )
+
+  await page.goto('/')
+  await waitForStarter(page)
+  await send(page, 'a tiny cube')
+  await expect(page.locator('.tag', { hasText: '3.0 × 3.0 × 3.0 mm' })).toBeVisible({ timeout: 60_000 })
+  await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
+
+  await page.getByRole('button', { name: 'copy', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'copied', exact: true })).toBeVisible()
+  const text = await page.evaluate(() => navigator.clipboard.readText())
+  expect(text).toContain('# Vibe3D debug report')
+  expect(text).toContain('model: google/gemini-3.7-flash · thinking: off')
+  expect(text).toContain('[1] user:\na tiny cube')
+  expect(text).toContain('[1] assistant:')
+  expect(text).toContain('cube([3, 3, 3]);')
+  expect(text).toContain('[1] compile: ok')
+  expect(text).not.toContain(KEY)
+})

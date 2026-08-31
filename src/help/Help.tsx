@@ -68,7 +68,9 @@ export function Help({ onClose }: { onClose: () => void }) {
         </p>
         <p>
           <b>Stop</b> aborts the request. If a version had already compiled, you keep it. Prices
-          in the footer are OpenRouter's list prices for the session so far.
+          in the footer are OpenRouter's list prices for the session so far; <b>copy</b> beside
+          them puts a debug report on the clipboard — settings, source and the whole transcript,
+          raw, with no key and no images — for a bug report.
         </p>
 
         <h2>The editor</h2>

@@ -6,7 +6,9 @@ import {
   contextLimit, fetchModels, streamChat, type ModelInfo, type Usage,
 } from '../llm/openrouter'
 import { loadKey, saveKey } from '../state/key'
-import { loadSettings, saveSettings, THINKING, type PortableSettings, type Thinking } from '../state/settings'
+import {
+  loadSettings, saveSettings, THINKING, thinkingOf, withThinking, type PortableSettings, type Thinking,
+} from '../state/settings'
 import type { DownloadFormat } from '../export/download'
 import type { Component } from '../state/documents'
 import { parseOff, type Mesh } from '../kernel/off'
@@ -93,6 +95,7 @@ export function Chat({
   const [phase, setPhase] = useState('')
   /** The status line toggles this: the model's output so far, raw, code and reasoning included. */
   const [showRaw, setShowRaw] = useState(false)
+  const [copied, setCopied] = useState(false)
   // Slots claimed by a normalisation still in flight. Reserved synchronously,
   // in the event handler, so a second pick cannot claim the same room — and so
   // sending cannot outrun a decode and push the image onto the NEXT turn.
@@ -255,6 +258,70 @@ export function Chat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [markup])
 
+  /**
+   * Everything a bug report needs and nothing secret: settings, source, the
+   * transcript raw (replies verbatim, stderr, reports), whatever is in flight.
+   * No key. No images — a data URL is a screenful of base64 nobody can read.
+   */
+  const debugReport = (): string => {
+    const lines: string[] = [
+      '# Vibe3D debug report',
+      `model: ${settings.model} · thinking: ${thinkingOf(settings)} · units: ${units} · base: ${settings.baseUrl} · next turn: ${turn}`,
+      ...(components.length ? [`files: ${components.map((c) => `${c.name} (${c.bytes.length} bytes)`).join(', ')}`] : []),
+      ...(chatError ? [`error: ${chatError}`] : []),
+      '',
+      '## Source',
+      '```openscad',
+      source,
+      '```',
+      '',
+      '## Transcript',
+    ]
+    for (const e of logRef.current) {
+      const head = `[${e.turn}] ${e.kind}`
+      switch (e.kind) {
+        case 'user': {
+          const n = e.images?.length ?? 0
+          lines.push(`${head}${n ? ` (+${n} image${n > 1 ? 's' : ''})` : ''}:`, e.text, '')
+          break
+        }
+        case 'assistant':
+          lines.push(`${head}${e.stopped ? ' (stopped)' : ''}:`, e.text, '')
+          break
+        case 'compile':
+          lines.push(`${head}: ${e.ok ? 'ok' : 'FAILED'} · ${e.ms} ms · attempt ${e.attempt}`, ...(e.stderr ? [e.stderr] : []), '')
+          break
+        case 'inspect':
+          lines.push(`${head}${e.image ? ' (+render)' : ''}:`, e.text, '')
+          break
+        case 'note':
+          lines.push(`${head} (${e.tone}): ${e.text}`, '')
+          break
+        case 'summary':
+          lines.push(`${head} (covers through ${e.coversThrough}):`, e.text, '')
+          break
+        case 'clear':
+          lines.push(head, '')
+      }
+    }
+    if (thinking) {
+      lines.push('## In flight', `phase: ${phase}`)
+      if (liveReasoning) lines.push('reasoning:', liveReasoning)
+      if (liveText) lines.push('reply so far:', liveText)
+    }
+    return lines.join('\n')
+  }
+
+  const copyReport = async () => {
+    try {
+      await navigator.clipboard.writeText(debugReport())
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      note('Could not reach the clipboard.', 'error')
+    }
+  }
+
   const runCommand = async (command: Command) => {
     switch (command.name) {
       case 'clear':
@@ -277,7 +344,7 @@ export function Chat({
         return
       case 'think':
         if (command.level) {
-          persistSettings({ ...settings, thinking: command.level })
+          persistSettings(withThinking(settings, command.level))
           note(
             command.level === 'off'
               ? 'Thinking off: one call per message.'
@@ -369,7 +436,8 @@ export function Chat({
     ]
     const userText = [...heads, text].filter(Boolean).join('\n\n')
     const images = attachments.map((a) => a.url)
-    const looks = settings.thinking !== 'off'
+    const thinking = thinkingOf(settings)
+    const looks = thinking !== 'off'
     const vision = models.find((m) => m.id === settings.model)?.vision ?? false
     const controller = new AbortController()
     abortRef.current = controller
@@ -396,7 +464,7 @@ export function Chat({
               baseUrl: settings.baseUrl,
               apiKey,
               model: settings.model,
-              ...(looks ? { reasoning: settings.thinking as Exclude<Thinking, 'off'> } : {}),
+              ...(looks ? { reasoning: thinking as Exclude<Thinking, 'off'> } : {}),
             }),
           compile: async (candidate) => {
             const result = await compiler.compile(candidate, 'off', { files })
@@ -643,7 +711,7 @@ export function Chat({
       <div className="chat-meter">
         <button type="button" onClick={() => setShowSettings((open) => !open)}>
           {settings.model}
-          {settings.thinking !== 'off' && ` · ${settings.thinking}`}
+          {thinkingOf(settings) !== 'off' && ` · ${thinkingOf(settings)}`}
         </button>
         <span className="sep">·</span>
         <span title="Prompt + completion tokens this session">
@@ -656,6 +724,14 @@ export function Chat({
         <span title="Spent this session, at the model's list price">
           {spend.usd === null ? 'cost unknown' : formatUsd(spend.usd)}
         </span>
+        <span className="sep">·</span>
+        <button
+          type="button"
+          title="Copy a debug report: settings, source and the whole transcript, raw. No key, no images."
+          onClick={() => void copyReport()}
+        >
+          {copied ? 'copied' : 'copy'}
+        </button>
       </div>
 
       {showSettings && (
@@ -713,8 +789,8 @@ export function Chat({
             <label>
               Thinking
               <select
-                value={settings.thinking}
-                onChange={(e) => persistSettings({ ...settings, thinking: e.target.value as Thinking })}
+                value={thinkingOf(settings)}
+                onChange={(e) => persistSettings(withThinking(settings, e.target.value as Thinking))}
               >
                 {THINKING.map((level) => (
                   <option key={level} value={level}>
@@ -726,7 +802,7 @@ export function Chat({
             <p className="chat-hint">
               Thinking <b>off</b> is one model call per message. Any other level is the model's
               reasoning effort, and lets it look at what it built, ask for views and cuts, and
-              correct itself until it is satisfied. The line under the transcript says what it
+              correct itself until it is satisfied. Remembered per model. The line under the transcript says what it
               is doing; <b>Stop</b> ends it and keeps the last version that compiled.
             </p>
             <p className="chat-hint">

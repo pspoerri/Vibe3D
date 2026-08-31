@@ -12,14 +12,29 @@ export const THINKING: readonly Thinking[] = ['off', 'low', 'medium', 'high']
 export interface PortableSettings {
   baseUrl: string
   model: string
-  thinking: Thinking
+  /**
+   * Per model, because the levels mean different things to different models
+   * and a model without reasoning wants none: switching models must not carry
+   * the last one's level along. Absent is off.
+   */
+  thinking: Partial<Record<string, Thinking>>
 }
 
 export const DEFAULT_SETTINGS: PortableSettings = {
   baseUrl: DEFAULT_BASE_URL,
   model: DEFAULT_MODEL,
-  thinking: 'off',
+  thinking: {},
 }
+
+/** The current model's level. */
+export const thinkingOf = (s: PortableSettings): Thinking => s.thinking[s.model] ?? 'off'
+
+export const withThinking = (s: PortableSettings, level: Thinking): PortableSettings => ({
+  ...s,
+  thinking: { ...s.thinking, [s.model]: level },
+})
+
+const isLevel = (v: unknown): v is Thinking => THINKING.includes(v as Thinking)
 
 const RECORD = 'vibe3d.settings'
 /** ponytail: the pre-rename record. Delete once no browser can still hold it. */
@@ -38,11 +53,18 @@ export function loadSettings(): PortableSettings {
     // Falls through to the defaults below rather than returning DEFAULT_SETTINGS
     // itself, so no caller can mutate the constant every later reader sees.
   }
-  const thinking = stored?.thinking
+  const model = typeof stored?.model === 'string' ? stored.model : DEFAULT_SETTINGS.model
+  const raw = stored?.thinking as unknown
+  // The pre-per-model record held one level for every model: it becomes this model's.
+  const thinking: Partial<Record<string, Thinking>> = isLevel(raw)
+    ? { [model]: raw }
+    : raw && typeof raw === 'object'
+      ? Object.fromEntries(Object.entries(raw).filter(([, v]) => isLevel(v)) as [string, Thinking][])
+      : {}
   return {
     baseUrl: typeof stored?.baseUrl === 'string' ? stored.baseUrl : DEFAULT_SETTINGS.baseUrl,
-    model: typeof stored?.model === 'string' ? stored.model : DEFAULT_SETTINGS.model,
-    thinking: THINKING.includes(thinking as Thinking) ? (thinking as Thinking) : DEFAULT_SETTINGS.thinking,
+    model,
+    thinking,
   }
 }
 
