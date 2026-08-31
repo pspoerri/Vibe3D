@@ -25,8 +25,7 @@ The model runs on [OpenRouter](https://openrouter.ai), with your key. Two ways t
 
 - **Connect OpenRouter** runs an OAuth PKCE flow and mints a key scoped to this app, which you
   can revoke without touching the rest of your account.
-- **Paste a key** works too, including keys for other OpenAI-compatible hosts — change the base
-  URL and the model id and nothing else needs to change.
+- **Paste a key** works too.
 
 The key is stored in this browser's `localStorage` under `vibe3d.key`, on its own, and it is sent
 to exactly one place: the model host you configured. Revoke it any time at
@@ -36,7 +35,8 @@ shows what the session has cost so far, at the model's list price.
 
 Any script running on the page could read the key; that is inherent to browser storage, not a
 choice this app made. The mitigation is a strict Content-Security-Policy whose `connect-src`
-allows only OpenRouter, plus keeping the dependency list short.
+allows only OpenRouter, plus keeping the dependency list short. That allowlist is also why only
+OpenRouter works as a host in the deployed build.
 
 One honest note about **Stop**: aborting the request stops billing on OpenAI, Anthropic, DeepSeek
 and xAI, but not on Google, Groq or Mistral, which bill the whole completion once it starts.
@@ -53,8 +53,16 @@ Paste an image into the composer, or pick one with the button beside it — up t
 They carry layout, proportion and intent; **the dimensions still have to come from your words**,
 because models read sizes off pixels badly, and the model dropdown marks which models can read an
 image at all. An image is sent with the turn you attach it to and with no later turn, so you pay
-for it once — across that turn's repair attempts, and never again. Nothing is saved: the images go
-on reload and when you switch documents, exactly like the conversation.
+for it once — across that turn's repair attempts, and never again. The images are not saved — the
+conversation is, without them.
+
+## Versions
+
+Every LLM turn, every **Save version** and every successful compile of your own edits is a version
+of the document, and nothing is ever deleted: the picker in the menu bar steps to any of them,
+`/undo` steps back one, and a change made from an older version simply becomes the next one.
+Documents, their versions and their conversations live in this browser's IndexedDB. **Export
+project** writes one `.json` you can keep or import anywhere; it never contains the key.
 
 ## Licensing
 

@@ -4,9 +4,9 @@ A browser-only 3D modelling tool where an LLM writes and edits OpenSCAD source, 
 result in 3D, and everything — state, history, API key — lives in your browser. Static site,
 no backend, bring your own API key.
 
-Status: **Milestone 1 shipped** (kernel, viewport, editor, export). Milestone 2 in progress
-(agent loop, OpenRouter client, Customizer sliders). **Milestone 3 shipped** (document store,
-version timeline, launcher). Milestone 4 not started.
+Status: **Milestones 1–3 shipped** — kernel, viewport, editor, export (M1); agent loop,
+OpenRouter client, Customizer sliders, reference images (M2); document store, version timeline,
+persisted transcript, project file, launcher (M3). Milestone 4 not started.
 Plans: `docs/superpowers/plans/`.
 Date: 2026-08-30. License: **GPL-3.0**.
 
@@ -134,7 +134,7 @@ src/
     images.ts            fit + toDataUrl — ≤1568 px JPEG data: URL (§9)
   chat/
     controller.ts        runTurn / runCompact — the deterministic loop (§5)
-    log.ts               append-only ChatEvent[] + buildWindow (§10)
+    log.ts               append-only ChatEvent[] + buildWindow (§10); reviveLog, stripImages (§7)
     fence.ts             fenced-source extraction, fence stubbing
     prompt.ts            system prompt
     commands.ts          /clear /compact /export /model /key
@@ -147,7 +147,8 @@ src/
   state/
     settings.ts          localStorage: baseUrl, model
     key.ts               localStorage: the API key, ALONE (see §7)
-    documents.ts         Doc, Session — pure data, no IndexedDB call (§7)
+    documents.ts         Doc{versions, head, chat}, Session, the commit rules — pure data (§7)
+    project.ts           the .json project file: export, import, schemaVersion (§7)
     store.ts             idb-keyval, one named database, atomic write (§7)
   export/download.ts     bytes → file download
 ```
@@ -338,39 +339,62 @@ the whole thing multi-megabyte and janky, re-parsed on every rehydrate.
 
 ```ts
 type Version = { id, parentId, ts, label, source, compileOk }
+type Doc     = { id, name, source, versions: Version[], head, chat: ChatEvent[] }
 ```
 
-Append-only, plus a `head` pointer. **Restore appends a copy rather than truncating** — it makes
-losing work structurally impossible and keeps the list a total order. Restoring source does *not*
-delete chat: after a bad turn you want to step back and then tell the model what was wrong, with
-the failure still visible in the transcript.
+`versions` is append-only, oldest first, and `head` points into it. `source` is the working copy —
+what the editor holds — and differs from the head only by edits not yet committed. Version ids
+are `'1'`, `'2'`, … in commit order, so the next one is minted without a uuid; `parentId` is the
+head at commit time, which is what makes a linear list already be the tree.
 
-Commit a version on (a) an LLM turn that changed the source, (b) an explicit save, (c) a debounced
-successful compile after manual editing. Not on every keystroke.
+**Restore moves `head`; it does not append a copy.** This section once specified copy-on-restore
+to keep the list a total order and make losing work impossible. Moving the head does both —
+nothing is ever removed, and `parentId` records where a commit made from an older head came
+from — and it makes `/undo` repeatable: `v3 → v2 → v1`, where copy-on-restore oscillates between
+the last two states. Edits made since the head and not yet committed are kept as a version of
+their own before the head moves, for the same reason.
+
+Commit a version on (a) an LLM turn that changed the source, labelled with the prompt; (b) an
+explicit **Save version**; (c) a successful compile after manual editing. Not on every keystroke,
+and not on every pause either: consecutive manual edits fold into one `edit` version until
+something else — a turn, a save, a restore — intervenes, so the timeline reads as changes rather
+than as typing. The keystroke-level history is the editor's own. `compileOk` is true only for a
+source that was actually seen to compile; false means unverified, and the picker marks it.
+
+Restoring source does *not* delete chat: after a bad turn you want to step back and then tell the
+model what was wrong, with the failure still visible in the transcript. The transcript lives on
+the document and is persisted with it; reference images are stripped at that boundary (§9), so
+"never base64 in the store" holds with the log in the store.
 
 Full snapshots, no diffing — source is a few KB of text, so 200 versions ≈ 1 MB.
 
 **Eviction is the real risk, not quota.** WebKit deletes all script-writable storage after 7 days
 without interaction, and every browser evicts an origin *whole* under pressure. So
 `navigator.storage.persist()` at boot (check the boolean — it is silently denied when heuristics
-are unmet) and a first-class export are load-bearing, not nice-to-haves.
+are unmet, and the launcher says so when it is) and a first-class export are load-bearing, not
+nice-to-haves.
 
 **Project file** — one `.json`, not a zip, since source is the only ground truth and thumbnails
 regenerate on import:
 
 ```json
-{ "type": "aimodeller/project", "schemaVersion": 1,
-  "name": "...", "head": "...", "versions": [...], "chat": [...], "settings": {...} }
+{ "type": "vibe3d/project", "schemaVersion": 1,
+  "name": "...", "source": "...", "head": "...", "versions": [...], "chat": [...] }
 ```
 
+No `settings`: nothing in a document needs the host, and it is the field a key would hide in.
 Never an `apiKey` field. The type system **cannot** enforce this: structural typing makes
 `{baseUrl, model, apiKey}` assignable to a `PortableSettings` parameter, and a branded key type is
 assignable to any `string` field, so the `SecretSettings` split this section once specified would
 have been reassuring and inert. The mechanism is physical instead — the key lives in its own
-module (`state/key.ts`) and its own localStorage record, no type in the app holds both, and the
-project-export path never imports it. One forgotten field otherwise turns "share my project" into
-"share my key".
+module (`state/key.ts`) and its own localStorage record, no type in the app holds both, the
+project-export path never imports it, and the export serialises five named fields rather than
+spreading an object, so it cannot grow one by accident. One forgotten field otherwise turns
+"share my project" into "share my key".
 If `schemaVersion` exceeds ours, refuse with a specific error rather than best-effort parsing.
+Below ours there is no migration table: `reviveDoc` *is* the migration — a row written before
+versions existed becomes one `saved` version of its source, and an unreadable version is dropped
+while its neighbours survive.
 
 ---
 
@@ -405,7 +429,8 @@ line-splitting in the one module that handles the user's API key. This section's
 "keeping dependencies few" ruling below already argued against its opening sentence.
 
 Verified live: OpenRouter answers CORS preflight with `Access-Control-Allow-Origin: *` and
-allow-lists `Authorization`, `HTTP-Referer`, `X-Title`. `GET /api/v1/models` needs **no auth**, so
+allow-lists `Authorization`, `HTTP-Referer` and both `X-Title` and `X-OpenRouter-Title` (preflight
+verified 2026-08-31). `GET /api/v1/models` needs **no auth**, so
 the model dropdown, vision filter and pricing all come from one unauthenticated request — the user
 can browse models before entering a key.
 
@@ -449,18 +474,18 @@ never accumulate. `runCompact` strips them explicitly, because its caller closes
 that just ran (so that turn's user event is still "live" when compaction sees it) and auto-compact
 fires unattended at 60% of context, where nobody is present to notice a re-billed image.
 
-**Never persisted.** They die with the conversation, exactly as the transcript already does on
-reload and on every document switch. §7's "never base64 in the store" is not violated — the log
-they live in is not in the store — and that constraint binds again the day the log is.
+**Never persisted.** The transcript is (§7); the images in it are not. `stripImages` runs at the
+boundary into the session, so a reload or a document switch brings the conversation back without
+its pictures, and §7's "never base64 in the store" holds with the log in the store.
 
 The catalogue's vision flag (`architecture.input_modalities`) is **a hint, not a gate**: nothing
 is filtered, hidden or disabled on it, because support is per-provider while OpenRouter
 load-balances providers.
 
-Config stays `{baseUrl, apiKey, model}` so OpenAI, Groq, Mistral, DeepSeek and Gemini's compat
-endpoint work unchanged — but no provider abstraction layer is built for a v1 with one host.
-Anthropic-direct needs a special header and local Ollama needs the *user* to change a server
-setting; neither earns its complexity yet.
+Config stays `{baseUrl, apiKey, model}` — the OpenAI-compatible shape — but in the built artifact
+only OpenRouter can actually be reached: the CSP's `connect-src` allowlist (§11) is the one cheap
+structural defence for the key, and it forbids every other host by design. Another host means
+another allowlist entry, decided per host, not a provider abstraction layer.
 
 **Key handling.** The key is XSS-extractable from any browser storage — that is inherent, not a
 storage-choice bug. The only cheap structural defense is a strict CSP with an explicit
@@ -479,12 +504,12 @@ desyncing.
 |---|---|
 | `/clear` | New send-window at head. Source and version timeline untouched — "new conversation about the same model". |
 | `/compact` | One cheap call summarising the transcript, then window := [system, summary, last 2 turns, current source]. **Never summarise the source** — re-attach it verbatim; it is ground truth and cheap. Auto-fires at ~60% of context. |
-| `/undo` | Step to the previous version, truncate the window. Same operation as clicking a node in the time-travel UI — implement once. |
+| `/undo` | Steps the head to the previous version — the same operation as the version picker, implemented once (§7). The window is not truncated: the current source is re-attached verbatim on every turn, so the model sees the truth either way, and the transcript keeps the failed turn visible. |
 | `/export` | Pure client action. No LLM call, no history entry. |
 | `/model`, `/key` | Switch model / re-enter key. |
 
-`/compact` and `/undo` rewrite the message array and so invalidate OpenRouter's prompt cache.
-Cheap, not free — don't rewrite history every turn.
+`/compact` rewrites the message array and so invalidates OpenRouter's prompt cache. Cheap, not
+free — don't rewrite history every turn.
 
 ---
 
@@ -534,7 +559,7 @@ Skip component tests and Vitest browser mode at MVP.
 | **Non-manifold geometry that compiles fine.** OpenSCAD warns rather than fails; preview can look right while Bambu rejects it. | Printability gate is a post-export mesh check, not a compiler check. |
 | **Losing stderr across the Worker boundary.** | Explicitly carry `stdErr` through `postMessage`; test it. |
 | **Safari's 7-day eviction.** Returning user finds an empty app, no error. | `navigator.storage.persist()`, prominent export, honest durability copy. |
-| **Storage-version footgun.** Bumping `persist` version without a `migrate` silently discards state. | `migrate` stub on day one plus a test that loads a v1 blob. |
+| **Storage-version footgun.** A shape change silently discards state. | No version number on the IndexedDB record: `reviveDoc` is the migration, tested against the pre-version shape. The project file carries `schemaVersion` and refuses a newer one by name. |
 | **Loop behaviour is model-specific** and the user picks the model. | The controller imposes the budget; evals run per model. |
 
 ---
@@ -551,6 +576,18 @@ Skip component tests and Vitest browser mode at MVP.
   cheaply instead of after a 13-second compile.
 - **Render style has no published ablation.** The 4–8 canonical-view convention is convergent
   practice, not evidence. Worth one internal A/B once there is a working loop.
+
+---
+
+## 14. Review 2026-08-31
+
+The stage review that closed Milestone 3 found two runtime defects, both fixed: a turn survived a
+document switch and committed into whichever document was current when it finished (the chat pane
+now aborts its turn on unmount), and a preview compile still in flight could land after a turn's
+commit and put a stale mesh under the new source (the commit cancels the preview). It also found
+this document describing an M3 that had not been built — the automatic timeline, the persisted
+transcript, the project file and `/undo` — which is what
+`docs/superpowers/plans/2026-08-31-milestone-3-versions.md` then built.
 
 ---
 
