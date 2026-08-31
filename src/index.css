@@ -159,9 +159,13 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
    capped: it is a progress indicator, not content. */
 .chat-reasoning {
   font: 11.5px/1.55 ui-monospace, monospace; color: #8a908a; white-space: pre-wrap;
-  max-height: 16em; overflow: hidden; border-left: 2px solid #dfe2db; padding-left: 9px;
-  mask-image: linear-gradient(#000 70%, transparent);
+  max-height: 16em; overflow-y: auto; border-left: 2px solid #dfe2db; padding-left: 9px;
 }
+/* Markdown inside the reasoning keeps the reasoning's own voice: same small mono, greyer. */
+.chat-reasoning > * + * { margin-top: 6px; }
+.chat-reasoning h4 { font: 600 11.5px/1.55 ui-monospace, monospace; color: #6a706a; }
+.chat-reasoning strong { color: #5c625c; }
+.chat-reasoning code { font-size: inherit; }
 
 .chat-stderr {
   font: 11px/1.5 ui-monospace, monospace; white-space: pre-wrap; margin: 0; padding: 8px 10px;

@@ -435,7 +435,13 @@ test('reasoning is shown while the model is still thinking', async ({ page }) =>
     page,
     `data: ${JSON.stringify({
       choices: [
-        { delta: { reasoning_details: [{ type: 'reasoning.text', text: 'Sizing the plate' }] } },
+        // Gemini's real shape: the thought twice over, in both fields, with bold titles.
+        {
+          delta: {
+            reasoning: '**Sizing** the plate',
+            reasoning_details: [{ type: 'reasoning.text', text: '**Sizing** the plate' }],
+          },
+        },
       ],
     })}\n\n`,
   )
@@ -444,7 +450,8 @@ test('reasoning is shown while the model is still thinking', async ({ page }) =>
   await waitForStarter(page)
   await send(page, 'a plate')
 
-  await expect(page.locator('.chat-reasoning')).toContainText('Sizing the plate')
+  await expect(page.locator('.chat-reasoning')).toHaveText('Sizing the plate')
+  await expect(page.locator('.chat-reasoning strong')).toHaveText('Sizing')
   // Still mid-turn: the document is untouched and Stop is live.
   await expect(page.locator('.cm-content')).toContainText('plate_x = 60')
   await page.getByRole('button', { name: 'Stop' }).click()

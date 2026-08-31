@@ -122,13 +122,14 @@ function readChunk(payload: string): StreamEvent[] {
   if (choice?.delta?.content) events.push({ type: 'delta', text: choice.delta.content })
   // Streaming carries reasoning as `reasoning_details[]`; the bare `reasoning`
   // string is the non-streaming shape, but several providers send it on the
-  // delta anyway. Read both — an absent field just yields nothing.
-  const reasoning = [
-    typeof choice?.delta?.reasoning === 'string' ? choice.delta.reasoning : '',
-    ...(choice?.delta?.reasoning_details ?? []).map((part) =>
-      typeof part?.text === 'string' ? part.text : '',
-    ),
-  ].join('')
+  // delta anyway — and Gemini sends BOTH, with the same text, on every chunk.
+  // The details win where they carry text; the string is only the fallback.
+  // Adding the two doubled every paragraph of a thought.
+  const details = (choice?.delta?.reasoning_details ?? [])
+    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+    .join('')
+  const reasoning =
+    details || (typeof choice?.delta?.reasoning === 'string' ? choice.delta.reasoning : '')
   if (reasoning) events.push({ type: 'reasoning', text: reasoning })
   if (chunk.usage) events.push({ type: 'usage', usage: chunk.usage })
   if (choice?.finish_reason) events.push({ type: 'finish', reason: choice.finish_reason })

@@ -36,7 +36,11 @@
   neighbour.
 - The thinking level is remembered **per model**: switching models no longer carries the last
   model's level along (a model without reasoning wants none). The reasoning and raw-output boxes
-  under the transcript are taller.
+  under the transcript are taller, and the reasoning box scrolls, following the newest thought
+  until you scroll up.
+- The live reasoning is rendered as markdown — a thinking model titles its steps in bold — and is
+  no longer shown twice: OpenRouter carries Gemini's thought in both `reasoning` and
+  `reasoning_details`, and the reader added both.
 - **copy** in the chat's footer puts a debug report on the clipboard: settings, the source and
   the whole transcript raw — replies verbatim, stderr, inspection reports — with no key and no
   images. Paste it into an issue.

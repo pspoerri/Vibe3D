@@ -300,3 +300,26 @@ test('contextLimit answers 0 for an unknown id', () => {
   expect(contextLimit(models, 'a/b')).toBe(8192)
   expect(contextLimit(models, 'nope/nope')).toBe(0)
 })
+
+test('a chunk carrying the same thought as `reasoning` and as `reasoning_details` yields it once', async () => {
+  const stream = [
+    'data: {"choices":[{"index":0,"delta":{"reasoning":"**Sizing**","reasoning_details":[{"type":"reasoning.text","text":"**Sizing**"}]},"finish_reason":null}]}',
+    '',
+    'data: {"choices":[{"index":0,"delta":{"reasoning":" the plate"},"finish_reason":null}]}',
+    '',
+    'data: {"choices":[{"index":0,"delta":{"reasoning_details":[{"type":"reasoning.encrypted","data":"…"}]},"finish_reason":null}]}',
+    '',
+    'data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}',
+    '',
+    'data: [DONE]',
+    '',
+  ].join('\n')
+  stubFetch(() => new Response(stream, { status: 200 }))
+
+  expect(await drain(streamChat(MESSAGES, signal(), OPTIONS))).toEqual([
+    { type: 'reasoning', text: '**Sizing**' },
+    { type: 'reasoning', text: ' the plate' },
+    { type: 'delta', text: 'ok' },
+    { type: 'finish', reason: 'stop' },
+  ])
+})

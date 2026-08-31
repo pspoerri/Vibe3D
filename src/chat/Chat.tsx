@@ -127,6 +127,9 @@ export function Chat({
   // scrolling up to re-read an earlier turn must not be dragged back by every
   // streamed token. Re-armed by their own scroll back down.
   const stickRef = useRef(true)
+  // The reasoning box scrolls on its own, and follows the newest thought by the same rule.
+  const reasoningRef = useRef<HTMLDivElement>(null)
+  const reasoningStickRef = useRef(true)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   // The document owns the transcript (design.md §7); this pane owns the live
@@ -196,6 +199,10 @@ export function Chat({
     const box = logBoxRef.current
     if (box && stickRef.current) box.scrollTop = box.scrollHeight
   }, [log, thinking, liveText, liveReasoning])
+  useEffect(() => {
+    const box = reasoningRef.current
+    if (box && reasoningStickRef.current) box.scrollTop = box.scrollHeight
+  }, [liveReasoning])
 
   // Grow to the content, capped in CSS. Reset to auto first or scrollHeight
   // only ever reports the taller of the two and the box can never shrink back.
@@ -580,7 +587,19 @@ export function Chat({
           <div className="msg msg-assistant">
             {/* Reasoning only until real content starts: it is the answer to
                 "why is nothing happening", not part of the reply. */}
-            {!liveText && <div className="chat-reasoning">{liveReasoning}</div>}
+            {/* Rendered, not raw: a thinking model titles its steps in bold. */}
+            {!liveText && (
+              <div
+                className="chat-reasoning"
+                ref={reasoningRef}
+                onScroll={(e) => {
+                  const box = e.currentTarget
+                  reasoningStickRef.current = box.scrollHeight - box.scrollTop - box.clientHeight < 24
+                }}
+              >
+                <Markdown text={liveReasoning} />
+              </div>
+            )}
             <Markdown text={liveText} caret />
           </div>
         )}
