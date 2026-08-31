@@ -4,9 +4,10 @@ A browser-only 3D modelling tool where an LLM writes and edits OpenSCAD source, 
 result in 3D, and everything — state, history, API key — lives in your browser. Static site,
 no backend, bring your own API key.
 
-Status: **Milestones 1–3 shipped** — kernel, viewport, editor, export (M1); agent loop,
+Status: **Milestones 1–4 shipped** — kernel, viewport, editor, export (M1); agent loop,
 OpenRouter client, Customizer sliders, reference images (M2); document store, version timeline,
-persisted transcript, project file, launcher (M3). Milestone 4 not started.
+persisted transcript, project file, launcher (M3); change inspection — measured report, diff
+booleans, before/after composite, one verification round per turn (M4, see the end of §6).
 Plans: `docs/superpowers/plans/`.
 Date: 2026-08-30. License: **GPL-3.0**.
 
@@ -125,8 +126,8 @@ src/
     Viewport.tsx         WebGLRenderer, OrbitControls, adaptive grid
     camera.ts            pure fit / grid-spacing / standard-view maths
     ViewCube.ts          orientation widget
-    capture.ts           M4 — 2nd offscreen renderer, 768², ortho
-    inspect.ts           M4 — change inspection (§6)
+    capture.ts           offscreen 768² orthographic before/after composite (§6)
+    inspect.ts           measured report, diff booleans on the kernel, framing (§6)
   llm/
     sse.ts               SSE reader (hand-rolled, see below)
     openrouter.ts        streamChat, model catalogue, error normalisation
@@ -172,9 +173,9 @@ user turn
   → compile
       error → resend raw stderr verbatim, capped 100 lines (head-50 + tail-50)
               MAX 2 retries, then surface to the user
-      ok    → deterministic checks → answer
-              (vision-refine rounds are Milestone 4, not Milestone 2)
-  hard cap ~8 tool calls per user turn
+      ok    → verification round (§6): measured report + composite render,
+              structured questions, ONE correction allowed → compile → answer
+  at most 4 LLM calls per user turn: 1 + 2 repairs + 1 verification
 ```
 
 Why the controller counts rather than the model: two repair rounds capture 76–95% of achievable
@@ -328,6 +329,47 @@ If that proves flaky, `manifold-3d` (541 KB, Apache-2.0) is the fallback — not
 Known trap: if an edit also moves the part's origin, every vertex differs and the diff is 100% of
 the model. We own the parametric source, so detect it there rather than trying to re-align meshes.
 
+### Shipped 2026-08-31
+
+Milestone 4 built points 1, 2 and 5 as written, and took a different shape on the rest. Spec:
+`docs/superpowers/specs/2026-08-31-change-inspection-design.md`.
+
+- **The controller pushes the round; the model calls no tools.** After a compile succeeds the
+  controller computes the report and the composite and sends both in one `user` message wrapped
+  in the structured questions (`verifyMessage`), and the model either confirms in a sentence or
+  returns a corrected complete source. `render_view` / `measure` as model-invoked tools were
+  not built: tool support on OpenRouter is per-model and the user picks any model; an image
+  inside a tool result is the least portable part of the OpenAI-compatible surface; and §13
+  records that extra views have no ablation. They wait for an A/B that shows the fixed iso
+  composite is not enough.
+- **One round per turn** (`MAX_VERIFY = 1`). A correction is compiled with the remaining repair
+  budget and committed without a second look — §5's finding that later rounds inject bugs, taken
+  at its cheapest.
+- **Once a candidate has compiled, the turn commits it unless a later candidate compiles.** A
+  stop during verification, a truncated correction, or one that cannot be repaired all commit
+  the verified source, with a note; the user never waits out a compile and then loses it.
+- **The diff is `difference() { import("keep.off"); import("cut.off"); }`** on the kernel, twice
+  in parallel with the files swapped, through a `files` channel on the compile request. An
+  empty difference exits 1 with "Current top level object is empty." and is read as 0 mm³; any
+  other failure is `null`, never a zero. Genus and part count come from Euler's formula and a
+  union-find over shared vertices in `stats.ts`.
+- **The composite**: pure green and pure magenta at opacity 0.5 under `MultiplyBlending`, no
+  depth test, so unchanged material is 50% grey. three requires `premultipliedAlpha: true` for
+  that blend mode — without it the draw silently overwrites and the overlap reads as "before",
+  which is what the first render of this milestone showed. Crease outlines are depth-tested
+  against a depth-only pass of both parts, so hidden creases stay hidden. One renderer for the
+  app's lifetime.
+- **The vision flag gates the app's own render**, not the user's attachments (§9's rule stands
+  for those). A provider that cannot read an image would fail the turn *after* a compile the
+  user waited for; the numeric half of the round goes to every model regardless.
+- **Not built:** point 3's viewport toggle and cross-section — the composite thumbnail in the
+  transcript is the user's before/after until someone asks for a section; and source-level
+  origin-move detection — the report carries `bbox_min_shift_mm` and the message says what a
+  non-zero value means.
+- The `inspect` event's text (the report and questions) persists with the transcript; its image
+  is live for its own turn only and stripped at the store boundary, exactly like a reference
+  image. Earlier turns' inspections are dropped from the window, like their stderr (§12).
+
 ---
 
 ## 7. State, time travel, persistence
@@ -459,7 +501,7 @@ normalization path that satisfies every upstream.
 A user-attached reference image is **input**, not the vision-refine loop of §6 or §12's
 "naive vision feedback" risk. §6's −20% compile-rate finding and its non-negotiable
 structured-verification rule are about the app screenshotting its own mesh and feeding that
-render back to the model for correction — Milestone 4's loop, not built. A photo the user pastes
+render back to the model for correction — Milestone 4's loop. A photo the user pastes
 or picks before typing a prompt is not that: nothing renders it back, and no verification-question
 protocol applies to it. Nothing in this work implements or presumes §6.
 
@@ -468,7 +510,8 @@ Paste or file picker, up to 4 images per message, normalised once at attach time
 They travel as `{type:'image_url', image_url:{url}}` content parts, with the text part always
 first: OpenRouter's own recommendation, and reversing it degrades the answer without erroring.
 
-**Live for their own turn only**, including that turn's repair attempts; every later turn degrades
+**Live for their own turn only**, including that turn's repair attempts and its verification
+round (§6); every later turn degrades
 to plain text. That is what keeps §12's unbounded-context risk from applying here — the images
 never accumulate. `runCompact` strips them explicitly, because its caller closes over the turn
 that just ran (so that turn's user event is still "live" when compaction sees it) and auto-compact
@@ -588,6 +631,15 @@ commit and put a stale mesh under the new source (the commit cancels the preview
 this document describing an M3 that had not been built — the automatic timeline, the persisted
 transcript, the project file and `/undo` — which is what
 `docs/superpowers/plans/2026-08-31-milestone-3-versions.md` then built.
+
+Found in use after Milestone 4, both on opening a document from the launcher: the viewport kept
+the previously current document's mesh until the new compile landed — seconds on a cold
+kernel, forever when the new source did not compile — because nothing cleared it on a switch
+(the compile effect now resets the on-screen state and its identity guard when the document
+id changes); and the editor was mounted once for the app's lifetime, so a switch was a
+transaction in CodeMirror's undo history — two undos after opening a document put the
+boot-time starter plate into it, committed and compiled (the editor is now keyed by document
+id, like the chat pane, and remounts with fresh history). One e2e test covers both.
 
 ---
 

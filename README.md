@@ -53,8 +53,19 @@ Paste an image into the composer, or pick one with the button beside it — up t
 They carry layout, proportion and intent; **the dimensions still have to come from your words**,
 because models read sizes off pixels badly, and the model dropdown marks which models can read an
 image at all. An image is sent with the turn you attach it to and with no later turn, so you pay
-for it once — across that turn's repair attempts, and never again. The images are not saved — the
+for it once — across that turn's repair attempts and its verification round, and never again. The images are not saved — the
 conversation is, without them.
+
+## Checking its work
+
+Valid code of the wrong shape is the failure that actually happens, so once a turn's source
+compiles the model gets one look at it before the turn commits: a measured report (bounding box,
+volume, part count, genus, and what was added and removed compared with the part that was on
+screen) and — for models that can read an image — one before/after render, green over magenta.
+It has to answer a few yes/no questions about your request from those numbers, and may reply with
+one correction; the correction is compiled and committed without a second look. The report and
+the picture sit in the transcript behind the **inspected** chip. If you press Stop during that
+round, you keep the part that already compiled.
 
 ## Versions
 
