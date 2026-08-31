@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Chat } from './chat/Chat'
+import { COMMANDS } from './chat/commands'
+import { Help } from './help/Help'
 import { Compiler, type CompileResult } from './kernel/compile'
 import { parseOff, type Mesh } from './kernel/off'
 import { meshStats } from './kernel/stats'
@@ -81,6 +83,7 @@ export function App() {
   const [units, setUnits] = useState(loadUnits)
   // The launcher is the entry point: nothing is open until a document is picked.
   const [open, setOpen] = useState(false)
+  const [help, setHelp] = useState(false)
   // design.md §7: what the browser actually granted, not what was asked for.
   const [durable, setDurable] = useState(true)
 
@@ -234,15 +237,17 @@ export function App() {
   const stats = useMemo(() => (mesh ? meshStats(mesh) : null), [mesh])
 
   // Export runs its own compile so the exported bytes always match the current
-  // source, and never reuses the viewport's OFF.
+  // source, and never reuses the viewport's OFF. The file is named after the
+  // document, like the project file.
   const exportAs = async (format: DownloadFormat) => {
     setExporting(format)
     setExportError(null)
+    const name = fileName(session ? currentDoc(session).name : UNTITLED)
     const exporter = new Compiler()
     try {
       const result = await exporter.compile(source, format, { files })
       if (result.ok) {
-        downloadBlob(result.data, `model.${EXTENSION[format]}`, MIME[format])
+        downloadBlob(result.data, `${name}.${EXTENSION[format]}`, MIME[format])
       } else {
         setExportError(result.stderr)
       }
@@ -270,7 +275,10 @@ export function App() {
           setFitToken((n) => n + 1)
         }}
         onOpen={() => setOpen(false)}
+        onHelp={() => setHelp((h) => !h)}
       />
+
+      {session && help && <Help onClose={() => setHelp(false)} />}
 
       {session && !open && (
         <StartWindow
@@ -451,12 +459,14 @@ function MenuBar({
   busy,
   onChange,
   onOpen,
+  onHelp,
 }: {
   session: Session | null
   /** A turn owns the document: nothing here may move its head under it. */
   busy: boolean
   onChange: (next: Session) => void
   onOpen: () => void
+  onHelp: () => void
 }) {
   const doc = session ? currentDoc(session) : null
   const fileRef = useRef<HTMLInputElement>(null)
@@ -575,6 +585,28 @@ function MenuBar({
           })
         }}
       />
+      {/* Hover (or focus) lists the commands; a click opens the manual. Pure
+          CSS: the popover is in the DOM whenever the bar is, hidden by :hover. */}
+      <span className="menu-help">
+        <button type="button" onClick={onHelp} title="Open the manual">
+          Help
+        </button>
+        <div className="help-pop" role="tooltip">
+          <b>Commands</b> — type them in the chat
+          <dl>
+            {COMMANDS.map((c) => (
+              <div key={c.usage}>
+                <dt>{c.usage}</dt>
+                <dd>{c.what}</dd>
+              </div>
+            ))}
+          </dl>
+          <span className="help-pop-hint">
+            Enter sends, Shift+Enter breaks a line. Click a part in the viewport to talk about it.
+            Click Help for the manual.
+          </span>
+        </div>
+      </span>
       {doc && <span className="menubar-doc">{doc.name}</span>}
     </div>
   )

@@ -11,7 +11,7 @@ import type { DownloadFormat } from '../export/download'
 import type { Component } from '../state/documents'
 import { formatReport, inspect } from '../viewer/inspect'
 import { referenceLine, type Selection } from '../viewer/select'
-import { parseCommand, type Command } from './commands'
+import { COMMANDS, parseCommand, type Command } from './commands'
 import { COMPACT_AT, runCompact, runTurn } from './controller'
 import { addUsage, formatTokens, formatUsd, ZERO_SPEND, type Spend } from './cost'
 import { parseMarkdown, type Inline } from './markdown'
@@ -238,7 +238,10 @@ export function Chat({
         setShowSettings(true)
         return
       case 'unknown':
-        note(`Unknown command /${command.word}.`, 'error')
+        note(`Unknown command /${command.word}. Type /help for the list.`, 'error')
+        return
+      case 'help':
+        note(COMMANDS.map((c) => `${c.usage} — ${c.what}`).join('\n'))
         return
       case 'undo': {
         const restored = onUndo()

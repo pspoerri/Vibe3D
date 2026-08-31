@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { parseCommand } from './commands'
+import { COMMANDS, parseCommand } from './commands'
 
 test('the argument-free commands', () => {
   expect(parseCommand('/clear')).toEqual({ name: 'clear' })
@@ -35,7 +35,7 @@ test('/export defaults to 3mf and accepts stl', () => {
 test('an unrecognised slash word never reaches the model', () => {
   expect(parseCommand('/undo')).toEqual({ name: 'undo' })
   expect(parseCommand('/UNDO now')).toEqual({ name: 'undo' })
-  expect(parseCommand('/help me')).toEqual({ name: 'unknown', word: 'help' })
+  expect(parseCommand('/halp me')).toEqual({ name: 'unknown', word: 'halp' })
 })
 
 test('ordinary messages are not commands', () => {
@@ -47,4 +47,15 @@ test('ordinary messages are not commands', () => {
   expect(parseCommand('/ clear')).toBeNull()
   expect(parseCommand('/usr/local is where it lives')).toBeNull()
   expect(parseCommand('// a comment')).toBeNull()
+})
+
+test('/help is a command, and COMMANDS documents every command the parser knows', () => {
+  expect(parseCommand('/help')).toEqual({ name: 'help' })
+  const documented = COMMANDS.map((c) => c.usage.split(' ')[0])
+  for (const word of ['clear', 'compact', 'export', 'model', 'key', 'undo', 'help']) {
+    expect(documented, word).toContain(`/${word}`)
+  }
+  // Every documented usage parses as a known command, so the list cannot rot.
+  for (const c of COMMANDS) expect(parseCommand(c.usage)?.name).not.toBe('unknown')
+  for (const c of COMMANDS) expect(c.what).not.toBe('')
 })

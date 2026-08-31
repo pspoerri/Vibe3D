@@ -65,7 +65,8 @@ test('exports a 3MF', async ({ page }) => {
   const download = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Export 3MF' }).click()
   const file = await (await download).path()
-  expect((await download).suggestedFilename()).toBe('model.3mf')
+  // Named after the document, which the starter takes from its title comment.
+  expect((await download).suggestedFilename()).toBe('A mounting plate.3mf')
 
   const buf = await readFile(file)
   expect(buf.subarray(0, 2).toString()).toBe('PK') // it is a zip
@@ -115,7 +116,7 @@ test('exports an OBJ', async ({ page }) => {
   await openStarter(page)
   const download = page.waitForEvent('download')
   await page.getByRole('button', { name: 'Export OBJ' }).click()
-  expect((await download).suggestedFilename()).toBe('model.obj')
+  expect((await download).suggestedFilename()).toBe('A mounting plate.obj')
   const text = await readFile(await (await download).path(), 'utf8')
   expect(text.startsWith('# OpenSCAD obj exporter')).toBe(true)
   expect(text).toMatch(/^v /m)
@@ -204,4 +205,24 @@ test('clicking the part selects it for the chat, and empty space clears it', asy
   await expect(selection).toContainText('60 × 40 × 3 mm')
   await canvas.click({ position: { x: 4, y: 4 } })
   await expect(selection).toBeHidden()
+})
+
+test('Help lists the commands on hover and opens the manual on click', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('.start-open').first().click({ timeout: 90_000 })
+  const help = page.getByRole('button', { name: 'Help' })
+  const pop = page.locator('.help-pop')
+  await expect(pop).toBeHidden()
+  await help.hover()
+  await expect(pop).toBeVisible()
+  await expect(pop).toContainText('/export')
+  await expect(pop).toContainText('/undo')
+
+  await help.click()
+  const manual = page.locator('.help-card')
+  await expect(manual).toBeVisible()
+  await expect(manual).toContainText('Import mesh')
+  await expect(manual.locator('table')).toContainText('/compact')
+  await page.keyboard.press('Escape')
+  await expect(manual).toBeHidden()
 })

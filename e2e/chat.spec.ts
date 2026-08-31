@@ -1044,3 +1044,13 @@ test('a selected part heads the message the model gets', async ({ page }) => {
     '[Selected part 1 of 1: 60 × 40 × 3 mm, from [0, 0, 0] to [60, 40, 3]]\\n\\nhow thick is this?',
   )
 })
+
+test('/help lists the commands in the transcript, and an unknown command points to it', async ({ page }) => {
+  await page.goto('/')
+  await waitForStarter(page)
+  await send(page, '/help')
+  await expect(page.locator('.chat-note').last()).toContainText('/undo')
+  await expect(page.locator('.chat-note').last()).toContainText('/export')
+  await send(page, '/nope')
+  await expect(page.locator('.chat-note').last()).toContainText('Type /help')
+})

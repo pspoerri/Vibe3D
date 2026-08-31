@@ -105,10 +105,11 @@ of the document, and nothing is ever deleted: the picker in the menu bar steps t
 Documents, their versions and their conversations live in this browser's IndexedDB. **Export
 project** writes one `.json` you can keep or import anywhere; it never contains the key.
 
-## Layout
+## Layout and help
 
 The editor and chat panes resize from the grip at their bottom corner (the browser's own); the
-viewport takes what is left.
+viewport takes what is left. **Help** in the menu bar lists the chat commands on hover and opens
+the manual on click; `/help` prints the same list in the transcript.
 
 ## Licensing
 

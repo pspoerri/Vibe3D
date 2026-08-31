@@ -145,7 +145,8 @@ src/
     fence.ts             fenced-source extraction, fence stubbing; steps over edit blocks
     edits.ts             openscad-edit blocks: parse, apply exactly once (§8)
     prompt.ts            system prompt
-    commands.ts          /clear /compact /export /model /key
+    commands.ts          /clear /compact /export /model /key /undo /help; COMMANDS, the one list
+  help/Help.tsx          the manual — static JSX, the command table from COMMANDS
     Chat.tsx             the chat pane
   editor/
     Editor.tsx           CodeMirror 6 + StreamLanguage OpenSCAD mode

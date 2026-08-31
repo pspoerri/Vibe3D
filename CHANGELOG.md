@@ -9,13 +9,16 @@
   `import("name.stl")` them from the source. Each file is validated and measured by the kernel
   on attach; the model sees the list with bounding boxes. Files persist with the document and
   travel in the project file (schema 2, base64 — a file without any is still schema 1).
-- **Export OBJ**, and `/export obj`.
+- **Export OBJ**, and `/export obj`. Exports are named after the document (`Knurled knob.3mf`),
+  not `model.3mf`.
 - **Partial updates**: the model may reply with ```` ```openscad-edit ```` blocks that replace
   a quoted section of the current source instead of rewriting the file. A non-matching edit is
   reported back to it like a compile error and costs a repair attempt.
 - **Click a part** in the viewport to select it; the next message is headed by its number,
   bounding box and colour, so "make this taller" means that part.
 - **Resizable panes**: drag the grip at the bottom corner of the editor or chat pane.
+- **Help**: a manual in the app (menu bar → Help, Esc closes), the command list on hover over
+  that button, and `/help` in the chat. One `COMMANDS` table feeds all three.
 - Real-kernel unit tests: the pinned wasm now runs under vitest for format and import checks.
 
 ## v0.1.0 — 2026-08-31
