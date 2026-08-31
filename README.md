@@ -1,6 +1,6 @@
 # Vibe3D
 
-**Prompt a 3D model (with your own tokens).**
+**Prompt a parametrized 3D model - leveraging your own tokens.**
 
 Describe a part. The model writes OpenSCAD, your browser compiles it, and you get a mesh you can
 orbit and export as STL, 3MF or OBJ. You can also just write the OpenSCAD yourself, or drag the
