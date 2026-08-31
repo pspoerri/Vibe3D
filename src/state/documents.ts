@@ -24,9 +24,10 @@ export interface Doc {
   id: string
   name: string
   /**
-   * The name is settled — either the user typed it or a prompt produced it — so
-   * nothing auto-names over it again. A name merely derived from the source is
-   * a placeholder and carries no flag.
+   * The name is settled — either the user typed it or the first turn produced
+   * it — so nothing auto-names over it again. A name merely derived from the
+   * source, or lent by a prompt while its turn runs, is a placeholder and
+   * carries no flag.
    */
   named?: true
   createdAt: number
@@ -115,10 +116,9 @@ export function renameDoc(session: Session, id: string, name: string): Session {
 }
 
 /**
- * Name the current document after the prompt that produced it, unless the user
- * has titled it themselves. Only an untitled document is renamed, and only
- * once: the first prompt describes the part, while later ones are edits to it
- * ("make it 2 mm taller" is a poor title for a knob).
+ * A stand-in name while the first turn runs: the prompt, with the asking
+ * stripped off. It is provisional — nameFromFirstTurn replaces it with the
+ * model's own title once the turn commits — so it does not set `named`.
  */
 export function nameFromFirstPrompt(session: Session, prompt: string): Session {
   const doc = currentDoc(session)
@@ -126,10 +126,25 @@ export function nameFromFirstPrompt(session: Session, prompt: string): Session {
   const taken = session.docs.filter((d) => d.id !== doc.id).map((d) => d.name)
   const name = nameFromPrompt(prompt, taken)
   if (name === UNTITLED) return session
-  return {
-    ...session,
-    docs: session.docs.map((d) => (d.id === doc.id ? { ...d, name, named: true } : d)),
-  }
+  return withDoc(session, { ...doc, name })
+}
+
+/**
+ * The first committed turn names the document: the model titles the part on
+ * the file's first line (the system prompt asks it to), and that beats the
+ * user's prompt, which describes a wish rather than the thing. Without a
+ * title line the provisional name stands. Either way the name is then final
+ * for prompts — later ones are edits ("make it 2 mm taller" is a poor title
+ * for a knob) — though never over a title the user typed.
+ */
+export function nameFromFirstTurn(session: Session, source: string): Session {
+  const doc = currentDoc(session)
+  if (doc.named) return session
+  const taken = session.docs.filter((d) => d.id !== doc.id).map((d) => d.name)
+  const heading = headingOf(source)
+  const name = heading === null ? doc.name : dedupe(heading, taken)
+  if (name === UNTITLED) return session
+  return withDoc(session, { ...doc, name, named: true })
 }
 
 // ---- versions (design.md §7) ------------------------------------------------
@@ -395,8 +410,13 @@ const HEADING = /^[ \t]*\/\/[ \t]*(\S.*?)[ \t]*$/m
 const DECLARATION = /^[ \t]*(?:module|function)[ \t]+([A-Za-z_]\w*)/m
 
 function derive(source: string): string {
+  return headingOf(source) ?? DECLARATION.exec(source)?.[1] ?? UNTITLED
+}
+
+/** The first own-line comment's first sentence, or null when there is none. */
+function headingOf(source: string): string | null {
   const heading = HEADING.exec(source)?.[1]
-  if (heading === undefined) return DECLARATION.exec(source)?.[1] ?? UNTITLED
+  if (heading === undefined) return null
   // A header comment is a sentence written at the reader, not a title, so the
   // first sentence of it is what a list column has room for.
   const sentence = heading.split('. ')[0] ?? heading

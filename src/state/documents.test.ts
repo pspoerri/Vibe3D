@@ -8,6 +8,7 @@ import {
   deleteDoc,
   headVersion,
   nameFromFirstPrompt,
+  nameFromFirstTurn,
   nameFromPrompt,
   newDoc,
   renameDoc,
@@ -226,10 +227,11 @@ test('two documents never end up with the same name', () => {
   expect(nameFromPrompt('a bracket', ['Bracket', 'Bracket 2'])).toBe('Bracket 3')
 })
 
-test('only the first prompt names a document, and never over a chosen title', () => {
+test('the prompt names a document provisionally, and never over a chosen title', () => {
   const fresh: Session = { docs: [newDoc('Untitled', '', 'a', 1)], currentId: 'a' }
   const named = nameFromFirstPrompt(fresh, 'a hex bolt')
-  expect(currentDoc(named).name).toBe('Hex bolt')
+  expect(currentDoc(named)).toMatchObject({ name: 'Hex bolt' })
+  expect(currentDoc(named).named).toBeUndefined()
 
   // A name merely derived from the source is a placeholder, so the first prompt
   // replaces it — that is the common case, since the starter is source-named.
@@ -237,11 +239,34 @@ test('only the first prompt names a document, and never over a chosen title', ()
   expect(currentDoc(fromSource).name).toBe('A mounting plate')
   expect(currentDoc(nameFromFirstPrompt(fromSource, 'a knurled knob')).name).toBe('Knurled knob')
 
-  // The second prompt is an edit, not a description of the part.
-  expect(nameFromFirstPrompt(named, 'make it 2 mm taller')).toBe(named)
-  // And a title the user typed is theirs.
+  // A title the user typed is theirs.
   const mine = renameDoc(fresh, 'a', 'My bolt')
   expect(nameFromFirstPrompt(mine, 'a hex bolt')).toBe(mine)
+})
+
+test('the first turn names the document from its title line, and then the name is final', () => {
+  const fresh: Session = { docs: [newDoc('Untitled', '', 'a', 1)], currentId: 'a' }
+  const asked = nameFromFirstPrompt(fresh, 'a hex bolt')
+
+  // The model's title beats the prompt: one is the thing, the other the wish.
+  const titled = nameFromFirstTurn(asked, '// M8 hex bolt, 30 mm. Printable.\ncylinder(8);')
+  expect(currentDoc(titled)).toMatchObject({ name: 'M8 hex bolt, 30 mm', named: true })
+  // The second prompt is an edit, not a description of the part.
+  expect(nameFromFirstPrompt(titled, 'make it 2 mm taller')).toBe(titled)
+  expect(nameFromFirstTurn(titled, '// Something else\ncube(1);')).toBe(titled)
+
+  // No title line: the provisional name stands, and becomes final.
+  expect(currentDoc(nameFromFirstTurn(asked, 'cylinder(8);'))).toMatchObject({
+    name: 'Hex bolt', named: true,
+  })
+  // Nothing to name it after at all: it stays open for the next prompt.
+  expect(nameFromFirstTurn(fresh, 'cylinder(8);')).toBe(fresh)
+  // Deduped against the other documents, like every name.
+  const two: Session = { docs: [newDoc('Knob', 'x', 'k', 1), ...fresh.docs], currentId: 'a' }
+  expect(currentDoc(nameFromFirstTurn(two, '// Knob\nsphere(5);')).name).toBe('Knob 2')
+  // And never over the user's own title.
+  const mine = renameDoc(fresh, 'a', 'My bolt')
+  expect(nameFromFirstTurn(mine, '// Hex bolt\ncylinder(8);')).toBe(mine)
 })
 
 test('two rows sharing an id cannot both survive revive', () => {

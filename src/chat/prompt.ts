@@ -21,6 +21,10 @@ Millimetres, Z up. The part rests on the Z=0 plane, on the face it should be pri
 on, with no geometry below it.
 
 STRUCTURE
+Line 1 of the file is a \`//\` comment that titles the part in two to five words, then
+a blank line: \`// Wall-mount headphone hook\`. It becomes the name of the user's
+document. Keep it across revisions; change it only when the part becomes a different
+thing.
 1. Tunable parameters first, at the top of the file, ABOVE the first \`{\`, one per
    line, each with a Customizer annotation and a \`//\` caption on the line above it:
        // Wall thickness
@@ -60,6 +64,8 @@ loop body directly.
 EXAMPLE
 
 \`\`\`openscad
+// Filleted bolt plate
+
 // Plate width
 width = 40;       // [20:1:80]
 // Plate depth

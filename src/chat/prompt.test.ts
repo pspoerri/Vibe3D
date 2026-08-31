@@ -4,6 +4,7 @@ import { COMPACT_PROMPT, SYSTEM_PROMPT, systemPromptFor, verifyMessage } from '.
 test('the prompt states the output contract and the $fn rule', () => {
   expect(SYSTEM_PROMPT).toMatch(/```/)
   expect(SYSTEM_PROMPT).toMatch(/\$fn/)
+  expect(SYSTEM_PROMPT).toMatch(/titles the part/)
 })
 
 test('metric adds nothing — it is already the language OpenSCAD speaks', () => {
