@@ -14,13 +14,14 @@ import type { Component } from '../state/documents'
 import { parseOff, type Mesh } from '../kernel/off'
 import { meshStats } from '../kernel/stats'
 import { renderView } from '../viewer/capture'
-import { boxOf, formatReport, inspect } from '../viewer/inspect'
+import { boxOf, formatReport, hostOf, idealView, inspect, meshChecks, type Closeup } from '../viewer/inspect'
 import { referenceLine, type Selection } from '../viewer/select'
 import { COMMANDS, parseCommand, type Command } from './commands'
 import { COMPACT_AT, runCompact, runTurn } from './controller'
 import { addUsage, formatTokens, formatUsd, ZERO_SPEND, type Spend } from './cost'
 import { parseMarkdown, type Inline } from './markdown'
 import { nextTurn, type ChatEvent } from './log'
+import { partCount } from './parts'
 import { systemPromptFor, verifyMessage } from './prompt'
 
 const REVOKE_HOME = 'https://openrouter.ai/settings/keys'
@@ -453,6 +454,8 @@ export function Chat({
     setThinking(true)
     onBusyChange(true)
 
+    // The latest inspection's changed pieces: what a {"closeup": N} request names.
+    let closeups: Closeup[] = []
     try {
       const outcome = await runTurn(
         {
@@ -486,26 +489,43 @@ export function Chat({
             }
             return result
           },
-          inspect: async (_candidate, off) => {
-            const { report, image } = await inspect({
-              before,
+          inspect: async (candidate, off, prior) => {
+            const insp = await inspect({
+              before: prior ?? before,
               after: off,
               vision,
               signal: controller.signal,
             })
+            closeups = insp.closeups
             return {
-              text: verifyMessage(formatReport(report), image !== null, looks),
-              ...(image ? { image } : {}),
+              text: verifyMessage(
+                formatReport(insp.report),
+                meshChecks(insp.report, partCount(candidate)),
+                insp.legend,
+                looks,
+                closeups.length,
+              ),
+              ...(insp.image ? { image: insp.image } : {}),
             }
           },
           // The latest mesh of the turn, else the one on screen. The vision
           // flag gates this like the composite: a render nobody can read is a
           // failed turn after a compile the user waited for.
           render: async (request, off) => {
+            if (!vision) return null
+            if (request.closeup !== null) return closeups[request.closeup - 1]?.render() ?? null
             const bytes = off ?? before
-            if (!bytes || !vision) return null
+            if (!bytes) return null
             const mesh = parseOff(new TextDecoder().decode(bytes))
-            return renderView(mesh, request, boxOf(meshStats(mesh)), construction)
+            const stats = meshStats(mesh)
+            const model = boxOf(stats)
+            // An auto view looks from the side of its part the box sits on.
+            const target = request.box ?? model
+            const from =
+              request.view === 'auto'
+                ? idealView(target, hostOf(target, stats.shells.map(boxOf), model)).direction
+                : null
+            return renderView(mesh, request, model, construction, from)
           },
           onPhase: setPhase,
           append,

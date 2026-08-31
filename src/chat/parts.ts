@@ -85,6 +85,9 @@ function sections(lines: readonly string[]): Map<number, Span> {
   return found
 }
 
+/** How many PART sections the source has — what the mesh's solid count is checked against. */
+export const partCount = (source: string): number => sections(source.split('\n')).size
+
 /** The construction section's open and END lines, when both exist. */
 function constructionSpan(lines: readonly string[]): { start: number; end: number } | null {
   let start = -1

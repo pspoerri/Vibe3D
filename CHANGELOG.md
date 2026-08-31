@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Inspection per part**: the measured report lists every solid with its box and volume in
+  PART order, and names a closed void — a pocket cut entirely inside a part — instead of
+  counting it as a part. The app grades the mechanical checks itself (rests on Z=0, solids
+  against PART sections, voids, watertight, genus) and hands the model the verdicts, so its
+  own questions go to the request. Each round of a turn is measured against the round before
+  it. A part moved whole is recognised (`moved_mm`) and put back before the diff, so the
+  render shows what changed in shape rather than the move; and when the change is small the
+  render gains a second pane, a close-up of the largest changed piece seen from the side it
+  sits on. The report lists every changed piece (`changed_pieces`) with the side it is best
+  seen from, and the model can ask for any of them — ```` ```view {"closeup": N} ```` — or
+  for `"view": "auto"`, where the app picks the side a box is best seen from.
 - **Draw mode**: **DRAW** in the viewport turns the view into a sketchpad; **ATTACH** puts the
   marked-up view (red strokes) into the next message, headed so the model reads the strokes as
   annotations of where a change goes.

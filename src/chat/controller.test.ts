@@ -59,6 +59,8 @@ interface Harness {
   compiled: string[]
   /** The sources handed to inspect, in order. */
   inspected: string[]
+  /** The prior OFF handed with each: null on a turn's first round, the previous round's after that. */
+  priors: (Uint8Array | null)[]
   abort: () => void
 }
 
@@ -72,6 +74,7 @@ function harness(options: {
 }): Harness {
   const { replies = [], compiles = [], tickMs = 0, inspect } = options
   const inspected: string[] = []
+  const priors: (Uint8Array | null)[] = []
   const windows: ChatMessage[][] = []
   const signals: (AbortSignal | undefined)[] = []
   const appended: ChatEvent[] = []
@@ -115,8 +118,9 @@ function harness(options: {
     ...(inspect === undefined
       ? {}
       : {
-          inspect: async (source: string) => {
+          inspect: async (source: string, _off: Uint8Array, prior: Uint8Array | null) => {
             inspected.push(source)
+            priors.push(prior)
             if (inspect === 'throws') throw new Error('no WebGL')
             return inspect
           },
@@ -134,6 +138,7 @@ function harness(options: {
     usages,
     compiled,
     inspected,
+    priors,
     abort: () => controller.abort(),
   }
 }
@@ -780,6 +785,8 @@ test('a correction after inspection is compiled and looked at again, until the m
   expect(outcome).toMatchObject({ status: 'committed', source: 'b' })
   expect(h.compiled).toEqual(['a', 'b'])
   expect(h.inspected).toEqual(['a', 'b'])
+  // The second round is measured against the first, not against the part on screen.
+  expect(h.priors).toEqual([null, new Uint8Array([1, 2, 3])])
   expect(h.windows).toHaveLength(3)
 })
 
@@ -809,7 +816,7 @@ test('a view request is rendered from the part on screen and handed back as an i
   const outcome = await runTurn(turnInput(), deps)
 
   expect(outcome).toMatchObject({ status: 'committed', source: 'a' })
-  expect(rendered).toEqual([[{ view: 'front', section: { axis: 'z', at: 2 }, box: null }, null]])
+  expect(rendered).toEqual([[{ view: 'front', section: { axis: 'z', at: 2 }, box: null, closeup: null }, null]])
   expect(kinds(h.appended)).toEqual(['user', 'assistant', 'inspect', 'assistant', 'compile'])
   expect(h.windows[1]?.at(-2)).toEqual({
     role: 'user',

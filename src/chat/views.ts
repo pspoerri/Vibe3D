@@ -11,14 +11,20 @@ export type ViewName = (typeof VIEW_NAMES)[number]
 export type Axis = 'x' | 'y' | 'z'
 
 export interface ViewRequest {
-  view: ViewName
+  /** A named direction, or auto: the side the box (or the whole part) is best seen from — idealView. */
+  view: ViewName | 'auto'
   /** A cut through the part: the half nearer the camera is removed. */
   section: { axis: Axis; at: number } | null
   /** Frame this box (mm) instead of the whole part. */
   box: { min: [number, number, number]; max: [number, number, number] } | null
+  /**
+   * A composite close-up of the last report's changed piece N (1-based), from
+   * its best side. The other fields are ignored when this is set.
+   */
+  closeup: number | null
 }
 
-export const VIEW_SHAPE = `{"view": "iso" | "iso_back" | "front" | "back" | "left" | "right" | "top" | "bottom", "section": null | {"axis": "x" | "y" | "z", "at": <mm>}, "box": null | {"min": [x, y, z], "max": [x, y, z]}}`
+export const VIEW_SHAPE = `{"view": "iso" | "iso_back" | "front" | "back" | "left" | "right" | "top" | "bottom" | "auto", "section": null | {"axis": "x" | "y" | "z", "at": <mm>}, "box": null | {"min": [x, y, z], "max": [x, y, z]}, "closeup": null | <changed piece number>}`
 
 const isVec3 = (v: unknown): v is [number, number, number] =>
   Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number' && Number.isFinite(n))
@@ -54,7 +60,9 @@ export function parseView(text: string): { request: ViewRequest | null; complete
   const r = raw as Record<string, unknown> | null
   if (!r || typeof r !== 'object') return fail('it is not an object')
   const view = r.view ?? 'iso'
-  if (!(VIEW_NAMES as readonly unknown[]).includes(view)) return fail(`"${String(view)}" is not a view`)
+  if (view !== 'auto' && !(VIEW_NAMES as readonly unknown[]).includes(view)) {
+    return fail(`"${String(view)}" is not a view`)
+  }
   let section: ViewRequest['section'] = null
   if (r.section != null) {
     const s = r.section as Record<string, unknown>
@@ -69,12 +77,22 @@ export function parseView(text: string): { request: ViewRequest | null; complete
     if (!isVec3(b.min) || !isVec3(b.max)) return fail('box needs min and max as [x, y, z]')
     box = { min: b.min, max: b.max }
   }
-  return { request: { view: view as ViewName, section, box }, complete: true, error: null }
+  let closeup: number | null = null
+  if (r.closeup != null) {
+    if (!Number.isInteger(r.closeup) || (r.closeup as number) < 1) {
+      return fail('closeup is a changed piece number from the report, 1 or more')
+    }
+    closeup = r.closeup as number
+  }
+  return { request: { view: view as ViewName | 'auto', section, box, closeup }, complete: true, error: null }
 }
 
 /** The caption the model gets with the render — also what the transcript shows. */
 export function describeView(request: ViewRequest): string {
-  const parts = [`${request.view.replace('_', ' ')} view`]
+  if (request.closeup !== null) {
+    return `close-up of changed piece ${request.closeup} from its best side: the previous version in green, this version in magenta, unchanged material in grey`
+  }
+  const parts = [request.view === 'auto' ? 'view from the best side' : `${request.view.replace('_', ' ')} view`]
   if (request.section) parts.push(`cut at ${request.section.axis} = ${request.section.at} mm, nearer half removed`)
   if (request.box) parts.push(`framed on [${request.box.min.join(', ')}] to [${request.box.max.join(', ')}]`)
   return parts.join(', ')

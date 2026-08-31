@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { parseOff } from './off'
+import { encodeOff, parseOff } from './off'
 
 const TETRA = `OFF
 4 4 0
@@ -92,4 +92,11 @@ test('keeps per-face colour, defaulting the faces that had none', () => {
 
 test('reports no colours at all when no face had one', () => {
   expect(parseOff(TETRA).colors).toBeUndefined()
+})
+
+test('encodeOff round-trips positions and triangles', () => {
+  const src = 'OFF\n4 2 0\n0 0 0\n1 0 0\n0 1 0\n0 0 1.5\n3 0 1 2\n3 0 2 3\n'
+  const again = parseOff(new TextDecoder().decode(encodeOff(parseOff(src))))
+  expect([...again.positions]).toEqual([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1.5])
+  expect([...again.indices]).toEqual([0, 1, 2, 0, 2, 3])
 })

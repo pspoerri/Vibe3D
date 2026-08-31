@@ -408,6 +408,62 @@ The "one round per turn" and "no model-invoked tools" bullets above are supersed
   re-attached on the next call. Before, only edits did; a view-only reply would have left the
   model with nothing to edit.
 
+### Revised 2026-08-31: per-part inspection
+
+A debug report of an A320neo build shaped this revision: six rounds spent on `parts: 3`
+with four wrong guesses at which body was extra, then a "add wheels" turn whose render was
+the whole airplane in green and magenta because `z_ground` had moved it 4.6 mm.
+
+- **Voids.** `meshStats` sorts shells into solids and voids by the sign of each shell's
+  volume — inward faces enclose air. `parts` counts solids only; `partLabels` gives a void
+  the label of the solid whose box holds it, so click-to-select numbering never sees one.
+  The report carries `per_part` (box and volume per solid, in PART order) and `voids`. The
+  A320's third "part" was the stand socket, a pocket cut entirely inside the belly fairing:
+  a count could not name it, and the model guessed at the pylon, the nameplate and the
+  stand arm instead.
+- **App-graded checks.** `meshChecks` settles what the system prompt already demands —
+  rests on Z=0 per part, solids against the PART sections (naming the smallest stray piece,
+  or the fused pair), voids with their holder, watertight, genus and its change — and
+  `verifyMessage` lists them as "Checks the app ran", says they are settled, and asks for
+  questions about the *request*, at least one that only the render can answer. Corrections
+  are asked for as `openscad-edit` first: the log resent 450 lines for each of five
+  one-line fixes.
+- **Rounds diff against the previous round**, not the turn's start (`inspect`'s `prior`):
+  the first round measures against the part on screen, every later one against the round
+  before it, so a correction's render shows the correction. A fresh document's first turn
+  had no diff at all for six rounds.
+- **Moves are cancelled per part** (`partMoves`, `translateParts`). Each solid is paired by
+  index with the previous mesh's; the candidate translations are the shifts of the two
+  boxes' corners; the one most vertices land exactly on wins, staying put wins ties, and a
+  winner needs more than half. The previous solid is translated by it — and snapped onto
+  the new mesh's exact float32 positions, because the kernel rounds its own move
+  differently and a 1e-5 mm mismatch is a sliver the boolean keeps — before the booleans
+  and the render. `per_part[i].moved_mm` carries the vector; `bbox_min_shift_mm` is gone.
+  This is the known trap above solved on the mesh rather than the source: `z_ground = 17`
+  moved the airplane through a variable that no diff of the PART section would show.
+- **Slivers** — two compiles triangulating the same face differently — have no volume but
+  a box as big as the face they lie on. The change box ignores diff shells under
+  0.01 mm³; the volumes still count them. Verified on the kernel: a same-source diff is
+  empty, and a lifted body with a wheel added diffs to the wheel alone.
+- **A close-up pane.** When the largest changed piece is under half its part's size, the
+  composite gets a second pane framed on that piece (lerp 0.1 toward the change box), from
+  the side of its part it sits on — a wheel under a wing is seen from below. Both panes
+  share one 1536×768 sheet, so the wire and the transcript still carry one image per
+  round; the legend (`legendFor`) names the panes and the side, and rides with the render
+  decision rather than the prompt.
+- **Close-ups on offer, and the ideal rotation as an interface.** `changedPieces` lists every
+  shell of the diff (slivers excluded), largest first, each with `idealView(box, host)` — the
+  octant of its part the piece sits in, as a direction and a name ("front-right, below").
+  The report carries them as `changed_pieces` (at most 8); the close-up pane shows piece 1;
+  `Inspection.closeups` hands the consumer every piece with a `render()` for its composite
+  close-up, and the verification message offers them. The view request grew two fields:
+  `"closeup": N` renders piece N from the last report, and `"view": "auto"` lets the app
+  pick the side for any box — `hostOf` finds the part the box sits on, `idealView` the
+  side — so the model never has to guess a rotation from coordinates. `renderComposite`
+  and `renderView` take a direction override for both.
+- **Not built:** fonts — the wasm kernel ships none, so `text()` renders nothing (the log's
+  engraved nameplate was byte-identical to its embossed predecessor); a follow-up.
+
 ---
 
 ## 7. State, time travel, persistence

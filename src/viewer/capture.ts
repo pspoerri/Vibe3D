@@ -5,7 +5,7 @@ import {
   WebGLRenderer,
 } from 'three'
 import type { Mesh } from '../kernel/off'
-import type { ViewRequest } from '../chat/views'
+import type { ViewName, ViewRequest } from '../chat/views'
 import { VIEW_DIRECTIONS, viewUp, type Vec3 } from './camera'
 import type { Box } from './inspect'
 
@@ -22,7 +22,7 @@ const OPACITY = 0.5
 const EDGE = 0x202020
 const ISO = new Vector3(1, -1, 1).normalize()
 /** The named views the model can ask for: the cube's, plus the one it lacks. */
-const DIRECTIONS: Record<ViewRequest['view'], Vec3> = { ...VIEW_DIRECTIONS, iso_back: [-1, 1, 1] }
+const DIRECTIONS: Record<ViewName, Vec3> = { ...VIEW_DIRECTIONS, iso_back: [-1, 1, 1] }
 const AXIS: Record<'x' | 'y' | 'z', Vec3> = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }
 /** A cut face is the interior: flat and darker, so it never reads as an outer wall. */
 const SHELL = 0xd8d8d0
@@ -85,6 +85,12 @@ function frameCamera(frame: Box, direction = ISO, up: Vec3 = [0, 0, 1]): Orthogr
   return camera
 }
 
+/** The close-up pane of a composite: a tight frame, seen from a chosen side. */
+export interface Detail {
+  frame: Box
+  direction: Vec3
+}
+
 /**
  * design.md §6.2: before in green, after in magenta, multiplied, no depth —
  * so overlap is grey and added / removed material keeps its colour — plus a
@@ -92,7 +98,13 @@ function frameCamera(frame: Box, direction = ISO, up: Vec3 = [0, 0, 1]): Orthogr
  * pass of both parts, so hidden creases stay hidden: dense line work is where
  * these models fail hardest.
  */
-export function renderComposite(before: Mesh | null, after: Mesh, frame: Box): string | null {
+export function renderComposite(
+  before: Mesh | null,
+  after: Mesh,
+  frame: Box,
+  detail: Detail | null = null,
+  direction: Vec3 = [1, -1, 1],
+): string | null {
   const gl = acquire()
   if (!gl) return null
   const scene = new Scene()
@@ -128,8 +140,24 @@ export function renderComposite(before: Mesh | null, after: Mesh, frame: Box): s
   }
   if (before) add(before, BEFORE)
   add(after, AFTER)
-  gl.render(scene, frameCamera(frame))
-  const url = gl.domElement.toDataURL('image/jpeg', 0.85)
+  gl.render(scene, frameCamera(frame, new Vector3(...direction).normalize()))
+  // Two panes on one sheet: the context and the close-up, side by side, so
+  // the transcript and the wire still carry one image per round.
+  const sheet = detail ? document.createElement('canvas') : null
+  const ctx = sheet?.getContext('2d') ?? null
+  let url: string
+  if (detail && sheet && ctx) {
+    sheet.width = SIZE * 2
+    sheet.height = SIZE
+    ctx.drawImage(gl.domElement, 0, 0)
+    gl.render(scene, frameCamera(detail.frame, new Vector3(...detail.direction).normalize()))
+    ctx.drawImage(gl.domElement, SIZE, 0)
+    ctx.fillStyle = '#202020'
+    ctx.fillRect(SIZE - 2, 0, 4, SIZE)
+    url = sheet.toDataURL('image/jpeg', 0.85)
+  } else {
+    url = gl.domElement.toDataURL('image/jpeg', 0.85)
+  }
   for (const item of owned) item.dispose()
   return url
 }
@@ -146,10 +174,14 @@ export function renderView(
   request: ViewRequest,
   model: Box,
   ghost: Mesh | null = null,
+  /** Where an `auto` view looks from — the caller's idealView. Without it, auto is iso. */
+  from: Vec3 | null = null,
 ): string | null {
   const gl = acquire()
   if (!gl) return null
-  const direction = new Vector3(...DIRECTIONS[request.view]).normalize()
+  const direction = new Vector3(
+    ...(from ?? (request.view === 'auto' ? DIRECTIONS.iso : DIRECTIONS[request.view])),
+  ).normalize()
   const up = request.view === 'top' || request.view === 'bottom' ? viewUp(request.view) : [0, 0, 1] as const
   const planes: Plane[] = []
   if (request.section) {

@@ -30,10 +30,17 @@ export interface TurnDeps {
   readonly compile: (source: string) => Promise<CompileResult>
   /**
    * The verification round's evidence for a source that compiled: the report,
-   * and the render where the model can read one. Optional — absent means no
-   * round, which is the shape the pre-M4 tests exercise.
+   * and the render where the model can read one. `prior` is the OFF of the
+   * round before this one in the same turn — what the diff is measured
+   * against — or null on the turn's first round, which measures against the
+   * part on screen. Optional — absent means no round, which is the shape the
+   * pre-M4 tests exercise.
    */
-  readonly inspect?: (source: string, off: Uint8Array) => Promise<{ text: string; image?: string }>
+  readonly inspect?: (
+    source: string,
+    off: Uint8Array,
+    prior: Uint8Array | null,
+  ) => Promise<{ text: string; image?: string }>
   /**
    * A render the model asked for, of the latest source that compiled this turn
    * — or, when `off` is null, of the part on screen. null: nothing to show.
@@ -319,6 +326,9 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         stderr: stderrForModel(result.stderrRaw),
       })
       if (result.ok) {
+        // Each round diffs against the one before it, so a correction's
+        // render shows the correction — not the whole turn again.
+        const prior = verified?.result.data ?? null
         verified = { source: candidate, result }
         // Each candidate gets its own repairs: a turn of several looks would
         // otherwise run out of them on the third correction.
@@ -329,7 +339,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         if (!deps.inspect || !looks) return { status: 'committed', source: candidate, result }
         rounds++
         phase('measuring the part')
-        const evidence = await deps.inspect(candidate, result.data)
+        const evidence = await deps.inspect(candidate, result.data, prior)
         if (deps.signal.aborted) return { status: 'stopped' }
         const checks = issues.length > 0 ? `\n\nSource checks:\n${issues.map((i) => `- ${i}`).join('\n')}` : ''
         emit({

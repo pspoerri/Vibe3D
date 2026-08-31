@@ -53,8 +53,22 @@ test('the image clause composes with imperial rather than replacing it', () => {
 })
 
 test('the verification message wraps the report in structured questions, never a bare look', () => {
-  const text = verifyMessage('{ "volume_mm3": 1 }', true)
+  const text = verifyMessage(
+    '{ "volume_mm3": 1 }',
+    ['rests on Z=0: yes', 'closed void: NO — 8 mm³'],
+    'The image: green before, magenta after.',
+  )
   expect(text).toContain('{ "volume_mm3": 1 }')
+  expect(text).toContain('The image: green before, magenta after. Read every dimension')
+  expect(text).toMatch(/moved_mm/)
+  expect(text).not.toMatch(/closeup/)
+  const offered = verifyMessage('{}', [], 'legend', true, 3)
+  expect(offered).toMatch(/piece N \(1 to 3\) reply with ONLY a ```view block whose body is \{"closeup": N\}/)
+  expect(verifyMessage('{}', [], 'legend', false, 3)).not.toMatch(/closeup/)
+  expect(text).toContain('Checks the app ran:\n- rests on Z=0: yes\n- closed void: NO — 8 mm³')
+  expect(text).toMatch(/do not re-ask them/)
+  expect(text).toMatch(/only the render can answer/)
+  expect(text).toMatch(/openscad-edit blocks for a change of a few lines/)
   expect(text).toContain('green')
   expect(text).toContain('magenta')
   expect(text).toMatch(/Yes, No or Unclear/)
@@ -64,8 +78,10 @@ test('the verification message wraps the report in structured questions, never a
 })
 
 test('without a render the message says so and asks the same questions', () => {
-  const text = verifyMessage('{}', false)
+  const text = verifyMessage('{}', [], null)
   expect(text).toContain('No render is attached')
   expect(text).not.toContain('magenta')
+  expect(text).not.toContain('Checks the app ran')
+  expect(text).not.toMatch(/only the render can answer/)
   expect(text).toMatch(/Yes, No or Unclear/)
 })

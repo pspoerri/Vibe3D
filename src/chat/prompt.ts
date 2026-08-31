@@ -207,12 +207,15 @@ const LOOK_CLAUSE = `## Looking at the part
 You may ask to see the part, before or after you change it. Reply with ONLY a
 \`\`\`view block — no source beside it — whose body is one JSON object:
     \`\`\`view
-    {"view": "front", "section": {"axis": "z", "at": 12}, "box": null}
+    {"view": "front", "section": {"axis": "z", "at": 12}, "box": null, "closeup": null}
     \`\`\`
-view: iso, iso_back, front, back, left, right, top or bottom. section: null, or a
+view: iso, iso_back, front, back, left, right, top or bottom — or auto, and the app
+picks the side the box (or the whole part) is best seen from. section: null, or a
 cut at one coordinate on x, y or z — the half nearer the camera is removed, so the
 inside shows. box: null for the whole part, or {"min": [x, y, z], "max": [x, y, z]}
-in millimetres to frame a detail. The render arrives in the next message.
+in millimetres to frame a detail. closeup: null, or a number from the last report's
+changed_pieces, for a green/magenta close-up of that piece from its best side — the
+other fields are then ignored. The render arrives in the next message.
 After a source compiles you get a measured report and a render, and you may
 answer with a correction, another view request, or one sentence when the part is
 right. Ask for a view only when it changes what you will do next: every look is a
@@ -247,21 +250,38 @@ figure they asked for, with the millimetre value in brackets.`
  * 2–5 binary questions derived from the request, answered with reasoning,
  * "Unclear" permitted, then a correction or a confirmation. The bare "does
  * this look right" is the measured −20% regression and never goes out.
+ *
+ * `checks` are the app's own verdicts (meshChecks): Z=0, solid count against
+ * the PART sections, voids, watertightness, genus. Graded here so the model
+ * spends its questions on the request rather than re-deriving them — and,
+ * for the void, so it learns which shell the bare count could never name.
  */
-export function verifyMessage(reportJson: string, withImage: boolean, looks = false): string {
-  const legend = withImage
-    ? 'The image is one orthographic render framed on the changed region: the previous version in green, this version in magenta, unchanged material in grey, with crease outlines. It shows layout and proportion only.'
-    : 'No render is attached; work from the numbers.'
+export function verifyMessage(
+  reportJson: string,
+  checks: readonly string[],
+  /** What the attached image shows (inspect's legendFor), or null when none is attached. */
+  legend: string | null,
+  looks = false,
+  /** How many changed pieces a {"closeup": N} request can name this round. */
+  closeups = 0,
+): string {
+  const withImage = legend !== null
+  const offer =
+    looks && closeups > 0
+      ? ` changed_pieces lists what changed, largest first, each with the side it is best seen from; for a close-up of piece N (1 to ${closeups}) reply with ONLY a \`\`\`view block whose body is {"closeup": N}.`
+      : ''
+  const checkList = checks.length > 0 ? `Checks the app ran:\n${checks.map((c) => `- ${c}`).join('\n')}\n\n` : ''
+  const fromRender = withImage ? ' — at least one that only the render can answer' : ''
   return `The source compiled. Measured from the mesh (millimetres, mm³):
 
 ${reportJson}
 
-${legend} Read every dimension from the report, never from a picture. If bbox_min_shift_mm is not zero the whole part moved, and the added and removed volumes include that move.
+${checkList}${legend ?? 'No render is attached; work from the numbers.'} Read every dimension from the report, never from a picture. per_part lists every solid in PART order with its own box and volume; a moved_mm entry means that part was translated whole by that vector, and the move is already taken out of the diff, so the volumes and the render show only what changed in shape.${offer}
 
 Check the part against the request:
-1. Write 2 to 5 yes/no questions the request implies — about dimensions, features, and where they sit.
+1. The checks above are settled: do not re-ask them, and fix every one marked NO. Write 2 to 5 yes/no questions the REQUEST implies — the features it named, their sizes, and where they sit relative to each other${fromRender}.
 2. Answer each Yes, No or Unclear, with one line of reasoning from the report or the render.
-3. If any answer is No, reply with the correction — a complete source, or openscad-part blocks for the parts that change.
+3. If any check or answer is No, reply with the correction: openscad-edit blocks for a change of a few lines, openscad-part blocks for whole parts or modules, the complete source only when most of the file changes.
    If every answer is Yes or Unclear, reply with one sentence and NO code block — the source on screen stays as it is.${
      looks
        ? '\n   If an answer is Unclear because this angle cannot show it, reply with ONLY a ```view block asking for the angle or cut that would.'

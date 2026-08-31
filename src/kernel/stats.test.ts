@@ -38,6 +38,14 @@ function twoBoxes(): string {
   return off([...a.v, ...b.v], [...a.f, ...b.f.map((t) => t.map((i) => i + a.v.length))])
 }
 
+/** A 10 mm box with a 2 mm cavity inside it: the cavity's faces point inward. */
+function boxWithVoid(): string {
+  const a = boxLists(10, 10, 10)
+  const b = boxLists(2, 2, 2, [4, 4, 4])
+  const inward = b.f.map((t) => [t[0]!, t[2]!, t[1]!])
+  return off([...a.v, ...b.v], [...a.f, ...inward.map((t) => t.map((i) => i + a.v.length))])
+}
+
 /** A coarse torus: an n×m grid of quads wrapping in both directions. Genus 1 by construction. */
 function torus(n = 8, m = 6): string {
   const v: number[][] = []
@@ -119,4 +127,29 @@ test('partLabels numbers each triangle by its part, in order of first appearance
   expect(count).toBe(2)
   expect([...labels]).toEqual([...Array(12).fill(0), ...Array(12).fill(1)])
   expect(partLabels(parseOff(box(1, 1, 1))).count).toBe(1)
+})
+
+test('a closed cavity is a void, not a part: it subtracts from the volume and keeps genus zero', () => {
+  const s = meshStats(parseOff(boxWithVoid()))
+  expect(s.parts).toBe(1)
+  expect(s.shells).toHaveLength(1)
+  expect(s.voids).toHaveLength(1)
+  expect(s.voids[0]).toMatchObject({ min: [4, 4, 4], max: [6, 6, 6], size: [2, 2, 2], volume: 8 })
+  expect(s.volume).toBe(992)
+  expect(s.genus).toBe(0)
+  expect(s.watertight).toBe(true)
+})
+
+test('shells carry each solid\'s box and volume in order of appearance', () => {
+  const s = meshStats(parseOff(twoBoxes()))
+  expect(s.shells.map((sh) => [sh.min, sh.volume])).toEqual([
+    [[0, 0, 0], 1000],
+    [[20, 0, 0], 1000],
+  ])
+})
+
+test('a void takes its holder\'s label, so a click never sees a part number the source lacks', () => {
+  const { labels, count } = partLabels(parseOff(boxWithVoid()))
+  expect(count).toBe(1)
+  expect(new Set(labels)).toEqual(new Set([0]))
 })

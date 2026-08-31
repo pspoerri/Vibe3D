@@ -103,3 +103,19 @@ export function parseOff(text: string): Mesh {
     ...(coloured && { colors: Uint8Array.from(colors) }),
   }
 }
+
+/**
+ * The inverse of parseOff, positions and triangles only: what the diff
+ * kernel imports after a part has been moved back into place. Colours are
+ * not carried — a boolean has no use for them.
+ */
+export function encodeOff(mesh: Mesh): Uint8Array {
+  const { positions: p, indices } = mesh
+  const lines: string[] = ['OFF', `${mesh.vertexCount} ${mesh.triangleCount} 0`]
+  for (let v = 0; v < mesh.vertexCount; v++) lines.push(`${p[v * 3]} ${p[v * 3 + 1]} ${p[v * 3 + 2]}`)
+  for (let t = 0; t < mesh.triangleCount; t++) {
+    lines.push(`3 ${indices[t * 3]} ${indices[t * 3 + 1]} ${indices[t * 3 + 2]}`)
+  }
+  lines.push('')
+  return new TextEncoder().encode(lines.join('\n'))
+}

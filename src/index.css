@@ -249,7 +249,7 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
 /* A verification round: the composite the model saw, and the report behind a toggle. */
 .chat-inspect { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
 .chat-inspect img {
-  width: 192px; height: 192px; display: block; background: #fff;
+  height: 192px; width: auto; max-width: 100%; display: block; background: #fff;
   border: 1px solid #dfe2db; border-radius: 2px;
 }
 .chat-inspect summary { cursor: pointer; list-style: none; }
