@@ -15,6 +15,27 @@ test('compiles the starter model and reports its size', async ({ page }) => {
   expect(errors).toEqual([])
 })
 
+test('opens the potted plant example and compiles it', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', (e) => errors.push(e.message))
+
+  await page.goto('/')
+  await page.getByRole('button', { name: 'A potted plant' }).click({ timeout: 90_000 })
+  await expect(page.locator('.menubar-doc')).toHaveText('A potted plant')
+  // Hulls of spheres at $fn = 48: the slowest example by far, so the long wait.
+  await expect(page.locator('.tag', { hasText: 'mm' })).toBeVisible({ timeout: 180_000 })
+  await expect(page.locator('.error')).toBeHidden()
+  expect(errors).toEqual([])
+})
+
+test('the brand in the menu bar goes back to the start window', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('.start-open').first().click({ timeout: 90_000 })
+  await expect(page.locator('.start-card')).toBeHidden()
+  await page.getByRole('button', { name: 'Vibe3D' }).click()
+  await expect(page.locator('.start-card')).toBeVisible()
+})
+
 test('surfaces a compile error and recovers from it', async ({ page }) => {
   await page.goto('/')
   await page.locator('.start-open').first().click({ timeout: 90_000 })

@@ -99,8 +99,8 @@ FS.writeFile('/in.scad', source)
   → FS.readFile('/out.off')  → parse → THREE.BufferGeometry
 ```
 
-OFF rather than STL: indexed (so smaller), and it carries per-face colour indices if we ever
-want multi-material.
+OFF rather than STL: indexed (so smaller), and it carries per-face colour — `r g b` after the
+indices, on exactly the faces that had a `color()` — which the viewport shows as vertex colours.
 
 **`callMain` runs `main()` to process exit, so a module instance is single-use.** Verified:
 a second `callMain` on a live instance throws. So: one fresh Worker per compile, and
@@ -152,6 +152,9 @@ src/
     project.ts           the .json project file: export, import, schemaVersion (§7)
     store.ts             idb-keyval, one named database, atomic write (§7)
   export/download.ts     bytes → file download
+  examples/
+    index.ts             EXAMPLES for the start window + STARTER; each .scad imported ?raw
+    *.scad               the mounting plate, the potted plant (colour() per part)
 ```
 
 **No state library.** §2 once implied `zustand`; plain React state carried Milestone 2, and

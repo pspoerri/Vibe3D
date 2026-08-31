@@ -302,15 +302,16 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
   display: flex; align-items: center; gap: 4px; padding: 6px 10px;
   border-bottom: 1px solid #c8ccc4; background: #e6e8e2;
 }
-.brand {
-  font: 700 12px/1 system-ui, sans-serif; letter-spacing: .02em; color: #16181c;
-  margin-right: 8px;
-}
 .menubar button {
   font: 500 11px/1 system-ui, sans-serif; padding: 6px 9px; cursor: pointer; color: #414741;
   background: transparent; border: 1px solid transparent; border-radius: 2px;
 }
 .menubar button:hover:not(:disabled) { background: #fff; border-color: #c8ccc4; color: #16181c; }
+.menubar button.brand {
+  font: 700 12px/1 system-ui, sans-serif; letter-spacing: .02em; color: #16181c;
+  margin-right: 8px; padding-left: 0; background: none; border-color: transparent;
+}
+.menubar button.brand:hover:not(:disabled) { background: none; border-color: transparent; color: #b8860b; }
 .menubar button:disabled { opacity: .35; cursor: default; }
 .menubar button:focus-visible { outline: 2px solid #b8860b; outline-offset: 1px; }
 .menubar-doc {
@@ -329,7 +330,11 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
 /* Optically centred: dead centre reads low when the card is short. */
 .start-card { margin-bottom: 6vh; }
 .start-card { width: min(560px, 100%); max-height: 100%; display: flex; flex-direction: column; }
-.start-card h1 { margin: 0; font: 700 26px/1.1 system-ui, sans-serif; letter-spacing: -.01em; }
+.start-card h1 {
+  display: flex; align-items: flex-end; gap: 16px; margin: 0;
+  font: 700 26px/1.1 system-ui, sans-serif; letter-spacing: -.01em;
+}
+.start-icon { height: 72px; width: 72px; }
 .start-tag { margin: 8px 0 22px; max-width: 46ch; font: 13px/1.55 system-ui, sans-serif; color: #6a706a; }
 
 .start-list { list-style: none; margin: 0 0 14px; padding: 0; overflow-y: auto; }
@@ -357,6 +362,10 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
   background: #fff; border: 1px solid #b8860b; border-radius: 2px;
 }
 .start-new:hover { background: #faf3e0; }
+.start-examples {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 14px 0 0;
+  font: 13px/1.4 system-ui, sans-serif; color: #6a706a;
+}
 .start-open:focus-visible, .start-del:focus-visible, .start-new:focus-visible {
   outline: 2px solid #b8860b; outline-offset: 1px;
 }

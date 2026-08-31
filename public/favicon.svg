@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- the potted plant example, flattened -->
+  <path d="M10 56 h44 l-3 5 H13 z" fill="#8f4a2a"/>
+  <path d="M17 32 h30 l-4 25 H21 z" fill="#c9683a"/>
+  <path d="M17 32 h30 v4 H17 z" fill="#a8512b"/>
+  <ellipse cx="32" cy="33" rx="13" ry="3" fill="#5b3a23"/>
+  <path d="M32 33 c-2 -8 3 -12 1 -21" fill="none" stroke="#6b8e23" stroke-width="3" stroke-linecap="round"/>
+  <path d="M33 12 c8 -6 14 -2 16 4 c-7 3 -13 1 -16 -4 z" fill="#3f8a35"/>
+  <path d="M33 12 c-8 -8 -15 -4 -17 2 c7 4 13 3 17 -2 z" fill="#5aa64a"/>
+  <path d="M33 12 c0 -8 5 -12 10 -12 c-1 8 -5 12 -10 12 z" fill="#4c9a3f"/>
+</svg>

@@ -11,29 +11,15 @@ import {
   formatLength, formatVolume, lengthLabel, loadUnits, saveUnits, volumeLabel,
 } from './state/units'
 import {
-  commitEdit, commitTurn, currentDoc, deleteDoc, headVersion, nameFromFirstPrompt, newDoc,
+  commitEdit, commitTurn, currentDoc, deleteDoc, headVersion, nameFromFirstPrompt,
+  nameFromFirstTurn, newDoc,
   renameDoc, restoreVersion, reviveSession, saveVersion, selectDoc, setChat, undoVersion,
-  updateSource, UNTITLED, type Session,
+  suggestName, updateSource, UNTITLED, type Session,
 } from './state/documents'
 import { exportProject, importProject } from './state/project'
 import { loadAll, persistRequested, saveSession } from './state/store'
+import { EXAMPLES, STARTER } from './examples'
 
-const STARTER = `// A mounting plate. Drag the numbers, or edit freely.
-$fn = 64;
-
-plate_x = 60;  // [20:120]
-plate_y = 40;  // [20:120]
-plate_z = 3;   // [1:0.5:10]
-hole_d  = 5;   // [2:0.5:12]
-inset   = 6;   // [3:20]
-
-difference() {
-  cube([plate_x, plate_y, plate_z]);
-  for (x = [inset, plate_x - inset], y = [inset, plate_y - inset])
-    translate([x, y, -1])
-      cylinder(h = plate_z + 2, d = hole_d);
-}
-`
 
 const DEBOUNCE_MS = 600
 /** A 600 ms slider preview is not a preview. */
@@ -272,7 +258,10 @@ export function App() {
           session={session}
           durable={durable}
           onOpen={(id) => {
-            setSession(selectDoc(session, id))
+            // Functional, because "New document" and the examples create the
+            // document and open it in the same click: the render's `session`
+            // does not have it yet, and selectDoc on that would drop it.
+            setSession((s) => (s ? selectDoc(s, id) : s))
             setFitToken((n) => n + 1)
             setOpen(true)
           }}
@@ -370,7 +359,9 @@ export function App() {
             // A preview compile still in flight would land on top of this and
             // put a stale mesh under the new source.
             compiler.cancel()
-            setSession((s) => (s ? commitTurn(s, next, label, result.ok, Date.now()) : s))
+            setSession((s) =>
+              s ? nameFromFirstTurn(commitTurn(s, next, label, result.ok, Date.now()), next) : s,
+            )
             applyCompiled(compileKey(next, NO_DEFINES), result)
             if (result.ok) setBefore(result.data)
             setFitToken((n) => n + 1)
@@ -434,7 +425,9 @@ function MenuBar({
 
   return (
     <div className="menubar">
-      <span className="brand">Vibe3D</span>
+      <button type="button" className="brand" title="Back to the start window" onClick={onOpen} disabled={!session}>
+        Vibe3D
+      </button>
       <button
         type="button"
         disabled={!session}
@@ -565,11 +558,19 @@ function StartWindow({
   onChange: (next: Session) => void
 }) {
   const rows = [...session.docs].sort((a, b) => b.updatedAt - a.updatedAt)
+  const create = (name: string, source: string): void => {
+    const id = crypto.randomUUID()
+    onChange({ docs: [...session.docs, newDoc(name, source, id, Date.now())], currentId: id })
+    onOpen(id)
+  }
 
   return (
     <div className="start">
       <div className="start-card">
-        <h1>Vibe3D</h1>
+        <h1>
+          Vibe3D
+          <img className="start-icon" src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" />
+        </h1>
         <p className="start-tag">
           Vibe 3D Models: Bring your own tokens. Leverages your LLM along with OpenSCAD to build
           your ideas into a 3D Model.
@@ -605,20 +606,24 @@ function StartWindow({
           </p>
         )}
 
-        <button
-          type="button"
-          className="start-new"
-          onClick={() => {
-            const id = crypto.randomUUID()
-            onChange({
-              docs: [...session.docs, newDoc(UNTITLED, '', id, Date.now())],
-              currentId: id,
-            })
-            onOpen(id)
-          }}
-        >
+        <button type="button" className="start-new" onClick={() => create(UNTITLED, '')}>
           New document
         </button>
+        <p className="start-examples">
+          Or start from an example:
+          {EXAMPLES.map((ex) => (
+            <button
+              type="button"
+              key={ex.name}
+              className="start-new"
+              onClick={() =>
+                create(suggestName(ex.source, session.docs.map((d) => d.name)), ex.source)
+              }
+            >
+              {ex.name}
+            </button>
+          ))}
+        </p>
       </div>
     </div>
   )
