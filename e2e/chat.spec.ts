@@ -49,7 +49,7 @@ async function seedKey(page: Page): Promise<void> {
   )
 }
 
-/** Thinking is off by default — one call per message. Looks need it on. */
+/** A model with no stored level thinks at high. Off means one call per message. */
 async function seedThinking(page: Page, thinking = 'low'): Promise<void> {
   await page.addInitScript(
     (settings) => window.localStorage.setItem('vibe3d.settings', JSON.stringify(settings)),
@@ -237,6 +237,9 @@ test('a stopped turn discards the partial and restores the pre-turn document', a
 
 test('undo restores the document a committed turn replaced', async ({ page }) => {
   await seedKey(page)
+  // Off, or the default-high verification round keeps the editor readonly
+  // while this test presses undo.
+  await seedThinking(page, 'off')
   await page.route(CHAT_URL, (route) =>
     route.fulfill({
       status: 200,
@@ -1279,20 +1282,21 @@ test('switching the model applies to the meter and to the next request', async (
   await page.locator('.chat-meter button').first().click()
   const modelSelect = page.locator('.chat-settings select').nth(0)
   const thinkingSelect = page.locator('.chat-settings select').nth(1)
-  // Thinking is per model: low on Gemini must not follow us to Qwen.
+  // Thinking is per model: low on Gemini must not follow us to Qwen, which
+  // has no stored level and so sits at the default, high.
   await thinkingSelect.selectOption('low')
   await expect(page.locator('.chat-meter')).toContainText('google/gemini-3.7-flash · low')
   await modelSelect.selectOption('qwen/qwen3-coder')
   await expect(page.locator('.chat-meter')).toContainText('qwen/qwen3-coder')
   await expect(page.locator('.chat-meter')).not.toContainText('· low')
-  await expect(thinkingSelect).toHaveValue('off')
+  await expect(thinkingSelect).toHaveValue('high')
 
   await send(page, 'hello')
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
   expect(bodies).toHaveLength(1)
   const body = JSON.parse(bodies[0] ?? '{}') as { model: string; reasoning?: unknown }
   expect(body.model).toBe('qwen/qwen3-coder')
-  expect(body.reasoning).toBeUndefined()
+  expect(body.reasoning).toEqual({ effort: 'high' })
 
   // And Gemini still remembers its own level (the settings panel is still open).
   await modelSelect.selectOption('google/gemini-3.7-flash')
@@ -1305,6 +1309,8 @@ test('copy puts a debug report on the clipboard: settings, source, transcript �
   context,
 }) => {
   await seedKey(page)
+  // Off keeps the transcript to one round — this test is about the report.
+  await seedThinking(page, 'off')
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await page.route(CHAT_URL, (route) =>
     route.fulfill({ status: 200, contentType: 'text/event-stream', body: sseBody(fenced('cube([3, 3, 3]);')) }),
