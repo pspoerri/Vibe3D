@@ -278,33 +278,3 @@ async function loadModels(baseUrl: string): Promise<readonly ModelInfo[]> {
 export function contextLimit(models: readonly ModelInfo[], id: string): number {
   return models.find((model) => model.id === id)?.context_length ?? 0
 }
-
-/**
- * GET {baseUrl}/key — validates a pasted key at paste time instead of on the
- * first message. Advisory only, and it never blocks saving: a host that is not
- * OpenRouter need not serve /key at all, so anything other than a 200 means
- * "could not validate", never "invalid key".
- */
-export async function checkKey(
-  baseUrl: string,
-  key: string,
-): Promise<
-  { ok: true; limitRemaining: number | null; isFreeTier: boolean } | { ok: false; message: string }
-> {
-  try {
-    const response = await fetch(`${baseUrl}/key`, { headers: { Authorization: `Bearer ${key}` } })
-    if (!response.ok) return { ok: false, message: 'could not validate' }
-    const data = (
-      (await response.json()) as {
-        data?: { limit_remaining?: number | null; is_free_tier?: boolean }
-      } | null
-    )?.data
-    return {
-      ok: true,
-      limitRemaining: typeof data?.limit_remaining === 'number' ? data.limit_remaining : null,
-      isFreeTier: data?.is_free_tier === true,
-    }
-  } catch {
-    return { ok: false, message: 'could not validate' }
-  }
-}

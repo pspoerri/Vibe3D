@@ -4,13 +4,13 @@ export type Command =
   | { name: 'export'; format: 'binstl' | '3mf' }
   | { name: 'model'; id: string | null }
   | { name: 'key' }
+  | { name: 'undo' }
   | { name: 'unknown'; word: string }
 
 /**
  * A command is a leading slash glued to one whole word: `/ clear`, `//`, `1/2`
- * and `/usr/local/bin` are prose, and prose is what the model gets. `/undo` is
- * deliberately absent — it needs Milestone 3's version timeline, and a stub
- * that half-works is worse than an honest "unknown command".
+ * and `/usr/local/bin` are prose, and prose is what the model gets. `/undo`
+ * steps the document back one version (design.md §10).
  */
 const COMMAND = /^\/(\w+)(?:\s+(.*))?$/s
 
@@ -28,6 +28,8 @@ export function parseCommand(text: string): Command | null {
       return { name: 'compact' }
     case 'key':
       return { name: 'key' }
+    case 'undo':
+      return { name: 'undo' }
     case 'model':
       // Not lowercased: model ids are case-sensitive slugs.
       return { name: 'model', id: arg || null }

@@ -31,8 +31,8 @@ test('/export defaults to 3mf and accepts stl', () => {
 })
 
 test('an unrecognised slash word never reaches the model', () => {
-  // /undo is M3's; a stub that half-works is worse than an honest error.
-  expect(parseCommand('/undo')).toEqual({ name: 'unknown', word: 'undo' })
+  expect(parseCommand('/undo')).toEqual({ name: 'undo' })
+  expect(parseCommand('/UNDO now')).toEqual({ name: 'undo' })
   expect(parseCommand('/help me')).toEqual({ name: 'unknown', word: 'help' })
 })
 

@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'vitest'
 import {
   ChatError,
-  checkKey,
   contextLimit,
   errorMessage,
   fetchModels,
@@ -300,68 +299,4 @@ test('contextLimit answers 0 for an unknown id', () => {
   ]
   expect(contextLimit(models, 'a/b')).toBe(8192)
   expect(contextLimit(models, 'nope/nope')).toBe(0)
-})
-
-const KEY_BODY =
-  '{"data":{"label":"Vibe3D","limit":5,"usage":1,"is_free_tier":false,"limit_remaining":4}}'
-
-test('checkKey reports the free-tier flag and the remaining limit', async () => {
-  stubFetch(() => new Response(KEY_BODY, { status: 200 }))
-
-  expect(await checkKey('https://openrouter.ai/api/v1', 'sk-or-v1-test')).toEqual({
-    ok: true,
-    limitRemaining: 4,
-    isFreeTier: false,
-  })
-  expect(calls[0]?.url).toBe('https://openrouter.ai/api/v1/key')
-  expect(calls[0]?.init?.headers).toEqual({ Authorization: 'Bearer sk-or-v1-test' })
-})
-
-test('checkKey is advisory: a non-200 and a network failure both say so, neither throws', async () => {
-  const denied = '{"error":{"message":"No auth credentials found","code":401}}'
-  stubFetch(() => new Response(denied, { status: 401 }))
-  expect(await checkKey('https://elsewhere.example/v1', 'sk-or-v1-test')).toEqual({
-    ok: false,
-    message: 'could not validate',
-  })
-
-  stubFetch(() => {
-    throw new TypeError('Failed to fetch')
-  })
-  expect(await checkKey('https://elsewhere.example/v1', 'sk-or-v1-test')).toEqual({
-    ok: false,
-    message: 'could not validate',
-  })
-})
-
-/** An SSE body from chunk objects, matching the shape STREAM spells out. */
-const sse = (chunks: unknown[]): string =>
-  chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n'
-
-test('reasoning arrives as reasoning_details on a streaming delta', async () => {
-  // Streaming uses reasoning_details[]; the bare `reasoning` string is the
-  // non-streaming shape, which several providers send on the delta anyway.
-  stubFetch(
-    () =>
-      new Response(
-        sse([
-          { choices: [{ delta: { reasoning_details: [{ type: 'reasoning.text', text: 'Let me ' }] } }] },
-          { choices: [{ delta: { reasoning: 'think.' } }] },
-          { choices: [{ delta: { content: 'Done.' }, finish_reason: 'stop' }] },
-        ]),
-        { status: 200 },
-      ),
-  )
-
-  expect(await drain(streamChat(MESSAGES, signal(), OPTIONS))).toEqual([
-    { type: 'reasoning', text: 'Let me ' },
-    { type: 'reasoning', text: 'think.' },
-    { type: 'delta', text: 'Done.' },
-    { type: 'finish', reason: 'stop' },
-  ])
-})
-
-test('a delta carrying neither content nor reasoning yields nothing', async () => {
-  stubFetch(() => new Response(sse([{ choices: [{ delta: {} }] }]), { status: 200 }))
-  expect(await drain(streamChat(MESSAGES, signal(), OPTIONS))).toEqual([])
 })

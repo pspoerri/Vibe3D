@@ -1,31 +1,43 @@
 /**
- * Several OpenSCAD documents and which one is open, as plain data. Everything
- * that decides anything lives here rather than next to the IndexedDB calls,
- * because Node has no indexedDB and a rule that cannot be tested is a rule that
- * drifts (design.md §7).
+ * Several OpenSCAD documents, each with its version timeline and transcript,
+ * and which one is open — as plain data. Everything that decides anything lives
+ * here rather than next to the IndexedDB calls, because Node has no indexedDB
+ * and a rule that cannot be tested is a rule that drifts (design.md §7).
  */
+import { reviveLog, stripImages, type ChatEvent } from '../chat/log'
+
+export interface Version {
+  /** '1', '2', … in commit order — unique within the document, and what the picker shows. */
+  id: string
+  /** The head at commit time: the version this one was made from. null for the first. */
+  parentId: string | null
+  ts: number
+  /** The prompt that produced it, or EDIT / SAVED / 'new'. */
+  label: string
+  source: string
+  /** True once this exact source was seen to compile. False means unverified, not broken. */
+  compileOk: boolean
+}
+
 export interface Doc {
   /** A uuid. Opaque: nothing derives meaning from it, and nothing counts on it. */
   id: string
   name: string
-  source: string
-  createdAt: number
-  updatedAt: number
-  /**
-   * The document this one was forked from, or null for a first draft.
-   *
-   * design.md §7: a linear list whose nodes record their parent already IS the
-   * tree, so a "version" here is just another document that remembers where it
-   * came from. No separate timeline, no separate storage, and the thing the
-   * user actually asked to keep — the source — is recoverable by opening it.
-   */
-  parentId: string | null
   /**
    * The name is settled — either the user typed it or a prompt produced it — so
    * nothing auto-names over it again. A name merely derived from the source is
    * a placeholder and carries no flag.
    */
   named?: true
+  createdAt: number
+  updatedAt: number
+  /** The working copy — what the editor holds. Differs from the head only by uncommitted edits. */
+  source: string
+  /** Append-only, oldest first. Restore moves `head`; nothing is ever removed. */
+  versions: Version[]
+  head: string
+  /** The transcript, images stripped (design.md §9). */
+  chat: ChatEvent[]
 }
 
 export interface Session {
@@ -34,14 +46,14 @@ export interface Session {
   currentId: string
 }
 
-export function newDoc(
-  name: string,
-  source: string,
-  id: string,
-  now: number,
-  parentId: string | null = null,
-): Doc {
-  return { id, name, source, createdAt: now, updatedAt: now, parentId }
+export const EDIT = 'edit'
+export const SAVED = 'saved'
+const NEW = 'new'
+const LABEL_MAX = 48
+
+export function newDoc(name: string, source: string, id: string, now: number): Doc {
+  const first: Version = { id: '1', parentId: null, ts: now, label: NEW, source, compileOk: false }
+  return { id, name, source, createdAt: now, updatedAt: now, versions: [first], head: '1', chat: [] }
 }
 
 export function createSession(source: string, id: string, now: number): Session {
@@ -53,6 +65,32 @@ export function selectDoc(session: Session, id: string): Session {
   return session.docs.some((d) => d.id === id) ? { ...session, currentId: id } : session
 }
 
+/** Total: revive guarantees a version, and the synthetic fallback covers a hand-built doc. */
+export function headVersion(doc: Doc): Version {
+  return (
+    doc.versions.find((v) => v.id === doc.head) ??
+    doc.versions[doc.versions.length - 1] ?? {
+      id: '1',
+      parentId: null,
+      ts: doc.createdAt,
+      label: NEW,
+      source: doc.source,
+      compileOk: false,
+    }
+  )
+}
+
+/**
+ * Replaces the document — or adopts it: currentDoc can synthesise one for a
+ * session with no rows, and an id that matches nothing would otherwise have the
+ * map below silently discard what the user just typed.
+ */
+function withDoc(session: Session, doc: Doc): Session {
+  return session.docs.some((d) => d.id === doc.id)
+    ? { ...session, docs: session.docs.map((d) => (d.id === doc.id ? doc : d)) }
+    : { docs: [...session.docs, doc], currentId: doc.id }
+}
+
 /**
  * Returns the session itself when the text is unchanged: the editor re-reports
  * its content on every keystroke and every rehydrate, and a bumped timestamp
@@ -61,16 +99,7 @@ export function selectDoc(session: Session, id: string): Session {
 export function updateSource(session: Session, source: string, now: number): Session {
   const doc = currentDoc(session)
   if (doc.source === source) return session
-  // currentDoc can synthesise a document for a session with no rows, and that
-  // id matches nothing — so the map below would silently discard what the user
-  // just typed. Adopt it instead.
-  if (!session.docs.some((d) => d.id === doc.id)) {
-    return { docs: [...session.docs, { ...doc, source, updatedAt: now }], currentId: doc.id }
-  }
-  return {
-    ...session,
-    docs: session.docs.map((d) => (d.id === doc.id ? { ...d, source, updatedAt: now } : d)),
-  }
+  return withDoc(session, { ...doc, source, updatedAt: now })
 }
 
 /** Leaves `updatedAt` alone — it orders the list by work done, not by titling. */
@@ -103,105 +132,108 @@ export function nameFromFirstPrompt(session: Session, prompt: string): Session {
   }
 }
 
-/**
- * A new version: the same source, forked off the document it came from and
- * selected. Versions are documents, so the source of every one of them stays
- * openable — which is the whole recovery guarantee.
- */
-export function forkDoc(session: Session, id: string, newId: string, now: number): Session {
-  const from = session.docs.find((d) => d.id === id)
-  // A reused id is the duplicate-row bug by another route: a caller that
-  // memoises its uuid would give two documents one identity.
-  if (!from || session.docs.some((d) => d.id === newId)) return session
-  const copy: Doc = {
-    ...from,
-    id: newId,
-    // Deduped, and NOT inheriting `named`: three rows all reading "Bracket" is
-    // the exact failure the list exists to prevent, and inheriting the flag
-    // would make it permanent by stopping any later rename.
-    name: dedupe(from.name, session.docs.map((d) => d.name)),
-    named: undefined,
-    createdAt: now,
-    updatedAt: now,
-    parentId: from.id,
+// ---- versions (design.md §7) ------------------------------------------------
+
+/** The one place a version is minted. */
+function append(doc: Doc, source: string, label: string, compileOk: boolean, now: number): Doc {
+  const next: Version = {
+    id: String(doc.versions.length + 1),
+    parentId: headVersion(doc).id,
+    ts: now,
+    label: label.replace(/\s+/g, ' ').trim().slice(0, LABEL_MAX) || EDIT,
+    source,
+    compileOk,
   }
-  return { docs: [...session.docs, copy], currentId: newId }
+  return { ...doc, source, updatedAt: now, versions: [...doc.versions, next], head: next.id }
+}
+
+/** Uncommitted manual edits become a version before anything replaces them. */
+function keepEdits(doc: Doc, now: number): Doc {
+  return doc.source === headVersion(doc).source ? doc : append(doc, doc.source, EDIT, false, now)
+}
+
+/** (a) An LLM turn. Manual edits it overwrites are kept first, so the timeline loses nothing. */
+export function commitTurn(
+  session: Session,
+  source: string,
+  label: string,
+  compileOk: boolean,
+  now: number,
+): Session {
+  const doc = keepEdits(currentDoc(session), now)
+  if (headVersion(doc).source === source) return withDoc(session, { ...doc, source })
+  return withDoc(session, append(doc, source, label, compileOk, now))
 }
 
 /**
- * Documents grouped by the root they descend from, each family ordered oldest
- * first. Roots are memoised as the walk proceeds, so a long chain is not
- * re-walked per row: numbering a list one document at a time was O(n^3), which
- * is 130 ms at the 200 versions design.md §7 sizes for, on a path that runs on
- * every render.
+ * (c) A successful compile of manual edits. Consecutive edits fold into one
+ * version so the timeline reads as changes, not pauses in typing; the
+ * keystroke-level history is the editor's own.
+ *
+ * ponytail: folding means the intermediate states of one editing session are
+ * not versions. Append unconditionally if that ever matters — the picker copes.
  */
-function families(session: Session): Map<string, Doc[]> {
-  const byId = new Map(session.docs.map((d) => [d.id, d]))
-  const roots = new Map<string, string>()
+export function commitEdit(session: Session, source: string, now: number): Session {
+  const doc = currentDoc(session)
+  // A newer keystroke owns the next compile.
+  if (doc.source !== source) return session
+  const head = headVersion(doc)
+  if (head.source === source) {
+    if (head.compileOk) return session
+    return withDoc(session, {
+      ...doc,
+      versions: doc.versions.map((v) => (v === head ? { ...v, compileOk: true } : v)),
+    })
+  }
+  const last = doc.versions[doc.versions.length - 1]
+  if (last && last.id === head.id && last.label === EDIT) {
+    const folded = { ...last, source, ts: now, compileOk: true }
+    return withDoc(session, {
+      ...doc,
+      updatedAt: now,
+      versions: [...doc.versions.slice(0, -1), folded],
+    })
+  }
+  return withDoc(session, append(doc, source, EDIT, true, now))
+}
 
-  const rootOf = (doc: Doc): string => {
-    const path: Doc[] = []
-    const seen = new Set<string>()
-    let node = doc
-    for (;;) {
-      const known = roots.get(node.id)
-      if (known !== undefined) {
-        node = byId.get(known) ?? node
-        break
-      }
-      // `seen` guards a parentId cycle, which a corrupt store can hand us.
-      if (node.parentId === null || seen.has(node.id)) break
-      seen.add(node.id)
-      const parent = byId.get(node.parentId)
-      if (!parent) break
-      path.push(node)
-      node = parent
-    }
-    for (const step of path) roots.set(step.id, node.id)
-    roots.set(doc.id, node.id)
-    return node.id
-  }
-
-  const grouped = new Map<string, Doc[]>()
-  for (const doc of session.docs) {
-    const root = rootOf(doc)
-    const family = grouped.get(root)
-    if (family) family.push(doc)
-    else grouped.set(root, [doc])
-  }
-  for (const family of grouped.values()) {
-    // Ordered by creation rather than by tree depth, so two forks of the same
-    // parent get distinct numbers instead of two rows both labelled v2.
-    family.sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
-  }
-  return grouped
+/** (b) Explicit save: what is in the editor becomes a named point later edits will not fold into. */
+export function saveVersion(session: Session, now: number): Session {
+  const current = currentDoc(session)
+  const kept = keepEdits(current, now)
+  const head = headVersion(kept)
+  const doc =
+    head.label === EDIT
+      ? { ...kept, versions: kept.versions.map((v) => (v === head ? { ...v, label: SAVED } : v)) }
+      : kept
+  return doc === current ? session : withDoc(session, doc)
 }
 
 /**
- * Every document's version number in one pass — the shape the UI should call.
- * A document with no siblings is absent: it carries no version tag.
+ * Moves the head. The list is untouched, so nothing is ever lost — including
+ * edits made since it, which are kept as a version of their own first.
  */
-export function versionNumbers(session: Session): Map<string, number> {
-  const numbers = new Map<string, number>()
-  for (const family of families(session).values()) {
-    if (family.length < 2) continue
-    family.forEach((doc, i) => numbers.set(doc.id, i + 1))
-  }
-  return numbers
+export function restoreVersion(session: Session, versionId: string, now: number): Session {
+  const current = currentDoc(session)
+  const target = current.versions.find((v) => v.id === versionId)
+  if (!target || (target.id === current.head && target.source === current.source)) return session
+  const doc = keepEdits(current, now)
+  return withDoc(session, { ...doc, head: target.id, source: target.source, updatedAt: now })
 }
 
-/** Every document descending from the same root, oldest first. */
-export function versionFamily(session: Session, id: string): Doc[] {
-  for (const family of families(session).values()) {
-    if (family.some((d) => d.id === id)) return family
-  }
-  return []
+/** design.md §10: the same operation as picking the previous node. */
+export function undoVersion(session: Session, now: number): Session {
+  const doc = currentDoc(session)
+  const index = doc.versions.findIndex((v) => v.id === doc.head)
+  const previous = index > 0 ? doc.versions[index - 1] : undefined
+  return previous ? restoreVersion(session, previous.id, now) : session
 }
 
-/** 1-based position in the family, or 0 when the document stands alone. */
-export function versionNumber(session: Session, id: string): number {
-  return versionNumbers(session).get(id) ?? 0
+export function setChat(session: Session, chat: readonly ChatEvent[]): Session {
+  return withDoc(session, { ...currentDoc(session), chat: chat.map(stripImages) })
 }
+
+// ---- the list ----------------------------------------------------------------
 
 /**
  * `freshId` is spent only when the doomed document was the last one: an empty
@@ -211,15 +243,7 @@ export function versionNumber(session: Session, id: string): number {
 export function deleteDoc(session: Session, id: string, freshId: string, now: number): Session {
   const index = session.docs.findIndex((d) => d.id === id)
   if (index < 0) return session
-  const doomed = session.docs[index]!
-  // Children are reparented onto the grandparent. Without this, deleting a
-  // middle version leaves its children pointing at a document that no longer
-  // exists — every row loses its version tag, and revive rewrites that dangling
-  // parentId to null on the next load, so the lineage cannot be repaired even
-  // by restoring the deleted row.
-  const docs = session.docs
-    .filter((d) => d.id !== id)
-    .map((d) => (d.parentId === id ? { ...d, parentId: doomed.parentId } : d))
+  const docs = session.docs.filter((d) => d.id !== id)
   // The row that slid into the gap, else the one above it.
   const neighbour = docs[index] ?? docs[index - 1]
   if (!neighbour) return createSession('', freshId, now)
@@ -239,11 +263,21 @@ export function currentDoc(session: Session): Doc {
   )
 }
 
-function reviveDoc(raw: unknown, now: number, taken: string[] = []): Doc | null {
-  const d = raw as Partial<Doc> | null
+// ---- revive: the trust boundary ------------------------------------------------
+
+/**
+ * What comes back out of IndexedDB or a project file is whatever an older
+ * version of this app, a half-finished write or a corrupt store left there, so
+ * nothing about its shape is assumed and nothing here throws.
+ */
+export function reviveDoc(raw: unknown, now: number, taken: string[] = []): Doc | null {
+  const d = raw as Partial<Record<keyof Doc, unknown>> | null
   // id and source are the document; a row missing either has nothing to restore.
-  if (typeof d?.id !== 'string' || typeof d.source !== 'string') return null
+  if (!d || typeof d !== 'object' || typeof d.id !== 'string' || typeof d.source !== 'string') {
+    return null
+  }
   const updatedAt = typeof d.updatedAt === 'number' ? d.updatedAt : now
+  const createdAt = typeof d.createdAt === 'number' ? d.createdAt : updatedAt
   return {
     id: d.id,
     // Deduped against the rows already revived: recovery is exactly where the
@@ -253,21 +287,52 @@ function reviveDoc(raw: unknown, now: number, taken: string[] = []): Doc | null 
       taken,
     ),
     source: d.source,
-    createdAt: typeof d.createdAt === 'number' ? d.createdAt : updatedAt,
+    createdAt,
     updatedAt,
-    // A parentId naming a document that did not survive revive would strand the
-    // row outside every family, so only a resolvable one is kept — and that is
-    // checked by the caller, which is the only place the full list exists.
-    parentId: typeof d.parentId === 'string' ? d.parentId : null,
+    ...reviveVersions(d.versions, d.head, d.source, createdAt),
+    chat: reviveLog(d.chat),
     ...(d.named === true ? { named: true as const } : {}),
   }
 }
 
 /**
- * The trust boundary. What comes back out of IndexedDB is whatever an older
- * version of this app, a half-finished write or a corrupt store left there, so
- * nothing about its shape is assumed and nothing here throws.
- *
+ * Renumbered '1'..'n' so append() can mint the next id blind. A row written
+ * before versions existed becomes one SAVED version of its source — that is
+ * the whole migration (design.md §12).
+ */
+function reviveVersions(
+  raw: unknown,
+  rawHead: unknown,
+  source: string,
+  ts: number,
+): Pick<Doc, 'versions' | 'head'> {
+  const kept: { id: string; source: string; row: Partial<Record<keyof Version, unknown>> }[] = []
+  for (const item of Array.isArray(raw) ? raw : []) {
+    const row = item as Partial<Record<keyof Version, unknown>> | null
+    if (row && typeof row === 'object' && typeof row.id === 'string' && typeof row.source === 'string') {
+      kept.push({ id: row.id, source: row.source, row })
+    }
+  }
+  if (kept.length === 0) {
+    return { versions: [{ id: '1', parentId: null, ts, label: SAVED, source, compileOk: false }], head: '1' }
+  }
+  const renumbered = new Map(kept.map((v, i) => [v.id, String(i + 1)]))
+  const versions = kept.map(
+    ({ source, row }, i): Version => ({
+      id: String(i + 1),
+      parentId: typeof row.parentId === 'string' ? (renumbered.get(row.parentId) ?? null) : null,
+      ts: typeof row.ts === 'number' ? row.ts : ts,
+      label: typeof row.label === 'string' && row.label !== '' ? row.label : SAVED,
+      source,
+      compileOk: row.compileOk === true,
+    }),
+  )
+  const head =
+    (typeof rawHead === 'string' && renumbered.get(rawHead)) || versions[versions.length - 1]!.id
+  return { versions, head }
+}
+
+/**
  * Well-formed rows survive even when their neighbours do not, and a currentId
  * that no longer resolves is repaired rather than treated as fatal: throwing
  * away readable documents over a stale pointer is the one outcome worse than
@@ -289,14 +354,12 @@ export function reviveSession(
   const docs = [...new Map(parsed.map((doc) => [doc.id, doc])).values()]
   const first = docs[0]
   if (!first) return createSession(fallbackSource, id, now)
-  const ids = new Set(docs.map((d) => d.id))
-  // Drop a parent that did not survive: an unresolvable one would put the row
-  // in a family of its own while still claiming a lineage.
-  const linked = docs.map((d) => (d.parentId !== null && !ids.has(d.parentId) ? { ...d, parentId: null } : d))
   const wanted = s?.currentId
-  const found = typeof wanted === 'string' && ids.has(wanted)
-  return { docs: linked, currentId: found ? wanted : first.id }
+  const found = typeof wanted === 'string' && docs.some((d) => d.id === wanted)
+  return { docs, currentId: found ? wanted : first.id }
 }
+
+// ---- names ---------------------------------------------------------------------
 
 const MAX_NAME = 40
 export const UNTITLED = 'Untitled'
@@ -312,7 +375,7 @@ const LEAD_IN =
 /**
  * A document's name comes from the prompt that produced it: the user's own
  * words for the part beat anything derived from the source, which is why
- * suggestName is now only the fallback for a document nobody prompted for.
+ * suggestName is only the fallback for a document nobody prompted for.
  */
 export function nameFromPrompt(prompt: string, taken: readonly string[]): string {
   const cleaned = prompt.replace(/\s+/g, ' ').trim().replace(LEAD_IN, '')

@@ -1,21 +1,27 @@
 import { expect, test } from 'vitest'
+import type { ChatEvent } from '../chat/log'
 import {
+  commitEdit,
+  commitTurn,
   createSession,
   currentDoc,
   deleteDoc,
-  newDoc,
-  renameDoc,
-  reviveSession,
-  selectDoc,
-  forkDoc,
+  headVersion,
   nameFromFirstPrompt,
   nameFromPrompt,
+  newDoc,
+  renameDoc,
+  restoreVersion,
+  reviveSession,
+  saveVersion,
+  selectDoc,
+  setChat,
   suggestName,
+  undoVersion,
   updateSource,
-  versionFamily,
-  versionNumber,
-  versionNumbers,
+  type Doc,
   type Session,
+  type Version,
 } from './documents'
 
 /** The starter document from App.tsx: its first line is a `//` comment. */
@@ -26,39 +32,35 @@ plate_x = 60;  // [20:120]
 cube([plate_x, 10, 3]);
 `
 
+const v = (id: string, source: string, label = 'new'): Version => ({
+  id,
+  parentId: id === '1' ? null : String(Number(id) - 1),
+  ts: 0,
+  label,
+  source,
+  compileOk: false,
+})
+const doc = (id: string, name: string, source: string, ts: number): Doc => ({
+  id,
+  name,
+  source,
+  createdAt: ts,
+  updatedAt: ts,
+  versions: [{ ...v('1', source), ts }],
+  head: '1',
+  chat: [],
+})
 const three = (): Session => ({
-  docs: [
-    { id: 'a', name: 'A', source: 'cube(1);', createdAt: 1, updatedAt: 1, parentId: null },
-    { id: 'b', name: 'B', source: 'cube(2);', createdAt: 2, updatedAt: 2, parentId: null },
-    { id: 'c', name: 'C', source: 'cube(3);', createdAt: 3, updatedAt: 3, parentId: null },
-  ],
+  docs: [doc('a', 'A', 'cube(1);', 1), doc('b', 'B', 'cube(2);', 2), doc('c', 'C', 'cube(3);', 3)],
   currentId: 'b',
 })
+const shape = (d: Doc) => d.versions.map((x) => [x.id, x.label, x.source, x.compileOk])
 
 test('a new session holds one document, named after the source, and it is current', () => {
   const session = createSession(STARTER, 'id-1', 1000)
-  expect(session).toEqual({
-    docs: [
-      {
-        id: 'id-1',
-        name: 'A mounting plate',
-        source: STARTER,
-        createdAt: 1000,
-        updatedAt: 1000,
-        parentId: null,
-      },
-    ],
-    currentId: 'id-1',
-  })
+  expect(session).toEqual({ docs: [doc('id-1', 'A mounting plate', STARTER, 1000)], currentId: 'id-1' })
   expect(currentDoc(session)).toBe(session.docs[0])
-  expect(newDoc('Bracket', 'cube(1);', 'id-2', 7)).toEqual({
-    id: 'id-2',
-    name: 'Bracket',
-    source: 'cube(1);',
-    createdAt: 7,
-    updatedAt: 7,
-    parentId: null,
-  })
+  expect(newDoc('Bracket', 'cube(1);', 'id-2', 7)).toEqual(doc('id-2', 'Bracket', 'cube(1);', 7))
 })
 
 test('every operation leaves its input untouched', () => {
@@ -68,6 +70,12 @@ test('every operation leaves its input untouched', () => {
   updateSource(session, 'sphere(1);', 99)
   renameDoc(session, 'b', 'Renamed')
   deleteDoc(session, 'b', 'fresh', 99)
+  commitTurn(session, 'cube(9);', 'nine', true, 99)
+  commitEdit(session, 'cube(2);', 99)
+  saveVersion(session, 99)
+  restoreVersion(session, '1', 99)
+  undoVersion(session, 99)
+  setChat(session, [{ id: 'x', ts: 0, turn: 1, kind: 'clear' }])
   expect(session).toEqual(before)
 })
 
@@ -79,10 +87,7 @@ test('selecting switches the current document, and an unknown id changes nothing
 
 test('editing rewrites only the current document and stamps it', () => {
   const next = updateSource(three(), 'sphere(1);', 500)
-  expect(currentDoc(next)).toEqual({
-    id: 'b', name: 'B', source: 'sphere(1);', createdAt: 2, updatedAt: 500, parentId: null,
-  })
-  // createdAt does not move: it is what orders a version family.
+  expect(currentDoc(next)).toEqual({ ...doc('b', 'B', 'cube(2);', 2), source: 'sphere(1);', updatedAt: 500 })
   expect(next.docs[0]).toEqual(three().docs[0])
   expect(next.docs[2]).toEqual(three().docs[2])
 })
@@ -121,30 +126,20 @@ test('deleting some other document leaves the selection where it was', () => {
 
 test('deleting the only document leaves a fresh empty one selected, never none', () => {
   const next = deleteDoc(createSession(STARTER, 'only', 1), 'only', 'fresh', 99)
-  expect(next).toEqual({
-    docs: [
-      { id: 'fresh', name: 'Untitled', source: '', createdAt: 99, updatedAt: 99, parentId: null },
-    ],
-    currentId: 'fresh',
-  })
+  expect(next).toEqual({ docs: [doc('fresh', 'Untitled', '', 99)], currentId: 'fresh' })
   expect(currentDoc(next).id).toBe('fresh')
 })
 
 test('currentDoc returns a document even when the pointer has rotted', () => {
   const rotten: Session = { docs: three().docs, currentId: 'gone' }
   expect(currentDoc(rotten).id).toBe('a')
-  expect(currentDoc({ docs: [], currentId: 'gone' })).toEqual({
-    id: 'gone',
-    name: 'Untitled',
-    source: '',
-    createdAt: 0,
-    updatedAt: 0,
-    parentId: null,
-  })
+  expect(currentDoc({ docs: [], currentId: 'gone' })).toEqual(doc('gone', 'Untitled', '', 0))
 })
 
 test('a session round-trips through revive unchanged', () => {
-  const session = three()
+  const session = setChat(commitTurn(three(), 'cube(20);', 'bigger', true, 5), [
+    { id: 'u', ts: 5, turn: 1, kind: 'user', text: 'bigger' },
+  ])
   expect(reviveSession(JSON.parse(JSON.stringify(session)), STARTER, 'fresh', 99)).toEqual(session)
 })
 
@@ -181,9 +176,7 @@ test('one corrupt row does not cost the user every other document', () => {
   const raw = { docs: [null, { id: 'b', source: 'cube(2);' }], currentId: 'b' }
   const revived = reviveSession(raw, STARTER, 'fresh', 99)
   expect(revived).toEqual({
-    docs: [
-      { id: 'b', name: 'Untitled', source: 'cube(2);', createdAt: 99, updatedAt: 99, parentId: null },
-    ],
+    docs: [{ ...doc('b', 'Untitled', 'cube(2);', 99), versions: [{ ...v('1', 'cube(2);', 'saved'), ts: 99 }] }],
     currentId: 'b',
   })
 })
@@ -221,7 +214,6 @@ test('a long prompt is cut at a word, and a blank one names nothing', () => {
   // Cut on a word boundary: what is kept must be followed by a space in the
   // original, so the last word shown is never half a word.
   const kept = name.slice(0, -1)
-  // The cleaned form: the leading article is stripped and the first letter cased.
   const original = 'Parametric vase with twenty flutes and a rolled lip on top'
   expect(original.startsWith(kept)).toBe(true)
   expect(original.charAt(kept.length)).toBe(' ')
@@ -252,50 +244,6 @@ test('only the first prompt names a document, and never over a chosen title', ()
   expect(nameFromFirstPrompt(mine, 'a hex bolt')).toBe(mine)
 })
 
-test('a new version is a document that remembers where it came from', () => {
-  const forked = forkDoc(three(), 'b', 'b2', 500)
-  expect(forked.currentId).toBe('b2')
-  expect(forked.docs).toHaveLength(4)
-  const copy = currentDoc(forked)
-  // A distinct name: three rows all reading "B" is the failure the list exists
-  // to prevent, and the user deletes the wrong one.
-  expect(copy).toMatchObject({ source: 'cube(2);', name: 'B 2', parentId: 'b', createdAt: 500 })
-  expect(copy.named).toBeUndefined()
-  // The original is untouched, which is the whole point of keeping versions.
-  expect(forked.docs[1]).toEqual(three().docs[1])
-})
-
-test('a version family is numbered by creation, so two forks of one parent differ', () => {
-  let session = forkDoc(three(), 'b', 'b2', 500)
-  session = forkDoc(session, 'b', 'b3', 600)
-
-  expect(versionFamily(session, 'b').map((d) => d.id)).toEqual(['b', 'b2', 'b3'])
-  expect(versionNumber(session, 'b')).toBe(1)
-  expect(versionNumber(session, 'b2')).toBe(2)
-  // Depth would label both forks v2; creation order does not.
-  expect(versionNumber(session, 'b3')).toBe(3)
-  // A document nobody forked carries no version tag at all.
-  expect(versionNumber(session, 'a')).toBe(0)
-})
-
-test('a lineage that outlived its parent, or points at itself, still resolves', () => {
-  // Both shapes are reachable from a partly-written store.
-  const orphan = reviveSession(
-    { docs: [{ id: 'x', source: 'cube(1);', parentId: 'deleted' }], currentId: 'x' },
-    STARTER,
-    'fresh',
-    99,
-  )
-  expect(currentDoc(orphan).parentId).toBeNull()
-
-  const cyclic: Session = {
-    docs: [{ id: 'x', name: 'X', source: '', createdAt: 1, updatedAt: 1, parentId: 'x' }],
-    currentId: 'x',
-  }
-  expect(() => versionFamily(cyclic, 'x')).not.toThrow()
-  expect(versionFamily(cyclic, 'x').map((d) => d.id)).toEqual(['x'])
-})
-
 test('two rows sharing an id cannot both survive revive', () => {
   // Duplicates destroy documents twice over: editing the first overwrites the
   // second's source, and deleting either removes BOTH, emptying the list and
@@ -318,42 +266,6 @@ test('two rows sharing an id cannot both survive revive', () => {
   expect(edited.docs).toHaveLength(1)
   const gone = deleteDoc(edited, 'a', 'fresh', 101)
   expect(gone.docs.map((d) => d.source)).toEqual([''])
-})
-
-test('a fork cannot claim an id that is already taken', () => {
-  // A caller that memoises its uuid would otherwise create the duplicate-row
-  // state by hand.
-  const session = three()
-  expect(forkDoc(session, 'b', 'a', 500)).toBe(session)
-})
-
-test('deleting a middle version reparents its children instead of orphaning them', () => {
-  let session = forkDoc(createSession('cube(1);', 'p', 1), 'p', 'p2', 2)
-  session = forkDoc(session, 'p2', 'p3', 3)
-  expect([1, 2, 3]).toEqual(['p', 'p2', 'p3'].map((id) => versionNumber(session, id)))
-
-  const cut = deleteDoc(session, 'p2', 'fresh', 4)
-  // Still one family, still numbered — not two orphans with no version tag.
-  expect(cut.docs.find((d) => d.id === 'p3')?.parentId).toBe('p')
-  expect(versionNumber(cut, 'p')).toBe(1)
-  expect(versionNumber(cut, 'p3')).toBe(2)
-
-  // And what the autosave writes is what the loader reads back: no dangling
-  // parentId for revive to silently rewrite.
-  expect(reviveSession(JSON.parse(JSON.stringify(cut)), STARTER, 'fresh', 5)).toEqual(cut)
-})
-
-test('numbering a large library stays cheap enough to run on every render', () => {
-  // design.md §7 sizes the store at ~200 versions. Rebuilding the id map per
-  // document made this O(n^3) and 130 ms, on a path that runs per keystroke.
-  let session = createSession('cube(1);', 'v0', 0)
-  for (let i = 1; i < 200; i++) session = forkDoc(session, `v${i - 1}`, `v${i}`, i)
-
-  const started = performance.now()
-  const numbers = versionNumbers(session)
-  expect(performance.now() - started).toBeLessThan(50)
-  expect(numbers.get('v199')).toBe(200)
-  expect(numbers.size).toBe(200)
 })
 
 test('a hyphenated part name keeps its first letter', () => {
@@ -383,4 +295,160 @@ test('an edit is never dropped, even against a session with no rows', () => {
   const rescued = updateSource({ docs: [], currentId: 'x' }, 'THE USERS WORK', 5)
   expect(currentDoc(rescued).source).toBe('THE USERS WORK')
   expect(rescued.docs).toHaveLength(1)
+})
+
+// ---- versions (design.md §7) ------------------------------------------------
+
+test('an LLM turn commits a version labelled by its prompt, and the head follows it', () => {
+  const next = commitTurn(three(), 'cube(20);', 'make it   bigger please', true, 500)
+  const d = currentDoc(next)
+  expect(d.source).toBe('cube(20);')
+  expect(d.head).toBe('2')
+  expect(d.versions[1]).toEqual({
+    id: '2', parentId: '1', ts: 500, label: 'make it bigger please', source: 'cube(20);', compileOk: true,
+  })
+  expect(d.updatedAt).toBe(500)
+  expect(headVersion(d)).toBe(d.versions[1])
+  // A label is cut to a line, and a blank one still reads as something.
+  expect(headVersion(currentDoc(commitTurn(next, 'cube(21);', 'x'.repeat(80), true, 501))).label).toHaveLength(48)
+  expect(headVersion(currentDoc(commitTurn(next, 'cube(22);', '   ', true, 502))).label).toBe('edit')
+})
+
+test('a turn that overwrites manual edits keeps them as a version first', () => {
+  const edited = updateSource(three(), 'cube(2.5);', 10)
+  const next = commitTurn(edited, 'cube(20);', 'bigger', true, 500)
+  expect(shape(currentDoc(next))).toEqual([
+    ['1', 'new', 'cube(2);', false],
+    ['2', 'edit', 'cube(2.5);', false],
+    ['3', 'bigger', 'cube(20);', true],
+  ])
+  expect(currentDoc(next).versions[2]?.parentId).toBe('2')
+})
+
+test('consecutive manual edits fold into one version; a later change starts a new one', () => {
+  let s = updateSource(three(), 'cube(3);', 10)
+  s = commitEdit(s, 'cube(3);', 11)
+  expect(shape(currentDoc(s))).toEqual([['1', 'new', 'cube(2);', false], ['2', 'edit', 'cube(3);', true]])
+  s = updateSource(s, 'cube(4);', 20)
+  s = commitEdit(s, 'cube(4);', 21)
+  expect(currentDoc(s).versions).toHaveLength(2)
+  expect(currentDoc(s).versions[1]).toMatchObject({ source: 'cube(4);', ts: 21, compileOk: true })
+  s = commitTurn(s, 'cube(9);', 'nine', true, 30)
+  s = updateSource(s, 'cube(10);', 40)
+  s = commitEdit(s, 'cube(10);', 41)
+  expect(currentDoc(s).versions.map((x) => x.id)).toEqual(['1', '2', '3', '4'])
+  expect(currentDoc(s).versions[3]).toMatchObject({ label: 'edit', parentId: '3' })
+})
+
+test('a compile of the head itself only marks it verified, and a stale compile is ignored', () => {
+  const s = commitEdit(three(), 'cube(2);', 5)
+  expect(currentDoc(s).versions).toHaveLength(1)
+  expect(currentDoc(s).versions[0]?.compileOk).toBe(true)
+  expect(commitEdit(s, 'cube(2);', 6)).toBe(s)
+  const typed = updateSource(s, 'cube(7);', 7)
+  expect(commitEdit(typed, 'cube(6);', 8)).toBe(typed)
+})
+
+test('saving names the current edits so later edits do not fold into them', () => {
+  let s = updateSource(three(), 'cube(3);', 10)
+  s = saveVersion(s, 11)
+  expect(currentDoc(s).versions[1]).toMatchObject({ label: 'saved', source: 'cube(3);' })
+  expect(saveVersion(s, 12)).toBe(s)
+  s = updateSource(s, 'cube(4);', 20)
+  s = commitEdit(s, 'cube(4);', 21)
+  expect(currentDoc(s).versions.map((x) => x.label)).toEqual(['new', 'saved', 'edit'])
+  expect(currentDoc(saveVersion(s, 22)).versions.map((x) => x.label)).toEqual(['new', 'saved', 'saved'])
+})
+
+test('restore moves the head without removing anything, and keeps unsaved edits first', () => {
+  let s = commitTurn(three(), 'cube(20);', 'bigger', true, 1)
+  s = commitTurn(s, 'cube(30);', 'bigger still', true, 2)
+  s = updateSource(s, 'cube(31);', 3)
+  s = restoreVersion(s, '1', 4)
+  const d = currentDoc(s)
+  expect(d.head).toBe('1')
+  expect(d.source).toBe('cube(2);')
+  expect(d.versions.map((x) => [x.id, x.label, x.source])).toEqual([
+    ['1', 'new', 'cube(2);'],
+    ['2', 'bigger', 'cube(20);'],
+    ['3', 'bigger still', 'cube(30);'],
+    ['4', 'edit', 'cube(31);'],
+  ])
+  expect(restoreVersion(s, '1', 5)).toBe(s)
+  expect(restoreVersion(s, '99', 5)).toBe(s)
+  // A commit from a restored head branches: parentId records it, the list stays linear.
+  const branched = commitTurn(s, 'cube(40);', 'forty', true, 6)
+  expect(currentDoc(branched).versions[4]).toMatchObject({ id: '5', parentId: '1' })
+})
+
+test('/undo steps back one version at a time and stops at the first', () => {
+  let s = commitTurn(three(), 'cube(20);', 'bigger', true, 1)
+  s = commitTurn(s, 'cube(30);', 'bigger still', true, 2)
+  s = undoVersion(s, 3)
+  expect(currentDoc(s)).toMatchObject({ head: '2', source: 'cube(20);' })
+  s = undoVersion(s, 4)
+  expect(currentDoc(s)).toMatchObject({ head: '1', source: 'cube(2);' })
+  expect(undoVersion(s, 5)).toBe(s)
+})
+
+test('the transcript is stored on the document with its images stripped', () => {
+  const chat: ChatEvent[] = [
+    { id: 'u', ts: 0, turn: 1, kind: 'user', text: 'like this', images: ['data:image/jpeg;base64,AAA'] },
+    { id: 'a', ts: 0, turn: 1, kind: 'assistant', text: 'ok' },
+  ]
+  const s = setChat(three(), chat)
+  expect(currentDoc(s).chat).toEqual([{ id: 'u', ts: 0, turn: 1, kind: 'user', text: 'like this' }, chat[1]])
+  expect(JSON.stringify(s)).not.toContain('base64')
+})
+
+test('a row written before versions existed revives as one saved version of its source', () => {
+  const legacy = {
+    docs: [{ id: 'a', name: 'A', source: 'cube(1);', createdAt: 1, updatedAt: 2, parentId: null }],
+    currentId: 'a',
+  }
+  const d = currentDoc(reviveSession(legacy, STARTER, 'fresh', 99))
+  expect(d.versions).toEqual([
+    { id: '1', parentId: null, ts: 1, label: 'saved', source: 'cube(1);', compileOk: false },
+  ])
+  expect(d.head).toBe('1')
+  expect(d.chat).toEqual([])
+  expect('parentId' in d).toBe(false)
+})
+
+test('revive renumbers versions, remaps head and parents, and drops what it cannot read', () => {
+  const raw = {
+    docs: [
+      {
+        id: 'a',
+        source: 'C',
+        versions: [
+          { id: 'x', source: 'A', label: 'new', ts: 1 },
+          null,
+          { id: 'y', source: 'B', parentId: 'x', label: '', compileOk: 'yes' },
+          { id: 'z', source: 'C', parentId: 'y', compileOk: true },
+          { id: 'w' },
+        ],
+        head: 'y',
+        chat: [{ id: 'u', turn: 1, kind: 'user', text: 'hi' }, 'junk'],
+      },
+    ],
+    currentId: 'a',
+  }
+  const d = currentDoc(reviveSession(raw, STARTER, 'fresh', 99))
+  expect(d.versions.map((x) => [x.id, x.parentId, x.label, x.compileOk])).toEqual([
+    ['1', null, 'new', false],
+    ['2', '1', 'saved', false],
+    ['3', '2', 'saved', true],
+  ])
+  expect(d.head).toBe('2')
+  expect(d.chat).toEqual([{ id: 'u', ts: 0, turn: 1, kind: 'user', text: 'hi' }])
+  const dangling = currentDoc(
+    reviveSession(
+      { docs: [{ id: 'a', source: 'S', versions: [{ id: 'q', source: 'S' }], head: 'nope' }], currentId: 'a' },
+      STARTER,
+      'fresh',
+      99,
+    ),
+  )
+  expect(dangling.head).toBe('1')
 })
