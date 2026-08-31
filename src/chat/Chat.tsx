@@ -432,7 +432,7 @@ export function Chat({
     }
 
     if (!apiKey) {
-      setChatError('Add an OpenRouter key below to start.')
+      setChatError('Connect OpenRouter or add an API key below to start.')
       setShowSettings(true)
       return
     }
@@ -668,6 +668,16 @@ export function Chat({
       </div>
 
       {chatError && <div className="chat-error">{chatError}</div>}
+
+      {!apiKey && (
+        <div className="chat-nokey">
+          No API access yet — connect OpenRouter or paste an API key in{' '}
+          <button type="button" onClick={() => setShowSettings(true)}>
+            settings
+          </button>{' '}
+          to start prompting.
+        </div>
+      )}
 
 
       <form
