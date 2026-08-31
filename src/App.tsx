@@ -28,7 +28,7 @@ import { exportProject, importProject } from './state/project'
 import { loadAll, persistRequested, saveSession } from './state/store'
 import { EXAMPLES, STARTER } from './examples'
 
-/** Injected by vite.config.ts: the package.json version, and the short commit hash — empty on the release tag itself. */
+/** Injected by vite.config.ts: `git describe`, and the short commit hash — empty on the clean release tag. */
 declare const __APP_VERSION__: string
 declare const __APP_COMMIT__: string
 const REPO_URL = 'https://github.com/pspoerri/Vibe3D'
@@ -775,12 +775,11 @@ function StartWindow({
         </p>
         <p className="start-footer">
           <a
-            href={__APP_COMMIT__ ? `${REPO_URL}/commit/${__APP_COMMIT__}` : `${REPO_URL}/releases/tag/v${__APP_VERSION__}`}
+            href={__APP_COMMIT__ ? `${REPO_URL}/commit/${__APP_COMMIT__}` : `${REPO_URL}/releases/tag/${__APP_VERSION__}`}
             target="_blank"
             rel="noreferrer"
           >
-            v{__APP_VERSION__}
-            {__APP_COMMIT__ && `+${__APP_COMMIT__}`}
+            {__APP_VERSION__}
           </a>
           {' · '}
           <a href={REPO_URL} target="_blank" rel="noreferrer">

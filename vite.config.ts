@@ -4,15 +4,23 @@ import { readFileSync } from 'node:fs'
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 
-const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }
 
-/** Empty on the release tag itself (or with no git); the short commit hash otherwise. */
-const commit = (() => {
+/**
+ * `git describe`: the tag itself on a release, `v0.2.0-3-gabc1234[-dirty]`
+ * past it. The commit is empty exactly when the build is the clean tag — it is
+ * what the footer links to otherwise. No git (a tarball): the package version.
+ */
+const { version, commit } = (() => {
   try {
     const git = (cmd: string): string => execSync(cmd, { encoding: 'utf8' }).trim()
-    return git('git tag --points-at HEAD').split('\n').includes(`v${version}`) ? '' : git('git rev-parse --short HEAD')
+    const described = git('git describe --tags --dirty')
+    return {
+      version: described,
+      commit: described === git('git describe --tags --abbrev=0') ? '' : git('git rev-parse --short HEAD'),
+    }
   } catch {
-    return ''
+    return { version: `v${pkg.version}`, commit: '' }
   }
 })()
 
