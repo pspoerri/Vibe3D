@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.3 — 2026-09-01
+
+- **A sharing image**: links to the app now unfurl with a screenshot of the potted Monstera
+  session, via Open Graph and Twitter card meta tags.
+
 ## v0.3.2 — 2026-08-31
 
 - **CI is green again**: the three e2e tests that still assumed the old thinking-off default
