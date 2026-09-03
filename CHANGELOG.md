@@ -1,5 +1,66 @@
 # Changelog
 
+## Unreleased
+
+The review of 2026-09-02: harness defects, harness improvements, and the missing features.
+
+### Fixed in the harness
+
+- **An edit that missed was relabelled as applied.** The source re-attached after a failed
+  `openscad-edit` or `openscad-part` block was headed "with your edits applied" although the
+  diagnostic had just said it did not. The compile event now marks an edit miss, and the
+  window says "the current source" for it.
+- **The worked example broke the PART rule.** The system prompt demands every top-level call
+  inside `// ---- PART N ----` markers, then showed a bare `plate();`. The example carries the
+  markers (and a colour).
+- **Warnings from a successful compile went nowhere.** "Ignoring unknown variable" and "may
+  not be a valid 2-manifold" were stored and never shown — to the model, which now gets them
+  before the report, or to you, who now see them under the viewport in amber.
+- **Every look re-sent every earlier look's picture.** A six-look turn sent up to 21 renders.
+  Only the newest render of a turn rides; earlier rounds keep their report.
+- **A model could oscillate for ever.** A source the turn already compiled is now a loop: a
+  repeat of one that compiled confirms it, a repeat of one that failed fails the turn.
+- **A reply cut off after its code block closed was thrown away.** Only trailing prose was
+  lost; the source is whole and is compiled.
+- **The first send after boot could get no render**, when it outran the catalogue fetch that
+  says whether the model reads images. The turn now waits for the catalogue.
+
+### Improved in the harness
+
+- **`pnpm eval`**: the turn controller against a real model and the real kernel, under Node,
+  over the ten parts of design.md §5's bake-off. `OPENROUTER_API_KEY=… pnpm eval`, with
+  `EVAL_MODEL`, `EVAL_THINKING` and `EVAL_ONLY` to narrow it. Writes a table and the full
+  transcripts to `eval/results/`.
+- A 429, a 5xx or a dropped connection before the stream opens is retried once.
+- `max_tokens` is set to the model's own output ceiling from the catalogue, so a provider
+  default cannot cut a long part short.
+- Anthropic models get a prompt-cache breakpoint on the system prompt.
+- A compile that runs out its 60 seconds is fed back once as a diagnostic — lower `$fn`, no
+  minkowski over many objects — before a second timeout fails the turn.
+- An edit whose only miss is indentation still applies.
+- The status line shows what the running turn has cost so far.
+- **Two more checks the app grades**: the share of each part's surface that overhangs past
+  45° off the bed, and whether the model fits the printer's build volume. The bed is a
+  setting (default 256 × 256 × 256, the Bambu A1/P1S/X1C); the viewport's plate outline
+  follows it.
+
+### Added
+
+- **BOSL2** ships with the kernel: `include <BOSL2/std.scad>` gives rounded and chamfered
+  primitives, anchors, threads, gears and screw holes. Loaded only for a source that names
+  it; a `bosl2` skill lists the calls; the prompt points the model at it for fillets,
+  threads and gears. The library is fetched from GitHub at a pinned commit by
+  `scripts/fetch-bosl2.mjs` on install and before build, test and dev — not vendored.
+- **Share**: a link with the source in its hash. Opening it makes a new document.
+- **Export a selected part alone**: with a part selected, the export buttons say so and
+  write only that part — STL and OBJ from the mesh, 3MF cut down to that object.
+- **CUT and MEASURE** in the viewport: a section along X, Y or Z with a slider, and a
+  two-click distance with its axis deltas.
+- **The error line** is marked in the editor when a compile fails.
+- **Diff** in the menu bar: what the current version changed against the one it was made
+  from.
+- **Thumbnails** on the start window, rendered at each compile.
+
 ## v0.3.3 — 2026-09-01
 
 - **A sharing image**: links to the app now unfurl with a screenshot of the potted Monstera

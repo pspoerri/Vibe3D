@@ -83,6 +83,16 @@ the tags, the exports or a print; the chat notes a construction statement that f
 marked-up view into your next message — the model reads the strokes as "here", and your words say
 what.
 
+## Libraries
+
+BOSL2 is installed. `include <BOSL2/std.scad>` at the top of a file gives `cuboid()` with rounding
+and chamfers, `cyl()`, `tube()`, anchors and attachments; `threading.scad`, `gears.scad` and
+`screws.scad` add threads, gears and screw holes. The library is written into the kernel only for
+a source that names it, so a plain part pays nothing. It is fetched from GitHub at a pinned commit
+when you install, and again before a build if it is missing; bump the pin in
+`scripts/fetch-bosl2.mjs`. The model is told to reach for it for
+fillets, threads and gears, and a `bosl2` skill lists the calls.
+
 ## Partial updates
 
 For a small change to a large file the model can reply with an edit block that replaces just the
@@ -97,9 +107,9 @@ attempt, so nothing is ever applied half-way.
 Paste an image into the composer, or pick one with the button beside it — up to four per message.
 They carry layout, proportion and intent; **the dimensions still have to come from your words**,
 because models read sizes off pixels badly, and the model dropdown marks which models can read an
-image at all. An image is sent with the turn you attach it to and with no later turn, so you pay
-for it once — across that turn's repair attempts and its verification round, and never again. The images are not saved — the
-conversation is, without them.
+image at all. An image is sent with every model call of the turn you attach it to — its repairs
+and its looks — and with no later turn. The app's own renders are cheaper still: only the newest
+one of a turn rides along. The images are not saved — the conversation is, without them.
 
 ## Thinking, and checking its work
 
@@ -109,7 +119,8 @@ compiled, repaired if it has to be, and committed.
 Valid code of the wrong shape is the failure that actually happens, so with thinking on (`low`,
 `medium` or `high`, which is also the reasoning effort the model is asked for) every source that
 compiles gets a look before the turn commits: a measured report (bounding box, volume, part
-count, genus, and what was added and removed compared with the part that was on screen) and —
+count, genus, overhang share, whether it fits the bed, and what was added and removed compared
+with the part that was on screen) and —
 for models that can read an image — a before/after render, green over magenta. The model answers
 a few yes/no questions about your request from those numbers and may correct itself, ask for
 another angle or a cut through the part, and look again, until it says the part is right. A
@@ -117,11 +128,20 @@ status line under the transcript says what it is doing — `look 2 · rendering 
 z = 12 mm` — and the reports and pictures sit in the transcript behind the **inspected** chips.
 Nothing interrupts it but **Stop**, which keeps the last version that compiled.
 
+## Viewport tools
+
+**CUT** opens the part along X, Y or Z with a slider, so a pocket or a wall thickness can be seen.
+**MEASURE** takes two clicks on the part and shows the distance with its axis deltas. With a part
+selected, the export buttons write that part alone. The printer's build volume is a setting
+under the chat (the plate outline follows it), and the model is told when the part does not fit.
+
 ## Versions
 
 Every LLM turn, every **Save version** and every successful compile of your own edits is a version
 of the document, and nothing is ever deleted: the picker in the menu bar steps to any of them,
-`/undo` steps back one, and a change made from an older version simply becomes the next one.
+`/undo` steps back one, **Diff** shows what the current one changed, and a change made from an
+older version simply becomes the next one. **Share** copies a link with the source in it; opening
+the link makes a new document.
 Documents, their versions and their conversations live in this browser's IndexedDB. **Export
 project** writes one `.json` you can keep or import anywhere; it never contains the key.
 
@@ -134,8 +154,8 @@ the manual on click; `/help` prints the same list in the transcript.
 ## Licensing
 
 GPL-3.0-or-later. This project bundles the OpenSCAD WebAssembly build, which is
-GPL-2.0-or-later and links Manifold (Apache-2.0); GPL-3.0 is the compatible
-combination. OpenSCAD is © the OpenSCAD developers — https://openscad.org/
+GPL-2.0-or-later and links Manifold (Apache-2.0), and the Liberation fonts (SIL OFL 1.1); the
+build fetches the BOSL2 library (BSD-2-Clause). GPL-3.0 is the compatible combination. OpenSCAD is © the OpenSCAD developers — https://openscad.org/
 
 ## Development
 
@@ -145,3 +165,6 @@ combination. OpenSCAD is © the OpenSCAD developers — https://openscad.org/
     pnpm test    # unit tests, node env
     pnpm e2e     # Playwright, against the real built artifact
     pnpm build   # type-check + production build
+
+    OPENROUTER_API_KEY=sk-or-… pnpm eval   # the harness against a real model, ten parts, under Node
+    EVAL_MODEL=anthropic/claude-sonnet-5 EVAL_THINKING=off EVAL_ONLY=knob pnpm eval
