@@ -19,6 +19,7 @@ export const SKILLS = [
   { name: 'views', what: 'looking at the part: named views, cuts, framing a box, close-ups of what changed, the best side' },
   { name: 'parts', what: 'the parts of this document listed with their colours, and how to replace, add, delete or edit one' },
   { name: 'diff', what: 'reading the measured report and the green/magenta render after a compile' },
+  { name: 'bosl2', what: 'the BOSL2 library: rounded and chamfered primitives, anchors, threads, gears, screw holes' },
 ] as const
 
 export type SkillName = (typeof SKILLS)[number]['name']
@@ -63,6 +64,8 @@ export function renderSkill(name: string, ctx: SkillContext): string | null {
       return partsSkill(ctx.source, ctx.mesh)
     case 'diff':
       return DIFF_SKILL
+    case 'bosl2':
+      return BOSL2_SKILL
     default:
       return null
   }
@@ -200,3 +203,25 @@ Checks the app ran: rests on Z=0 per part, solids against the PART sections, voi
 The render: one orthographic view framed on what changed — the previous version in green, this version in magenta, unchanged material in grey, crease outlines — and, when the largest changed piece is small against its part, a second pane close up on it from its best side. Green alone is material that went away; magenta alone is material that appeared; a part moved whole is put back before the comparison, so a move shows as nothing. Layout and proportion only: every dimension comes from the numbers.
 
 Each round is measured against the round before it — the first against the part on screen when the turn began — so a correction's report and render show the correction, not the whole turn. One sentence with no code block confirms the part and keeps the source as it is; a correction is an openscad-edit for a few lines, an openscad-part block for a whole part or module, or the complete source when most of the file changes.`
+
+const BOSL2_SKILL = `# BOSL2
+
+\`include <BOSL2/std.scad>\` at the top of the file, after the title comment and before the parameters. Every include is parsed on each compile, so include only what the part uses. Sizes are millimetres; every primitive takes anchor= (BOTTOM, TOP, CENTER, LEFT, FRONT+LEFT+BOTTOM …), spin= and orient=. anchor=BOTTOM puts the part on Z=0, which is where it must sit.
+
+Primitives, std.scad:
+- cuboid([x, y, z], rounding=r, chamfer=c, edges=..., except=..., anchor=BOTTOM) — a box with rounded or chamfered edges. edges="Z" rounds the vertical edges only; except=BOTTOM leaves the print face sharp.
+- cyl(h=, d=|r=, rounding1=, rounding2=, chamfer1=, chamfer2=, anchor=BOTTOM) — a cylinder with rounded or chamfered ends; d1= and d2= taper it.
+- tube(h=, od=, id=|wall=, anchor=BOTTOM) — a hollow cylinder. prismoid(size1=[x, y], size2=[x, y], h=, rounding=) — a truncated pyramid.
+- rect([x, y], rounding=r) and ellipse(d=) — 2D shapes for linear_extrude() and offset().
+- xrot(), yrot(), zrot(), up(), down(), left(), right(), fwd(), back(), move([x, y, z]) — transforms that read as words.
+- xcopies(spacing, n), ycopies(), grid_copies(spacing, n=[nx, ny]), zrot_copies(n) — distributed copies, for hole patterns.
+- diff() { cuboid(...); tag("remove") cyl(...); } — a difference where the cutter is tagged; attach() places children on faces.
+
+Threads, threading.scad: threaded_rod(d=, l=, pitch=), threaded_nut(nutwidth=, id=, h=, pitch=). Gears, gears.scad: spur_gear(mod=, teeth=, thickness=), rack(). Screw holes, screws.scad: screw_hole("M3", l=, head="flat", anchor=TOP).
+
+Example, a rounded box with four M3 holes:
+    include <BOSL2/std.scad>
+    diff() cuboid([60, 40, 8], rounding = 3, except = BOTTOM, anchor = BOTTOM)
+      grid_copies(spacing = [50, 30]) tag("remove") position(TOP) cyl(h = 20, d = 3.4, anchor = CENTER);
+
+The library is large; a wrong argument name is a compile error you will see and can fix. When in doubt, plain OpenSCAD primitives compile faster and are just as printable.`

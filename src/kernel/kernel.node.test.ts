@@ -6,40 +6,9 @@
 import { readFileSync } from 'node:fs'
 import { strFromU8, unzipSync } from 'three/examples/jsm/libs/fflate.module.js'
 import { expect, test } from 'vitest'
-import { FONT_FILES, installFonts, usesText, type FontSet } from './fonts'
+import { compileNode as compile } from '../../eval/kernel'
 import { parseOff } from './off'
-import { IN_PATH, kernelArgs, outPath, type ExportFormat } from './protocol'
 import { meshStats } from './stats'
-import OpenSCAD from './vendor/openscad.js'
-
-const wasmBinary = readFileSync(new URL('./vendor/openscad.wasm', import.meta.url))
-const FONTS: FontSet = Object.fromEntries(
-  FONT_FILES.map((name) => [name, new Uint8Array(readFileSync(new URL(`./vendor/fonts/${name}`, import.meta.url)))]),
-)
-
-async function compile(
-  source: string,
-  format: ExportFormat,
-  files: Record<string, Uint8Array> = {},
-  fonts: FontSet | null = usesText(source) ? FONTS : null,
-): Promise<{ code: number; data: Uint8Array; stderr: string }> {
-  let stderr = ''
-  const kernel = await OpenSCAD({
-    noInitialRun: true,
-    // The web glue has no file reader for Node, so the bytes are handed over.
-    wasmBinary,
-    print: () => {},
-    printErr: (text: string) => {
-      stderr += text + '\n'
-    },
-  })
-  kernel.FS.writeFile(IN_PATH, source)
-  for (const [path, bytes] of Object.entries(files)) kernel.FS.writeFile(path, bytes)
-  if (fonts) installFonts(kernel, fonts)
-  const code = kernel.callMain(kernelArgs(format))
-  const data = code === 0 ? new Uint8Array(kernel.FS.readFile(outPath(format))) : new Uint8Array()
-  return { code, data, stderr }
-}
 
 const text = (bytes: Uint8Array): string => new TextDecoder().decode(bytes)
 const THREE_PARTS = 'cube(10); translate([20,0,0]) sphere(5); translate([0,20,0]) cylinder(h=5, r=3);'
@@ -183,4 +152,19 @@ test('the Biergarten example is one solid on Z=0, its lettering, frame and mugs 
   for (let t = 0; t < mesh.triangleCount; t++) colours.add([mesh.colors![t * 3], mesh.colors![t * 3 + 1], mesh.colors![t * 3 + 2]].join(','))
   // Green plate (#1B432C), gold trim and steins (#D4AF37), cream lettering (#FFF8E7), white foam.
   expect(colours).toEqual(new Set(['27,67,44', '212,175,55', '255,248,231', '255,255,255']))
+})
+
+test('BOSL2 is on the include path when the source names it, and a part built with it compiles', async () => {
+  const source = 'include <BOSL2/std.scad>\ncuboid([20, 20, 10], rounding = 3, anchor = BOTTOM);'
+  const { code, data, stderr, ms } = await compile(source, 'off')
+  expect(code, stderr).toBe(0)
+  const stats = meshStats(parseOff(text(data)))
+  expect(stats.parts).toBe(1)
+  expect(stats.watertight).toBe(true)
+  expect(stats.min[2]).toBeCloseTo(0, 3)
+  // The include is a 4 MB parse on top of the compile; keep an eye on it.
+  expect(ms).toBeLessThan(15_000)
+  // Without the include the same call is an unknown module, and the kernel says so.
+  const bare = await compile('cuboid([20, 20, 10], rounding = 3);', 'off')
+  expect(bare.code).toBe(1)
 })
