@@ -338,3 +338,70 @@ test('a coloured 3MF export carries its colours as materials, per triangle', asy
   expect(model.match(/paint_color="4" slic3rpe:mmu_segmentation="4"/g)?.length).toBeGreaterThan(0)
   expect(model.match(/paint_color="8" slic3rpe:mmu_segmentation="8"/g)?.length).toBeGreaterThan(0)
 })
+
+test('BOSL2 is fetched and installed for a source that includes it', async ({ page }) => {
+  await openStarter(page)
+  await typeSource(page, 'include <BOSL2/std.scad>\ncuboid([30, 20, 10], rounding = 3, anchor = BOTTOM);')
+  // The rounded box: the rounding leaves the box its size, on the plate.
+  await expect(page.locator('.tag', { hasText: '30.0 × 20.0 × 10.0 mm' })).toBeVisible({ timeout: 90_000 })
+  await expect(page.locator('.error')).toBeHidden()
+})
+
+test('a compile error marks its line in the editor, and a warning shows in amber', async ({ page }) => {
+  await openStarter(page)
+  await typeSource(page, 'cube(5);\ncube([10,10,10);')
+  await expect(page.locator('.cm-error-line')).toHaveCount(1, { timeout: 60_000 })
+  await expect(page.locator('.cm-error-line')).toContainText('cube([10,10,10);')
+  await typeSource(page, 'cube(size);')
+  // An unknown variable compiles to a unit cube with a warning: amber, under the viewport.
+  await expect(page.locator('.warnings')).toContainText('unknown variable "size"', { timeout: 60_000 })
+  await expect(page.locator('.warnings')).not.toContainText('Geometries in cache')
+  await expect(page.locator('.error')).toBeHidden()
+})
+
+test('CUT and MEASURE are viewport modes, and a selected part exports alone', async ({ page }) => {
+  await openStarter(page)
+  // The box's centre sits inside the first cube, so a click at the screen's centre selects it.
+  await typeSource(page, 'cube(10); translate([12, 0, 0]) cube([5, 5, 5]);')
+  await expect(page.locator('.tag', { hasText: '2 parts' })).toBeVisible({ timeout: 90_000 })
+  await page.getByRole('button', { name: 'CUT' }).click()
+  await expect(page.locator('.viewport-cut')).toBeVisible()
+  await expect(page.locator('.viewport-cut .tag')).toContainText('z = 5 mm')
+  await page.locator('.viewport-cut').getByRole('button', { name: 'X' }).click()
+  await expect(page.locator('.viewport-cut .tag')).toContainText('x = 8.5 mm')
+  await page.getByRole('button', { name: 'CUT' }).click()
+  await expect(page.locator('.viewport-cut')).toBeHidden()
+  await page.getByRole('button', { name: 'MEASURE' }).click()
+  await expect(page.locator('.viewport-measure')).toContainText('click two points')
+  await page.getByRole('button', { name: 'MEASURE' }).click()
+
+  // Select the big cube, then export STL: the file carries that part alone. FIT first: the
+  // camera still frames the starter plate, and the box's centre has to be under the crosshair.
+  await page.getByRole('button', { name: 'FIT' }).click()
+  const canvas = page.locator('.viewport-canvas canvas')
+  const box = (await canvas.boundingBox())!
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
+  await expect(page.locator('.chat-selection')).toBeVisible()
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: /Export STL · part \d/ }).click()
+  const file = await download
+  expect(file.suggestedFilename()).toMatch(/ part \d\.stl$/)
+  const path = await file.path()
+  const bytes = await readFile(path!)
+  // Binary STL: 80-byte header, a uint32 count, 50 bytes per facet. One cube is 12 facets.
+  expect(bytes.readUInt32LE(80)).toBe(12)
+})
+
+test('the start window shows a thumbnail once a document has compiled', async ({ page }) => {
+  await openStarter(page)
+  await page.getByRole('button', { name: 'Vibe3D' }).click()
+  await expect(page.locator('.start-open .start-thumb img').first()).toBeVisible({ timeout: 30_000 })
+})
+
+test('a share link opens as a new document with that source', async ({ page }) => {
+  // encodeShare('// Shared cube\n\ncube(10);\n'): deflate-raw, base64url.
+  await page.goto('/#s=09dXCM5ILEpNUUguTUrl4gKRGoYGmtZcAA')
+  await expect(page.locator('.menubar-doc')).toHaveText('Shared cube', { timeout: 90_000 })
+  await expect(page.locator('.cm-content')).toContainText('cube(10);', { timeout: 30_000 })
+  expect(page.url()).not.toContain('#s=')
+})

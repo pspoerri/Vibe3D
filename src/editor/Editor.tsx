@@ -6,7 +6,7 @@ import {
   syntaxHighlighting,
 } from '@codemirror/language'
 import { Annotation, Compartment, EditorState } from '@codemirror/state'
-import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view'
+import { Decoration, EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view'
 import { useEffect, useMemo, useRef } from 'react'
 import { openscad } from './openscad-mode'
 
@@ -30,15 +30,34 @@ const editableExtensions = (editable: boolean) => [
   EditorView.editable.of(editable),
 ]
 
+const errorMark = Decoration.line({ class: 'cm-error-line' })
+
+/** The line the kernel's error names, tinted; nothing when there is none or it is off the end. */
+const errorExtension = (line: number | null) =>
+  EditorView.decorations.compute(['doc'], (state) =>
+    line === null || line < 1 || line > state.doc.lines
+      ? Decoration.none
+      : Decoration.set([errorMark.range(state.doc.line(line).from)]),
+  )
+
+/** `line N` in the kernel's stderr, as it names the parser or evaluation error's line. */
+export function errorLineOf(stderr: string | null): number | null {
+  const m = stderr && /\bline (\d+)/.exec(stderr)
+  return m ? Number(m[1]) : null
+}
+
 export function Editor({
   value,
   onChange,
   editable,
+  errorLine = null,
 }: {
   value: string
   onChange: (next: string) => void
   /** false while a turn owns the document. The doc stays selectable and copyable. */
   editable: boolean
+  /** The line the last compile error named, 1-based; marked in the gutter and the text. */
+  errorLine?: number | null
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -48,6 +67,9 @@ export function Editor({
   const editableRef = useRef(editable)
   editableRef.current = editable
   const editableConf = useMemo(() => new Compartment(), [])
+  const errorConf = useMemo(() => new Compartment(), [])
+  const errorLineRef = useRef(errorLine)
+  errorLineRef.current = errorLine
 
   useEffect(() => {
     const host = hostRef.current
@@ -66,6 +88,7 @@ export function Editor({
           keymap.of([...defaultKeymap, ...historyKeymap]),
           openscad(),
           editableConf.of(editableExtensions(editableRef.current)),
+          errorConf.of(errorExtension(errorLineRef.current)),
           // A StreamLanguage only tags tokens; without this nothing styles them.
           syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
           EditorView.theme({
@@ -78,6 +101,7 @@ export function Editor({
             '.cm-gutters': { fontSize: '11px', background: 'transparent', border: 'none', color: '#a8ada6' },
             '.cm-activeLine': { background: '#00000006' },
             '.cm-activeLineGutter': { background: 'transparent', color: '#6a706a' },
+            '.cm-error-line': { background: '#a8256b18', boxShadow: 'inset 3px 0 0 #a8256b' },
           }),
           EditorView.updateListener.of((update) => {
             if (!update.docChanged) return
@@ -117,6 +141,10 @@ export function Editor({
       effects: editableConf.reconfigure(editableExtensions(editable)),
     })
   }, [editable, editableConf])
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: errorConf.reconfigure(errorExtension(errorLine)) })
+  }, [errorLine, errorConf])
 
   return <div ref={hostRef} style={{ height: '100%', overflow: 'hidden' }} />
 }

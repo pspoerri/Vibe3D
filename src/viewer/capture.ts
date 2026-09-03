@@ -220,3 +220,23 @@ export function renderView(
   for (const item of owned) item.dispose()
   return url
 }
+
+/** A small iso render of the part for the start window's list, as a JPEG blob; null without WebGL. */
+export function renderThumb(mesh: Mesh, model: Box, px = 160): Promise<Blob | null> {
+  const full = renderView(mesh, { view: 'iso', section: null, box: null, closeup: null }, model)
+  if (!full) return Promise.resolve(null)
+  return new Promise((resolve) => {
+    const image = new Image()
+    image.onload = () => {
+      const out = document.createElement('canvas')
+      out.width = px
+      out.height = px
+      const ctx = out.getContext('2d')
+      if (!ctx) return resolve(null)
+      ctx.drawImage(image, 0, 0, px, px)
+      out.toBlob((blob) => resolve(blob), 'image/jpeg', 0.8)
+    }
+    image.onerror = () => resolve(null)
+    image.src = full
+  })
+}
