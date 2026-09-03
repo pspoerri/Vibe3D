@@ -6,6 +6,7 @@ import {
   DRAFT_INTERVAL_MS,
   MAX_RETRIES,
   MAX_SKILL_ROUNDS,
+  TIMEOUT_DIAGNOSTIC,
   runCompact,
   runTurn,
   type TurnDeps,
@@ -319,15 +320,19 @@ test('a reply that echoes the committed source is an answer, and compiles nothin
   expect(h.compiled).toEqual([])
 })
 
-test('a reply cut off by the output limit never reaches compile', async () => {
-  // I9: the fence closed, but the provider says it ran out of tokens.
-  const h = harness({ replies: [says(fenced('cube(3);'), 'length')] })
-  const outcome = await runTurn(turnInput(), h.deps)
+test('a reply cut off by the output limit never reaches compile, unless its block had closed', async () => {
+  // The fence never closed and the provider says it ran out of tokens.
+  const cut = harness({ replies: [says('Here.\n\n```openscad\ncube(3);', 'length')] })
+  const outcome = await runTurn(turnInput(), cut.deps)
 
   expect(outcome.status).toBe('error')
-  expect(h.compiled).toEqual([])
-  expect(kinds(h.appended)).toEqual(['user', 'assistant', 'note'])
-  expect(h.appended.at(-1)).toMatchObject({ kind: 'note', tone: 'error' })
+  expect(cut.compiled).toEqual([])
+  expect(kinds(cut.appended)).toEqual(['user', 'assistant', 'note'])
+  expect(cut.appended.at(-1)).toMatchObject({ kind: 'note', tone: 'error', text: /output limit/ })
+
+  // The block closed and only trailing prose was lost: the source is whole.
+  const closed = harness({ replies: [says(fenced('cube(3);'), 'length')], compiles: [okResult()] })
+  expect(await runTurn(turnInput(), closed.deps)).toMatchObject({ status: 'committed', source: 'cube(3);' })
 })
 
 test('an unclosed fence never reaches compile, even when the provider reports stop', async () => {
@@ -397,24 +402,54 @@ test('a cancelled compile stops the turn, logs nothing and spends no attempt', a
   expect(h.windows).toHaveLength(1)
 })
 
-test('a timed-out compile fails the turn immediately, with no compile event', async () => {
+const timedOut = (): CompileResult => ({
+  ok: false,
+  stderr: 'Compile timed out after 60s.',
+  stderrRaw: 'Compile timed out after 60s.',
+  ms: 60_000,
+  timedOut: true,
+})
+
+test('a timed-out compile is fed back once as a diagnostic, and a second one fails the turn', async () => {
   const h = harness({
-    replies: [says(fenced('cube(3);'))],
-    compiles: [
-      {
-        ok: false,
-        stderr: 'Compile timed out after 60s.',
-        stderrRaw: 'Compile timed out after 60s.',
-        ms: 60_000,
-        timedOut: true,
-      },
-    ],
+    replies: [says(fenced('cube(3);')), says(fenced('cube(2);'))],
+    compiles: [timedOut(), timedOut()],
   })
   const outcome = await runTurn(turnInput(), h.deps)
 
-  expect(outcome).toMatchObject({ status: 'failed', source: 'cube(3);' })
-  expect(kinds(h.appended)).toEqual(['user', 'assistant', 'note'])
-  expect(h.windows).toHaveLength(1)
+  expect(outcome).toMatchObject({ status: 'failed', source: 'cube(2);' })
+  expect(kinds(h.appended)).toEqual(['user', 'assistant', 'compile', 'assistant', 'note'])
+  expect(contents(h.windows[1] ?? [])).toContain(TIMEOUT_DIAGNOSTIC)
+  expect(h.windows).toHaveLength(2)
+})
+
+test('a source the turn already compiled is a loop: a repeat of a success confirms, of a failure fails', async () => {
+  const bounce = harness({
+    replies: [says(fenced('cube(1);')), says(fenced('cube(2);')), says(fenced('cube(1);'))],
+    compiles: [okResult(), okResult()],
+    inspect: { text: 'REPORT' },
+  })
+  expect(await runTurn({ ...turnInput(), looks: true }, bounce.deps)).toMatchObject({ status: 'committed', source: 'cube(2);' })
+  expect(bounce.compiled).toEqual(['cube(1);', 'cube(2);'])
+
+  const stuck = harness({
+    replies: [says(fenced('cube(')), says(fenced('cube('))],
+    compiles: [failResult('ERROR: Parser error')],
+  })
+  const outcome = await runTurn(turnInput(), stuck.deps)
+  expect(outcome).toMatchObject({ status: 'failed', source: 'cube(' })
+  expect(stuck.compiled).toEqual(['cube('])
+  expect(stuck.appended.at(-1)).toMatchObject({ kind: 'note', text: /repeated a version/ })
+})
+
+test('an edit that misses marks its compile event, so the window does not claim it applied', async () => {
+  const h = harness({
+    replies: [says(editReply('wall = 9;', 'wall = 3;')), says(editReply('wall = 2;', 'wall = 3;'))],
+    compiles: [okResult()],
+  })
+  await runTurn(turnInput(), h.deps)
+  expect(h.appended.find((e) => e.kind === 'compile')).toMatchObject({ ok: false, edit: true })
+  expect(contents(h.windows[1] ?? []).join('\n')).not.toMatch(/edits applied/)
 })
 
 test('a crashed worker fails the turn immediately, with no compile event', async () => {

@@ -18,12 +18,27 @@ export interface PortableSettings {
    * models must not carry the last one's level along. Absent is high.
    */
   thinking: Partial<Record<string, Thinking>>
+  /** The printer's build volume, mm: the plate outline, and a check the model box is graded against. */
+  bed: [number, number, number]
 }
+
+/** Bambu A1 / P1S / X1C / X1E share this build volume. */
+export const DEFAULT_BED: [number, number, number] = [256, 256, 256]
 
 export const DEFAULT_SETTINGS: PortableSettings = {
   baseUrl: DEFAULT_BASE_URL,
   model: DEFAULT_MODEL,
   thinking: {},
+  bed: DEFAULT_BED,
+}
+
+/** "220 x 220 x 250", "256×256", "256" — one to three sizes; a missing one repeats the last. null when unreadable. */
+export function parseBed(text: string): [number, number, number] | null {
+  const sizes = text.split(/[x×*,\s]+/i).filter(Boolean).map(Number)
+  if (sizes.length === 0 || sizes.length > 3 || sizes.some((n) => !Number.isFinite(n) || n <= 0)) return null
+  const x = sizes[0]!
+  const y = sizes[1] ?? x
+  return [x, y, sizes[2] ?? y]
 }
 
 /** The current model's level. */
@@ -61,10 +76,14 @@ export function loadSettings(): PortableSettings {
     : raw && typeof raw === 'object'
       ? Object.fromEntries(Object.entries(raw).filter(([, v]) => isLevel(v)) as [string, Thinking][])
       : {}
+  const bed = stored?.bed
   return {
     baseUrl: typeof stored?.baseUrl === 'string' ? stored.baseUrl : DEFAULT_SETTINGS.baseUrl,
     model,
     thinking,
+    bed: Array.isArray(bed) && bed.length === 3 && bed.every((n) => typeof n === 'number' && n > 0)
+      ? (bed as [number, number, number])
+      : DEFAULT_BED,
   }
 }
 

@@ -1,5 +1,5 @@
 import type { CompileResult } from '../kernel/compile'
-import { stderrForModel } from '../kernel/noise'
+import { kernelWarnings, stderrForModel } from '../kernel/noise'
 import type { ChatMessage, StreamEvent, Usage } from '../llm/openrouter'
 import { applyEdits, parseEdits } from './edits'
 import { extractSource } from './fence'
@@ -14,6 +14,9 @@ export const MAX_RETRIES = 2
 /** Skill loads per turn that carry no source: a model that only ever asks for reference is not answering. */
 export const MAX_SKILL_ROUNDS = 3
 export const DRAFT_INTERVAL_MS = 100
+/** What the model is told the one time a compile runs out its clock. */
+export const TIMEOUT_DIAGNOSTIC =
+  'ERROR: the compile did not finish within 60 seconds. Make the source cheaper to render: $fn at 48 (never above 96), no minkowski() or hull() over many objects, no offset() on a large linear_extrude, and loops kept small.'
 export const COMPACT_AT = 0.6
 
 export type TurnOutcome =
@@ -130,6 +133,9 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   const looks = input.looks ?? true
   let rounds = 0
   let skillRounds = 0
+  /** Every source compiled this turn and how it went, so a repeat is caught before it is paid for again. */
+  const tried = new Map<string, CompileResult>()
+  let timedOutOnce = false
 
   /** "look 3", "repair 1 of 2", or nothing: the prefix of every status line. */
   const stage = (): string =>
@@ -240,7 +246,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       if (candidate !== null) phase('compiling')
 
       if (editError !== null) {
-        emit({ kind: 'compile', ok: false, ms: 0, attempt, stderr: editError })
+        emit({ kind: 'compile', ok: false, ms: 0, attempt, stderr: editError, edit: true })
         if (attempt === MAX_RETRIES) return { status: 'error', message: editError }
         attempt++
         continue
@@ -314,7 +320,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       if (candidate === null && !opened && finishReason !== 'length') {
         return { status: 'answered' }
       }
-      if (finishReason === 'length' || !complete || candidate === null) {
+      if (!complete || candidate === null) {
         const message =
           finishReason === 'length'
             ? 'The reply hit the output limit before it finished. Try again.'
@@ -326,9 +332,18 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       }
       // Echoing the document, or the source just inspected, is a confirmation.
       if (candidate === committed || candidate === verified?.source) return { status: 'answered' }
+      // A source this turn already compiled is a loop, not a new attempt: a
+      // model oscillating between two versions would otherwise run for ever.
+      const repeat = tried.get(candidate)
+      if (repeat) {
+        if (repeat.ok) return { status: 'answered' }
+        emit({ kind: 'note', tone: 'error', text: 'The model repeated a version that already failed to compile.' })
+        return { status: 'failed', source: candidate, result: repeat }
+      }
       base = candidate
 
       const result = await deps.compile(candidate)
+      if (result.ok || !result.cancelled) tried.set(candidate, result)
 
       // All three unrepairable checks come BEFORE the log append: their
       // stderrRaw is synthetic ('Compile cancelled.', 'Compile timed out after
@@ -337,10 +352,16 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       if (deps.signal.aborted) return { status: 'stopped' }
       if (!result.ok) {
         if (result.cancelled) return { status: 'stopped' }
-        // Three 60-second timeouts is three minutes of dead UI and two paid
-        // calls against a message no model can act on, so neither of these
-        // two paths retries.
+        // One timeout is a diagnostic the model can act on — a high $fn, a
+        // minkowski over many objects. A second is a minute of dead UI
+        // against a message it already had, so the turn fails there.
         if (result.timedOut) {
+          if (!timedOutOnce && attempt < MAX_RETRIES) {
+            timedOutOnce = true
+            emit({ kind: 'compile', ok: false, ms: result.ms, attempt, stderr: TIMEOUT_DIAGNOSTIC })
+            attempt++
+            continue
+          }
           emit({
             kind: 'note',
             tone: 'error',
@@ -359,7 +380,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         ok: result.ok,
         ms: result.ms,
         attempt,
-        stderr: stderrForModel(result.stderrRaw),
+        // A good compile keeps only its warnings; the model reads them before the report.
+        stderr: result.ok ? kernelWarnings(result.stderrRaw) : stderrForModel(result.stderrRaw),
       })
       if (result.ok) {
         // Each round diffs against the one before it, so a correction's

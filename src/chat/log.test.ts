@@ -496,3 +496,43 @@ test('a skill event survives the store, and one with no name is dropped', () => 
     { id: 'b', ts: 2, turn: 1, kind: 'skill', name: 'nope', error: 'no' },
   ])
 })
+
+test('an edit that did not apply re-attaches the source without claiming the edits applied', () => {
+  const missed: ChatEvent = {
+    id: nextId(), ts: 0, turn: 1, kind: 'compile', ok: false, ms: 0, attempt: 0, stderr: 'Edit 1 did not apply: x', edit: true,
+  }
+  const log = [user(1, 'thinner'), assistant(1, EDIT_REPLY), missed]
+  const tail = texts(win(log, 1)).at(-1)!
+  expect(tail).toContain(`\`\`\`openscad\n${SRC}\n\`\`\``)
+  expect(tail).not.toMatch(/edits applied/)
+  expect(texts(win(log, 1))).toContain('Edit 1 did not apply: x')
+})
+
+test('warnings from a live successful compile reach the model; a clean compile sends nothing', () => {
+  const warned = [user(1, 'a'), assistant(1, reply('cube(1);')), compiled(1, true, 'WARNING: unknown variable wal')]
+  expect(texts(win(warned, 1))).toContain('The source compiled with warnings:\nWARNING: unknown variable wal')
+  const clean = [user(1, 'a'), assistant(1, reply('cube(1);')), compiled(1, true, '')]
+  expect(texts(win(clean, 1)).join('\n')).not.toContain('warnings')
+  // History, like stderr: an earlier turn's warnings are dropped.
+  expect(texts(win([...warned, user(2, 'b')], 2)).join('\n')).not.toContain('WARNING')
+})
+
+test('only the latest live inspection carries its render; earlier rounds keep their report', () => {
+  const log = [
+    user(1, 'a'),
+    assistant(1, reply('cube(1);')),
+    inspected(1, 'ROUND 1', 'data:one'),
+    assistant(1, reply('cube(2);')),
+    inspected(1, 'ROUND 2', 'data:two'),
+  ]
+  const messages = win(log, 1)
+  expect(messages.filter((m) => typeof m.content !== 'string')).toHaveLength(1)
+  expect(messages.at(-1)).toEqual({
+    role: 'user',
+    content: [
+      { type: 'text', text: 'ROUND 2' },
+      { type: 'image_url', image_url: { url: 'data:two' } },
+    ],
+  })
+  expect(texts(messages)).toContain('ROUND 1')
+})

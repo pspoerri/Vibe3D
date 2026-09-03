@@ -10,6 +10,11 @@ export interface ShellStats {
   /** mm³, unsigned. Meaningless when the mesh is not watertight. */
   volume: number
   triangles: number
+  /**
+   * Share of the surface (0..1) facing down more than 45° from vertical and
+   * not resting on the bed: what a printer cannot lay down without support.
+   */
+  overhang: number
 }
 
 export interface MeshStats {
@@ -95,7 +100,15 @@ interface Component {
   /** Six times the signed sum of tetrahedra from the origin: negative means the faces point inward. */
   signed: number
   triangles: number
+  area: number
+  /** Area of the faces that overhang: normal below −45°, and not lying on the bed. */
+  down: number
 }
+
+/** cos 45°: a face is an overhang once its normal points further down than this. */
+const OVERHANG_NZ = -Math.SQRT1_2
+/** A face this close to the lowest point of the mesh is resting on the bed. */
+const BED_MM = 0.05
 
 /**
  * Every connected component in order of first appearance, which triangle
@@ -111,6 +124,8 @@ function census(mesh: Mesh): {
 } {
   const { positions: p, indices } = mesh
   const { find, used } = partCensus(indices, mesh.vertexCount)
+  let floor = Infinity
+  for (let i = 2; i < p.length; i += 3) if (p[i]! < floor) floor = p[i]!
   const numbered = new Map<number, number>()
   const components: Component[] = []
   const of = new Uint32Array(indices.length / 3)
@@ -125,6 +140,8 @@ function census(mesh: Mesh): {
         max: [-Infinity, -Infinity, -Infinity],
         signed: 0,
         triangles: 0,
+        area: 0,
+        down: 0,
       })
     }
     of[t] = k
@@ -137,6 +154,13 @@ function census(mesh: Mesh): {
     const bx = p[b]!, by = p[b + 1]!, bz = p[b + 2]!
     const cx = p[d]!, cy = p[d + 1]!, cz = p[d + 2]!
     c.signed += ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)
+    // The face normal, unnormalised: its length is twice the area.
+    const ux = bx - ax, uy = by - ay, uz = bz - az
+    const vx = cx - ax, vy = cy - ay, vz = cz - az
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx
+    const twice = Math.hypot(nx, ny, nz)
+    c.area += twice / 2
+    if (twice > 0 && nz / twice < OVERHANG_NZ && Math.max(az, bz, cz) > floor + BED_MM) c.down += twice / 2
     for (const v of [a, b, d]) {
       for (let axis = 0; axis < 3; axis++) {
         const value = p[v + axis]!
@@ -183,6 +207,7 @@ const shellOf = (c: Component): ShellStats => ({
   size: [c.max[0] - c.min[0], c.max[1] - c.min[1], c.max[2] - c.min[2]],
   volume: Math.abs(c.signed) / 6,
   triangles: c.triangles,
+  overhang: c.area > 0 ? c.down / c.area : 0,
 })
 
 export function meshStats(mesh: Mesh): MeshStats {

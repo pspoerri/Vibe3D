@@ -27,6 +27,8 @@ interface ShellReport {
   moved_mm?: Vec3
   /** The part's colours by surface share, largest first — "saddlebrown (#8b4513) 82%, gold (#ffd700) 18%". */
   colours: string
+  /** Percent of the surface facing down past 45° off the bed: what needs support. */
+  overhang_pct: number
 }
 
 /** design.md §6.1, the ~200-token text diff. Field names are the wire format. */
@@ -132,6 +134,7 @@ const shellReport = (shell: ShellStats, moved: Vec3 | null = null, colours = 'no
   volume_mm3: r1(shell.volume),
   ...(moved ? { moved_mm: round3(moved) } : {}),
   colours,
+  overhang_pct: Math.round(shell.overhang * 100),
 })
 const volumeOf = (stats: MeshStats): number | null =>
   stats.volume === null ? null : r1(stats.volume)
@@ -393,7 +396,16 @@ const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' 
  * the request instead. A line that starts with NO is a defect to fix; the
  * void line names the shell the bare count could not.
  */
-export function meshChecks(report: Report, sections: number, lettering = false): string[] {
+/** Past this share of a part's surface, overhang is a design problem, not a bridge. */
+const OVERHANG_PCT = 10
+
+export function meshChecks(
+  report: Report,
+  sections: number,
+  lettering = false,
+  /** The printer's build volume, mm. Absent: not checked. */
+  bed: Vec3 | null = null,
+): string[] {
   const out: string[] = []
   const parts = report.per_part
 
@@ -407,6 +419,16 @@ export function meshChecks(report: Report, sections: number, lettering = false):
           .map((p) => `part ${p.n} ${p.z > 0 ? 'floats' : 'reaches'} ${r1(Math.abs(p.z))} mm ${p.z > 0 ? 'above' : 'below'} the plane`)
           .join('; ')}`,
   )
+
+  if (bed) {
+    const size = report.model_bbox_mm.size
+    const fits = [0, 1, 2].every((a) => size[a]! <= bed[a]! + 0.01)
+    out.push(
+      fits
+        ? 'fits the bed: yes'
+        : `fits the bed: NO — ${size.join(' × ')} mm against a ${bed.join(' × ')} mm build volume; shrink it, split it, or lay it on another face`,
+    )
+  }
 
   const n = parts.length
   if (sections === 0) {
@@ -440,6 +462,15 @@ export function meshChecks(report: Report, sections: number, lettering = false):
     report.watertight
       ? 'watertight: yes'
       : 'watertight: NO — the mesh has open edges; look for a zero-thickness feature or a coplanar face',
+  )
+
+  const hanging = parts.map((part, i) => ({ n: i + 1, pct: part.overhang_pct })).filter((p) => p.pct > OVERHANG_PCT)
+  out.push(
+    hanging.length === 0
+      ? 'overhangs past 45°: none'
+      : `overhangs: NO — ${hanging
+          .map((p) => `part ${p.n} has ${p.pct}% of its surface facing down past 45°`)
+          .join('; ')}: it needs support unless that is a short bridge. Chamfer the underside, or print it on another face`,
   )
 
   // Lettering that shares its base's colour prints in one filament: the one
@@ -492,16 +523,24 @@ const DIFF_SOURCE = 'difference() { import("keep.off"); import("cut.off"); }'
 // ponytail: a boolean slower than this reports "unknown" rather than holding the turn.
 const DIFF_TIMEOUT_MS = 30_000
 
-async function diff(keep: Uint8Array, cut: Uint8Array, signal: AbortSignal): Promise<DiffResult> {
+/** A compile the diff can run on: the browser's Compiler, or the Node kernel under the eval runner. */
+export type DiffCompile = (source: string, files: Record<string, Uint8Array>) => Promise<CompileResult>
+
+async function diff(keep: Uint8Array, cut: Uint8Array, signal: AbortSignal, compile?: DiffCompile): Promise<DiffResult> {
+  const files = { '/keep.off': keep, '/cut.off': cut }
+  if (compile) {
+    try {
+      return diffOf(await compile(DIFF_SOURCE, files))
+    } catch {
+      return null
+    }
+  }
   const compiler = new Compiler()
   const cancel = (): void => compiler.cancel()
   signal.addEventListener('abort', cancel)
   try {
     return diffOf(
-      await compiler.compile(DIFF_SOURCE, 'off', {
-        files: { '/keep.off': keep, '/cut.off': cut },
-        timeoutMs: DIFF_TIMEOUT_MS,
-      }),
+      await compiler.compile(DIFF_SOURCE, 'off', { files, timeoutMs: DIFF_TIMEOUT_MS }),
     )
   } catch {
     return null
@@ -526,6 +565,8 @@ export interface InspectInput {
    */
   readonly vision: boolean
   readonly signal: AbortSignal
+  /** Where to run the two diff booleans. Absent: a fresh browser Compiler each. */
+  readonly compile?: DiffCompile
 }
 
 /** A changed piece and its close-up, rendered when asked for. */
@@ -562,8 +603,8 @@ export async function inspect(input: InspectInput): Promise<Inspection> {
   // new − old is what was added; old − new is what was removed. Two kernels, in parallel.
   const [added, removed] = alignedOff
     ? await Promise.all([
-        diff(input.after, alignedOff, input.signal),
-        diff(alignedOff, input.after, input.signal),
+        diff(input.after, alignedOff, input.signal, input.compile),
+        diff(alignedOff, input.after, input.signal, input.compile),
       ])
     : [null, null]
   const addedStats = statsOf(added)

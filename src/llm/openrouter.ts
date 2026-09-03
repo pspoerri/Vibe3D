@@ -12,7 +12,12 @@ export const DEFAULT_MODEL = 'google/gemini-3.7-flash'
  * normalisation path means there is nothing for it to select between.
  */
 export type ContentPart =
-  | { type: 'text'; text: string }
+  | {
+      type: 'text'
+      text: string
+      /** An Anthropic prompt-cache breakpoint. OpenRouter passes it through; other providers ignore it. */
+      cache_control?: { type: 'ephemeral' }
+    }
   | { type: 'image_url'; image_url: { url: string } }
 
 export interface ChatMessage {
@@ -66,6 +71,31 @@ export interface ChatOptions {
    * ignores it (the docs say so; nothing here requires the parameter).
    */
   readonly reasoning?: Effort
+  /** `max_tokens`. Absent keeps the body byte-identical; present, the provider's default cannot cut a long part short. */
+  readonly maxTokens?: number
+  /** Wait before the one retry of a transient failure. Injected so a test need not. */
+  readonly retryMs?: number
+}
+
+/** One retry, after this, on a 429, a 5xx or a network error before the stream opened. */
+export const RETRY_MS = 1500
+const transient = (status: number): boolean => status === 429 || status >= 500
+
+/**
+ * Anthropic caches nothing without an explicit breakpoint, and a long turn
+ * re-sends the whole source on every look. The system prompt is the stable
+ * prefix, so the breakpoint goes there — only for Anthropic models, since a
+ * local host may reject array content on a system message.
+ */
+function withCacheBreakpoint(messages: readonly ChatMessage[], model: string): readonly ChatMessage[] {
+  const first = messages[0]
+  if (!/^~?anthropic\//.test(model) || first?.role !== 'system' || typeof first.content !== 'string') {
+    return messages
+  }
+  return [
+    { role: 'system', content: [{ type: 'text', text: first.content, cache_control: { type: 'ephemeral' } }] },
+    ...messages.slice(1),
+  ]
 }
 
 /** JSON.parse that answers null instead of throwing. Every body here is untrusted. */
@@ -158,24 +188,43 @@ export async function* streamChat(
   signal: AbortSignal,
   options: ChatOptions,
 ): AsyncGenerator<StreamEvent, void, undefined> {
-  const response = await fetch(`${options.baseUrl}/chat/completions`, {
-    method: 'POST',
-    signal,
-    headers: {
-      // A custom base URL may be a keyless local server; `Bearer ` with
-      // nothing behind it is what such servers reject.
-      ...(options.apiKey ? { Authorization: `Bearer ${options.apiKey}` } : {}),
-      'Content-Type': 'application/json',
-      'HTTP-Referer': location.origin + location.pathname,
-      'X-OpenRouter-Title': 'Vibe3D',
-    },
-    body: JSON.stringify({
-      model: options.model,
-      messages,
-      stream: true,
-      ...(options.reasoning ? { reasoning: { effort: options.reasoning } } : {}),
-    }),
-  })
+  const request = (): Promise<Response> =>
+    fetch(`${options.baseUrl}/chat/completions`, {
+      method: 'POST',
+      signal,
+      headers: {
+        // A custom base URL may be a keyless local server; `Bearer ` with
+        // nothing behind it is what such servers reject.
+        ...(options.apiKey ? { Authorization: `Bearer ${options.apiKey}` } : {}),
+        'Content-Type': 'application/json',
+        // Absent under Node, where the eval runner calls this.
+        ...(typeof location === 'undefined' ? {} : { 'HTTP-Referer': location.origin + location.pathname }),
+        'X-OpenRouter-Title': 'Vibe3D',
+      },
+      body: JSON.stringify({
+        model: options.model,
+        messages: withCacheBreakpoint(messages, options.model),
+        stream: true,
+        ...(options.reasoning ? { reasoning: { effort: options.reasoning } } : {}),
+        ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
+      }),
+    })
+
+  // One retry for what a second try can fix — a rate limit, a provider
+  // hiccup, a dropped connection — and only before any token has been paid
+  // for. An abort is the caller's and propagates.
+  let response: Response
+  try {
+    response = await request()
+  } catch (error) {
+    if (signal.aborted) throw error
+    await new Promise((r) => setTimeout(r, options.retryMs ?? RETRY_MS))
+    response = await request()
+  }
+  if (!response.ok && transient(response.status) && !signal.aborted) {
+    await new Promise((r) => setTimeout(r, options.retryMs ?? RETRY_MS))
+    response = await request()
+  }
 
   // Checked before response.body is touched: a stream:true request that fails
   // before the stream opens answers with application/json, not SSE, so handing
@@ -232,6 +281,8 @@ export interface ModelInfo {
    * all. Nothing is hidden, disabled or blocked on it.
    */
   vision: boolean
+  /** The provider's output ceiling, or null when the catalogue does not say. What `max_tokens` is set to. */
+  maxOutput: number | null
 }
 
 /**
@@ -262,6 +313,7 @@ interface RawModel {
   context_length: number
   pricing: { prompt: string; completion: string }
   architecture?: { input_modalities?: string[] }
+  top_provider?: { max_completion_tokens?: number | null }
 }
 
 async function loadModels(baseUrl: string): Promise<readonly ModelInfo[]> {
@@ -274,7 +326,7 @@ async function loadModels(baseUrl: string): Promise<readonly ModelInfo[]> {
       // which corrupts any sort; `:batch` ids are async duplicates. `:free`
       // stays, and an id may legitimately start with `~` or contain `/`.
       .filter(({ id }) => !id.endsWith(':batch') && !id.startsWith('openrouter/'))
-      .map(({ id, name, context_length, pricing, architecture }) => {
+      .map(({ id, name, context_length, pricing, architecture, top_provider }) => {
         // Bound first: `Array.isArray(architecture?.input_modalities)` narrows
         // the property but not `architecture` itself, so the inline form is a
         // type error. And the isArray check is not ceremony — a bare
@@ -286,6 +338,10 @@ async function loadModels(baseUrl: string): Promise<readonly ModelInfo[]> {
           context_length,
           pricing,
           vision: Array.isArray(modalities) && modalities.includes('image'),
+          maxOutput:
+            typeof top_provider?.max_completion_tokens === 'number' && top_provider.max_completion_tokens > 0
+              ? top_provider.max_completion_tokens
+              : null,
         }
       })
   )

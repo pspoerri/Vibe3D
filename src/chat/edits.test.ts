@@ -91,3 +91,9 @@ test('an empty search is refused', () => {
 test('replacing with nothing deletes the lines', () => {
   expect(applyEdits('a;\nb;\nc;', [{ search: 'b;', replace: '' }])).toEqual({ source: 'a;\nc;' })
 })
+
+test('a search that differs only in indentation still matches, and the replacement is used as written', () => {
+  const source = 'module a() {\n    wall = 2;\n}'
+  const out = applyEdits(source, [{ search: '\twall = 2;', replace: '    wall = 3;' }])
+  expect(out).toEqual({ source: 'module a() {\n    wall = 3;\n}' })
+})

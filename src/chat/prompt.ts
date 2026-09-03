@@ -140,6 +140,14 @@ TEXT
 text() has the Liberation family and nothing else — \`font = "Liberation Sans:style=Bold"\`;
 any other name silently gets the nearest face. The fonts skill lists every face and style.
 
+LIBRARIES
+BOSL2 is installed: \`include <BOSL2/std.scad>\` on the first line after the title gives you
+cuboid() with rounding and chamfer, cyl(), tube(), prismoid(), attachments and anchors,
+rounding and offset_sweep; \`include <BOSL2/threading.scad>\`, \`<BOSL2/gears.scad>\` and
+\`<BOSL2/screws.scad>\` add threads, gears and screw holes. Use it for fillets, threads and
+gears rather than hand-rolling them; plain OpenSCAD is fine for everything else. Only the
+BOSL2 family is available — no MCAD, no other library. The bosl2 skill has the calls.
+
 SKILLS
 Reference to load when it changes what you will do next. Reply with ONLY a \`\`\`skill
 block whose body is the name; the text arrives in the next message and stays for the
@@ -179,6 +187,7 @@ fillet = 4;       // [0:0.5:10]
 
 $fn = 48;
 
+// ---- PART 1 ----
 module plate() {
   difference() {
     linear_extrude(thickness)
@@ -189,7 +198,8 @@ module plate() {
   }
 }
 
-plate();
+color("slategray") plate();
+// ---- PART 1 END ----
 \`\`\`
 `
 
