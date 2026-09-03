@@ -58,6 +58,8 @@ export interface Doc {
   chat: ChatEvent[]
   /** Mesh files the source may import, by name. Document-level: a version is source alone. */
   components: Component[]
+  /** A small render of the last compile, for the list. A Blob, never base64 (design.md §7). */
+  thumb?: Blob
 }
 
 export interface Session {
@@ -265,6 +267,12 @@ export function undoVersion(session: Session, now: number): Session {
   return previous ? restoreVersion(session, previous.id, now) : session
 }
 
+/** The thumbnail of document `id` — by id, since the render lands after the compile it pictures. */
+export function setThumb(session: Session, id: string, thumb: Blob): Session {
+  const doc = session.docs.find((d) => d.id === id)
+  return doc ? withDoc(session, { ...doc, thumb }) : session
+}
+
 export function setChat(session: Session, chat: readonly ChatEvent[]): Session {
   return withDoc(session, { ...currentDoc(session), chat: chat.map(stripImages) })
 }
@@ -351,6 +359,7 @@ export function reviveDoc(raw: unknown, now: number, taken: string[] = []): Doc 
     chat: reviveLog(d.chat),
     components: reviveComponents(d.components),
     ...(d.named === true ? { named: true as const } : {}),
+    ...(typeof Blob !== 'undefined' && d.thumb instanceof Blob ? { thumb: d.thumb } : {}),
   }
 }
 

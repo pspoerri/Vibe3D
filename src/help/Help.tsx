@@ -65,8 +65,12 @@ export function Help({ onClose }: { onClose: () => void }) {
           — click it to see the model's raw output so far; the viewport shows each version that compiles as it goes (tagged <b>candidate</b>{' '}
           until it commits), and nothing interrupts it but <b>Stop</b>. Everything it saw sits in the transcript
           behind the <b>inspected</b> chip. The model can also load a <b>skill</b> — fonts, views,
-          parts, diff — reference it pulls in when it needs it, at any thinking level; a{' '}
-          <b>skill · fonts</b> chip marks the moment.
+          parts, diff, bosl2 — reference it pulls in when it needs it, at any thinking level; a{' '}
+          <b>skill · fonts</b> chip marks the moment. The status line also shows what the running
+          turn has cost so far. The app grades the mechanical checks itself — rests on the plate,
+          one solid per PART, no sealed voids, watertight, overhangs past 45°, fits the bed — and
+          hands the model the verdicts; kernel warnings from a compile that succeeded go to it too,
+          and show under the viewport in amber.
         </p>
         <p>
           <b>Stop</b> aborts the request. If a version had already compiled, you keep it. Prices
@@ -81,7 +85,16 @@ export function Help({ onClose }: { onClose: () => void }) {
           first <code>{'{'}</code> with a Customizer annotation become controls under the editor —
           <code>wall = 2; // [1:0.5:5]</code> is a slider, <code>// [a, b, c]</code> a dropdown,{' '}
           <code>true</code> a checkbox. Dragging previews at a reduced <code>$fn</code> and writes
-          the value into the source on release, with no model call.
+          the value into the source on release, with no model call. A compile error marks its line
+          in the editor.
+        </p>
+        <p>
+          <b>BOSL2</b> is installed: <code>include &lt;BOSL2/std.scad&gt;</code> at the top of the
+          file gives <code>cuboid()</code> with rounding and chamfers, <code>cyl()</code>,{' '}
+          <code>tube()</code>, anchors and attachments; <code>threading.scad</code>,{' '}
+          <code>gears.scad</code> and <code>screws.scad</code> add threads, gears and screw holes.
+          It is loaded only for a source that names it. The model is told to use it for fillets,
+          threads and gears.
         </p>
 
         <h2>The viewport</h2>
@@ -104,6 +117,15 @@ export function Help({ onClose }: { onClose: () => void }) {
             where the model reads the strokes as "here". <kbd>Esc</kbd> leaves without attaching.
           </li>
           <li>
+            <b>CUT</b> opens the part along X, Y or Z; the slider moves the cut, so a pocket or a
+            wall thickness can be seen. <b>MEASURE</b> takes two clicks on the part and shows the
+            distance with its axis deltas. Click either again to leave.
+          </li>
+          <li>
+            The plate outline is the printer's build volume — a setting under the chat, 256 mm
+            cubed by default — and the model is told when the part does not fit it.
+          </li>
+          <li>
             <b>Export 3MF</b> (carries units, one object per part, and every <code>color()</code> as a
             material — and, for Bambu Studio and PrusaSlicer, as painting: each colour region is
             a filament slot, the largest region filament 1), <b>STL</b> (colours per facet, the VisCAM/SolidView
@@ -112,7 +134,8 @@ export function Help({ onClose }: { onClose: () => void }) {
             Studio greets every 3MF it did not write itself — Fusion's and PrusaSlicer's included —
             with "invalid config, load geometry data only": click OK, the parts and colours all
             load. Only a full Bambu project file avoids it, and that would carry printer settings
-            this app should not choose for you.
+            this app should not choose for you. With a part selected, the buttons say so and write
+            that part alone.
           </li>
         </ul>
 
@@ -161,8 +184,11 @@ export function Help({ onClose }: { onClose: () => void }) {
         <p>
           Every turn, every <b>Save version</b> and every successful compile of your own edits is a
           version; nothing is deleted. The picker in the menu bar steps to any of them,{' '}
-          <code>/undo</code> steps back one, and a change made from an older version simply becomes
-          the next. <b>Export project</b> writes one <code>.json</code> with source, versions,
+          <code>/undo</code> steps back one, <b>Diff</b> shows what the current one changed against
+          the version it was made from, and a change made from an older version simply becomes
+          the next. <b>Share</b> copies a link with the source in it; whoever opens it gets a new
+          document with that source and no conversation. The start window shows a thumbnail of
+          each document's last compile. <b>Export project</b> writes one <code>.json</code> with source, versions,
           conversation and meshes — never the key; <b>Import project</b> reads it back as a new
           document. Documents live in this browser's storage, which a browser may evict when it
           needs space: export what you want to keep.

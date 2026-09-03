@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AmbientLight, AxesHelper, Box3, BufferAttribute, BufferGeometry, DirectionalLight,
   DoubleSide, EdgesGeometry, GridHelper, Group, LineBasicMaterial, LineLoop, LineSegments,
   Color, Fog, Mesh as ThreeMesh, MeshBasicMaterial, MeshStandardMaterial, PerspectiveCamera,
-  Quaternion, Raycaster, Scene, SRGBColorSpace, Vector2, Vector3, WebGLRenderer, type Material,
+  Plane, Quaternion, Raycaster, Scene, SphereGeometry, SRGBColorSpace, Vector2, Vector3,
+  WebGLRenderer, type Material,
 } from 'three'
+import { meshStats } from '../kernel/stats'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import type { Mesh } from '../kernel/off'
 import { fit as fitImage } from '../llm/images'
@@ -12,9 +14,8 @@ import {
   chooseGridSpacing, fitDistance, VIEW_DIRECTIONS, viewUp, worldPerPixel, type StandardView,
 } from './camera'
 import { createViewCube } from './ViewCube'
+import { DEFAULT_BED } from '../state/settings'
 
-/** Bambu A1 / P1S / X1C / X1E share this build volume. */
-const PLATE_MM = 256
 const FOV = 50
 // Extent is spacing x cells. Generous, because the ground plane runs to the
 // horizon and the fog is what ends it — a small patch would read as a rug.
@@ -33,6 +34,17 @@ export const GHOST = 0x4f79b8
 /** Markup strokes: a red no part wears, wide enough to survive the downscale. */
 const INK = '#e0242a'
 const INK_PX = 3
+/** Measure mode's points and line: the highlight blue, so they read as UI, not part. */
+const MEASURE = 0x3b6fd6
+
+export type CutAxis = 'x' | 'y' | 'z'
+/** A section: everything past `at` on `axis`, towards +axis, is clipped away. */
+export interface Cut {
+  axis: CutAxis
+  at: number
+}
+const AXIS: Record<CutAxis, Vec3T> = { x: [1, 0, 0], y: [0, 1, 0], z: [0, 0, 1] }
+type Vec3T = readonly [number, number, number]
 
 /** Per-triangle sRGB bytes → one linear rgb per corner, which is what three reads. */
 function vertexColors(rgb: Uint8Array): Float32Array {
@@ -54,6 +66,10 @@ const disposeMaterial = (material: Material | Material[]) =>
 interface ViewportApi {
   setMesh(mesh: Mesh | null): void
   setGhost(mesh: Mesh | null): void
+  setPlate(size: readonly [number, number, number]): void
+  setCut(cut: Cut | null): void
+  setMeasuring(on: boolean): void
+  clearMeasure(): void
   setHighlight(triangles: Uint32Array | null): void
   fit(): void
   setDrawing(on: boolean): void
@@ -68,10 +84,13 @@ export function Viewport({
   ghost = null,
   fitToken = 0,
   highlight = null,
+  plate = DEFAULT_BED,
   onPick,
   onMarkup,
 }: {
   mesh: Mesh | null
+  /** The build volume, mm: drawn as the plate outline on Z=0. */
+  plate?: readonly [number, number, number]
   /** Construction geometry, drawn translucent: never picked, never framed, never in the stats. */
   ghost?: Mesh | null
   /** Bump to re-frame. A turn replaces the whole part, so the camera the user
@@ -91,6 +110,13 @@ export function Viewport({
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick
   const [drawing, setDrawing] = useState(false)
+  const [cut, setCut] = useState<Cut | null>(null)
+  const [measuring, setMeasuring] = useState(false)
+  /** The two points measured, as the HUD reads them: distance and the axis deltas. */
+  const [measure, setMeasure] = useState<{ d: number; dx: number; dy: number; dz: number } | null>(null)
+  const measuringRef = useRef(false)
+  measuringRef.current = measuring
+  const box = useMemo(() => (mesh && mesh.triangleCount > 0 ? meshStats(mesh) : null), [mesh])
 
   // Scene is built once and reused; only the model group's contents change.
   useEffect(() => {
@@ -113,6 +139,7 @@ export function Viewport({
 
     const renderer = new WebGLRenderer({ antialias: true })
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2))
+    renderer.localClippingEnabled = true
     host.appendChild(renderer.domElement)
 
     const controls = new OrbitControls(camera, renderer.domElement)
@@ -127,12 +154,15 @@ export function Viewport({
     scene.add(key)
     scene.add(new AxesHelper(20))
 
-    // Build plate: the outline of the printable area, on Z=0.
-    const half = PLATE_MM / 2
-    const plateGeometry = new BufferGeometry().setFromPoints([
-      new Vector3(-half, -half, 0), new Vector3(half, -half, 0),
-      new Vector3(half, half, 0), new Vector3(-half, half, 0),
-    ])
+    // Build plate: the outline of the printable area, on Z=0, centred like a printer's.
+    const plateGeometry = new BufferGeometry()
+    const setPlate = ([w, d]: readonly [number, number, number]): void => {
+      plateGeometry.setFromPoints([
+        new Vector3(-w / 2, -d / 2, 0), new Vector3(w / 2, -d / 2, 0),
+        new Vector3(w / 2, d / 2, 0), new Vector3(-w / 2, d / 2, 0),
+      ])
+    }
+    setPlate(DEFAULT_BED)
     const plateMaterial = new LineBasicMaterial({ color: PLATE_COLOR })
     scene.add(new LineLoop(plateGeometry, plateMaterial))
 
@@ -153,6 +183,45 @@ export function Viewport({
     let fitted = false
     let modelMesh: ThreeMesh | null = null
     let highlightMesh: ThreeMesh | null = null
+    /** The section plane, on every material of the part; empty for no cut. */
+    let planes: Plane[] = []
+    const clipped = (): Material[] =>
+      modelGroup.children.flatMap((c) =>
+        c instanceof ThreeMesh || c instanceof LineSegments ? (Array.isArray(c.material) ? c.material : [c.material]) : [],
+      )
+    const applyPlanes = (): void => {
+      for (const m of clipped()) {
+        m.clippingPlanes = planes
+        m.needsUpdate = true
+      }
+    }
+    // Measure mode: two picked points, a line between them.
+    const measureGroup = new Group()
+    scene.add(measureGroup)
+    const picked: Vector3[] = []
+    const clearMeasure = (): void => {
+      picked.length = 0
+      clearGroup(measureGroup)
+      invalidate()
+    }
+    const showMeasure = (): void => {
+      clearGroup(measureGroup)
+      const radius = Math.max(0.3, modelBox.getSize(new Vector3()).length() / 200)
+      for (const p of picked) {
+        const dot = new ThreeMesh(new SphereGeometry(radius, 12, 8), new MeshBasicMaterial({ color: MEASURE, depthTest: false }))
+        dot.position.copy(p)
+        measureGroup.add(dot)
+      }
+      if (picked.length === 2) {
+        measureGroup.add(
+          new LineSegments(
+            new BufferGeometry().setFromPoints([picked[0]!, picked[1]!]),
+            new LineBasicMaterial({ color: MEASURE, depthTest: false }),
+          ),
+        )
+      }
+      invalidate()
+    }
 
     // Grid spacing follows the zoom, so it never collapses into a grey wash
     // when you pull back nor vanishes when you dive into a 0.4 mm feature.
@@ -271,6 +340,15 @@ export function Viewport({
         camera,
       )
       const hit = modelMesh ? raycaster.intersectObject(modelMesh, false)[0] : undefined
+      if (measuringRef.current) {
+        if (!hit) return
+        if (picked.length === 2) picked.length = 0
+        picked.push(hit.point.clone())
+        showMeasure()
+        const [a, b] = picked
+        setMeasure(a && b ? { d: a.distanceTo(b), dx: b.x - a.x, dy: b.y - a.y, dz: b.z - a.z } : null)
+        return
+      }
       onPickRef.current?.(hit?.faceIndex ?? null)
     }
     renderer.domElement.addEventListener('pointerdown', onDown)
@@ -345,6 +423,21 @@ export function Viewport({
 
     apiRef.current = {
       fit,
+      setPlate(size) {
+        setPlate(size)
+        invalidate()
+      },
+      setCut(next) {
+        // Keeps the half below `at` along the axis: the plane's normal points
+        // back down the axis and the constant puts it at the coordinate.
+        planes = next ? [new Plane(new Vector3(...AXIS[next.axis]).negate(), next.at)] : []
+        applyPlanes()
+        invalidate()
+      },
+      setMeasuring(on) {
+        if (!on) clearMeasure()
+      },
+      clearMeasure,
       setGhost(next) {
         clearGroup(ghostGroup)
         if (next && next.triangleCount > 0) {
@@ -415,6 +508,7 @@ export function Viewport({
           }),
         )
         modelGroup.add(highlightMesh)
+        applyPlanes()
         invalidate()
       },
       setMesh(next) {
@@ -455,6 +549,8 @@ export function Viewport({
           )
         }
 
+        applyPlanes()
+        clearMeasure()
         // Frame the first model that compiles; after that the camera is the
         // user's, and re-framing under them on every recompile would fight them.
         if (!fitted && !modelBox.isEmpty()) {
@@ -498,6 +594,33 @@ export function Viewport({
   useEffect(() => {
     apiRef.current?.setGhost(ghost)
   }, [ghost])
+
+  useEffect(() => {
+    apiRef.current?.setPlate(plate)
+  }, [plate])
+
+  useEffect(() => {
+    apiRef.current?.setCut(cut)
+  }, [cut, mesh])
+
+  useEffect(() => {
+    apiRef.current?.setMeasuring(measuring)
+    if (!measuring) setMeasure(null)
+  }, [measuring])
+  // A new mesh drops the measurement: its points were on the old one.
+  useEffect(() => setMeasure(null), [mesh])
+
+  /** The cut's slider range: the model's extent on the chosen axis. */
+  const cutRange = (axis: CutAxis): [number, number] => {
+    const k = axis === 'x' ? 0 : axis === 'y' ? 1 : 2
+    return box ? [box.min[k], box.max[k]] : [0, 100]
+  }
+  const startCut = (axis: CutAxis) => {
+    const [lo, hi] = cutRange(axis)
+    setCut({ axis, at: (lo + hi) / 2 })
+  }
+  const mm = (n: number): string => (Math.round(n * 10) / 10).toString()
+
 
   // After the mesh effect, so the overlay is built on the geometry it indexes.
   useEffect(() => {
@@ -557,11 +680,65 @@ export function Viewport({
             </button>
           </>
         ) : (
-          <button type="button" onClick={() => setDrawing(true)} title="Draw on the view to mark up a change">
-            DRAW
-          </button>
+          <>
+            <button type="button" onClick={() => setDrawing(true)} title="Draw on the view to mark up a change">
+              DRAW
+            </button>
+            <button
+              type="button"
+              className={cut ? 'active' : ''}
+              aria-pressed={cut !== null}
+              onClick={() => (cut ? setCut(null) : startCut('z'))}
+              title="Cut the part open along an axis"
+            >
+              CUT
+            </button>
+            <button
+              type="button"
+              className={measuring ? 'active' : ''}
+              aria-pressed={measuring}
+              onClick={() => setMeasuring((on) => !on)}
+              title="Click two points on the part to measure between them"
+            >
+              MEASURE
+            </button>
+          </>
         )}
       </div>
+      {cut && (
+        <div className="viewport-cut">
+          {(['x', 'y', 'z'] as const).map((axis) => (
+            <button
+              key={axis}
+              type="button"
+              className={cut.axis === axis ? 'active' : ''}
+              aria-pressed={cut.axis === axis}
+              onClick={() => startCut(axis)}
+            >
+              {axis.toUpperCase()}
+            </button>
+          ))}
+          <input
+            type="range"
+            aria-label="Cut position"
+            min={cutRange(cut.axis)[0]}
+            max={cutRange(cut.axis)[1]}
+            step={(cutRange(cut.axis)[1] - cutRange(cut.axis)[0]) / 200 || 0.1}
+            value={cut.at}
+            onChange={(e) => setCut({ axis: cut.axis, at: Number(e.target.value) })}
+          />
+          <span className="tag">
+            {cut.axis} = {mm(cut.at)} mm
+          </span>
+        </div>
+      )}
+      {measuring && (
+        <div className="viewport-measure tag" aria-live="polite">
+          {measure
+            ? `${mm(measure.d)} mm · Δx ${mm(measure.dx)} · Δy ${mm(measure.dy)} · Δz ${mm(measure.dz)}`
+            : 'click two points on the part'}
+        </div>
+      )}
     </div>
   )
 }

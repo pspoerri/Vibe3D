@@ -57,6 +57,13 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
   background: #fff0f4; border: 1px solid #a8256b; border-radius: 2px;
   padding: 10px 12px; color: #7a1a4e;
 }
+/* The kernel's warnings on a compile that succeeded: worth reading, not a failure. */
+.warnings {
+  position: absolute; left: 10px; right: 10px; bottom: 10px; margin: 0; max-height: 25%;
+  overflow: auto; font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap;
+  background: #fff8e6; border: 1px solid #b8860b; border-radius: 2px;
+  padding: 10px 12px; color: #6b4e00;
+}
 
 .actions { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; }
 .actions button {
@@ -536,6 +543,8 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
      the view cube. The error overlay covers it only while export is disabled
      by that same error, so nothing usable is ever hidden. */
   .actions { top: auto; bottom: 10px; flex-wrap: wrap; justify-content: flex-end; }
+  /* Warnings leave export usable, so they sit above the row; so do the cut controls. */
+  .warnings, .viewport-cut { bottom: 52px; }
   /* Only the view cube shares the top now. */
   .hud { max-width: calc(100% - 104px); }
   /* There is no editor pane to slide. */
@@ -553,3 +562,27 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
 .start-footer { margin: 14px 0 0; font: 12px/1.4 system-ui, sans-serif; color: #6a706a; }
 .start-footer a { color: inherit; }
 .start-footer a:hover { color: #b8860b; }
+
+/* Section cut controls, under the view cube; the measurement readout beside the HUD. */
+.viewport-cut {
+  position: absolute; right: 10px; bottom: 10px; display: flex; gap: 6px; align-items: center;
+  background: rgba(255, 255, 255, .9); border: 1px solid #c8ccc4; border-radius: 2px; padding: 6px 8px;
+}
+.viewport-cut button {
+  font: 600 11px/1 ui-monospace, monospace; padding: 4px 7px; border: 1px solid #c8ccc4;
+  border-radius: 2px; background: #fff; color: #414741; cursor: pointer;
+}
+.viewport-cut button.active, .view-cube button.active { border-color: #b8860b; color: #b8860b; }
+.viewport-cut input[type=range] { width: 140px; }
+.viewport-measure { position: absolute; left: 10px; bottom: 10px; pointer-events: none; }
+
+/* The version diff, in the manual's frame. */
+.diff { font: 12px/1.5 ui-monospace, monospace; white-space: pre-wrap; margin: 0; }
+.diff .add { background: #e6f4e6; color: #1d5e1d; display: inline-block; width: 100%; }
+.diff .del { background: #fdecef; color: #8a1f3d; display: inline-block; width: 100%; }
+
+/* Thumbnails in the document list. */
+.start-thumb {
+  flex: none; width: 40px; height: 40px; border-radius: 2px; background: #eef0ea; overflow: hidden;
+}
+.start-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }

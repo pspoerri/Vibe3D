@@ -4,10 +4,11 @@ import { COMMANDS } from './chat/commands'
 import { constructionSource } from './chat/parts'
 import { Help } from './help/Help'
 import { Compiler, type CompileResult } from './kernel/compile'
+import { kernelWarnings } from './kernel/noise'
 import { parseOff, type Mesh } from './kernel/off'
 import { meshStats } from './kernel/stats'
 import { ComponentsPanel } from './editor/ComponentsPanel'
-import { Editor } from './editor/Editor'
+import { Editor, errorLineOf } from './editor/Editor'
 import { ParamsPanel } from './editor/ParamsPanel'
 import { Viewport } from './viewer/Viewport'
 import { selectPart, type Selection } from './viewer/select'
@@ -15,17 +16,23 @@ import { downloadBlob, EXTENSION, MIME, type DownloadFormat } from './export/dow
 import { encodeObj } from './export/obj'
 import { encodeStl } from './export/stl'
 import { paint3mf } from './export/threemf'
+import { part3mf, partMesh } from './export/part'
+import { renderThumb } from './viewer/capture'
+import { boxOf } from './viewer/inspect'
+import { diffLines, hunks } from './state/diff'
+import { decodeShare, encodeShare } from './state/share'
 import {
   formatLength, formatVolume, lengthLabel, loadUnits, saveUnits, volumeLabel,
 } from './state/units'
 import {
   addComponent, commitEdit, commitTurn, currentDoc, deleteDoc, headVersion, nameFromFirstPrompt,
   nameFromFirstTurn, newDoc, removeComponent,
-  renameDoc, restoreVersion, reviveSession, saveVersion, selectDoc, setChat, undoVersion,
-  suggestName, updateSource, UNTITLED, type Component, type Session,
+  renameDoc, restoreVersion, reviveSession, saveVersion, selectDoc, setChat, setThumb, undoVersion,
+  suggestName, updateSource, UNTITLED, type Component, type Doc, type Session,
 } from './state/documents'
 import { exportProject, importProject } from './state/project'
 import { loadAll, persistRequested, saveSession } from './state/store'
+import { loadSettings } from './state/settings'
 import { EXAMPLES, STARTER } from './examples'
 
 /** Injected by vite.config.ts: `git describe`, and the short commit hash — empty on the clean release tag. */
@@ -87,6 +94,10 @@ export function App() {
   // or a turn sets it, so a slider drag's reduced-$fn preview is never the before.
   const [before, setBefore] = useState<Uint8Array | null>(null)
   const [error, setError] = useState<string | null>(null)
+  /** What the kernel warned about on the last successful compile: an unknown variable, a non-manifold hint. */
+  const [warnings, setWarnings] = useState<string | null>(null)
+  /** The build volume from the settings, mirrored here for the plate outline. */
+  const [bed, setBed] = useState<readonly [number, number, number]>(() => loadSettings().bed)
   const [busy, setBusy] = useState(false)
   const [ms, setMs] = useState<number | null>(null)
   const [streamSource, setStreamSource] = useState<string | null>(null)
@@ -101,6 +112,8 @@ export function App() {
   const [open, setOpen] = useState(false)
   const [codeOpen, setCodeOpen] = useState(true)
   const [help, setHelp] = useState(false)
+  /** The version picker's diff: head against the version it was made from. */
+  const [diff, setDiff] = useState(false)
   // design.md §7: what the browser actually granted, not what was asked for.
   const [durable, setDurable] = useState(true)
 
@@ -118,7 +131,18 @@ export function App() {
       if (!live) return
       // lastSource is the fallback, not the starter: if the session structure is
       // unreadable the user still gets the code they were last working on.
-      setSession(reviveSession(raw, lastSource ?? STARTER, crypto.randomUUID(), Date.now()))
+      let revived = reviveSession(raw, lastSource ?? STARTER, crypto.randomUUID(), Date.now())
+      // A shared link: its source becomes a document of its own, opened at once.
+      const shared = await decodeShare(location.hash)
+      if (shared !== null) {
+        const id = crypto.randomUUID()
+        const name = suggestName(shared, revived.docs.map((d) => d.name))
+        revived = { docs: [...revived.docs, newDoc(name, shared, id, Date.now())], currentId: id }
+        history.replaceState(null, '', location.pathname + location.search)
+        setOpen(true)
+      }
+      if (!live) return
+      setSession(revived)
       // WebKit drops script-writable storage after 7 days without interaction,
       // and the request is silently denied when heuristics are unmet.
       const granted = await persistRequested()
@@ -167,6 +191,14 @@ export function App() {
   const [exporting, setExporting] = useState<DownloadFormat | null>(null)
   const [exportError, setExportError] = useState<string | null>(null)
 
+  /** A small render of the mesh for the start window, filed under the document it came from. */
+  const thumbnail = (mesh: Mesh, docId: string | null): void => {
+    if (!docId || mesh.triangleCount === 0) return
+    void renderThumb(mesh, boxOf(meshStats(mesh))).then((blob) => {
+      if (blob) setSession((s) => (s ? setThumb(s, docId, blob) : s))
+    })
+  }
+
   /** The single place busy, mesh, ms and error move together. */
   const applyCompiled = (key: string, result: CompileResult) => {
     appliedKeyRef.current = key
@@ -178,6 +210,7 @@ export function App() {
         // HUD figure describes the same mesh.
         setMs(result.ms)
         setError(null)
+        setWarnings(kernelWarnings(result.stderrRaw).replaceAll('/in.scad', 'model.scad') || null)
         setExportError(null)
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
@@ -247,6 +280,11 @@ export function App() {
         if (result.ok && previewDefines.length === 0) {
           setBefore(result.data)
           setSession((s) => (s ? commitEdit(s, source, Date.now()) : s))
+          try {
+            thumbnail(parseOff(new TextDecoder().decode(result.data)), currentId)
+          } catch {
+            // An unreadable OFF is already the HUD's error.
+          }
         }
       },
       previewDefines.length > 0 ? DRAG_DEBOUNCE_MS : DEBOUNCE_MS,
@@ -292,7 +330,9 @@ export function App() {
   const exportAs = async (format: DownloadFormat) => {
     setExporting(format)
     setExportError(null)
-    const name = fileName(session ? currentDoc(session).name : UNTITLED)
+    // A selected part exports alone: the viewport's part N, out of a fresh compile.
+    const part = selected?.part ?? null
+    const name = fileName(session ? currentDoc(session).name : UNTITLED) + (part ? ` part ${part}` : '')
     const exporter = new Compiler()
     try {
       // STL and OBJ are written here from the OFF, so colour comes along —
@@ -302,9 +342,10 @@ export function App() {
       const result = await exporter.compile(source, format === '3mf' ? format : 'off', { files })
       if (result.ok) {
         const filename = `${name}.${EXTENSION[format]}`
-        if (format === '3mf') downloadBlob(paint3mf(result.data), filename, MIME[format])
+        if (format === '3mf') downloadBlob(paint3mf(part ? part3mf(result.data, part) : result.data), filename, MIME[format])
         else {
-          const mesh = parseOff(new TextDecoder().decode(result.data))
+          const whole = parseOff(new TextDecoder().decode(result.data))
+          const mesh = part ? partMesh(whole, part) : whole
           if (format === 'binstl') downloadBlob(encodeStl(mesh), filename, MIME[format])
           else {
             const { obj, mtl } = encodeObj(mesh, name)
@@ -341,9 +382,11 @@ export function App() {
         }}
         onOpen={() => setOpen(false)}
         onHelp={() => setHelp((h) => !h)}
+        onDiff={() => setDiff((d) => !d)}
       />
 
       {session && help && <Help onClose={() => setHelp(false)} />}
+      {session && open && diff && <VersionDiff doc={currentDoc(session)} onClose={() => setDiff(false)} />}
 
       {session && !open && (
         <StartWindow
@@ -374,6 +417,7 @@ export function App() {
               value={streamSource ?? source}
               onChange={setSource}
               editable={!chatBusy}
+              errorLine={streamSource === null ? errorLineOf(error) : null}
             />
           </div>
           <ParamsPanel
@@ -408,6 +452,7 @@ export function App() {
         <Viewport
           mesh={shown}
           ghost={ghost}
+          plate={bed}
           fitToken={fitToken}
           highlight={selected?.triangles ?? null}
           onPick={(triangle) => setSelected(triangle !== null && shown ? selectPart(shown, triangle) : null)}
@@ -420,7 +465,9 @@ export function App() {
               onClick={() => exportAs(format)}
               disabled={!mesh || !!error || exporting !== null}
             >
-              {exporting === format ? 'Exporting…' : `Export ${EXTENSION[format].toUpperCase()}`}
+              {exporting === format
+                ? 'Exporting…'
+                : `Export ${EXTENSION[format].toUpperCase()}${selected ? ` · part ${selected.part}` : ''}`}
             </button>
           ))}
         </div>
@@ -464,6 +511,7 @@ export function App() {
           )}
         </div>
         {shownError && <pre className="error">{shownError}</pre>}
+        {!shownError && warnings && <pre className="warnings">{warnings}</pre>}
       </section>
 
       <section className="pane side right">
@@ -496,7 +544,14 @@ export function App() {
               s ? nameFromFirstTurn(commitTurn(s, next, label, result.ok, Date.now()), next) : s,
             )
             applyCompiled(compileKey(next, NO_DEFINES), result)
-            if (result.ok) setBefore(result.data)
+            if (result.ok) {
+              setBefore(result.data)
+              try {
+                thumbnail(parseOff(new TextDecoder().decode(result.data)), currentId)
+              } catch {
+                // As above.
+              }
+            }
             setFitToken((n) => n + 1)
           }}
           onUndo={() => {
@@ -510,6 +565,7 @@ export function App() {
           }}
           onExport={exportAs}
           onBusyChange={setChatBusy}
+          onBed={setBed}
         />
       </section>
       </div>
@@ -548,6 +604,7 @@ function MenuBar({
   onChange,
   onOpen,
   onHelp,
+  onDiff,
 }: {
   session: Session | null
   /** The start window is up: no document is on screen, so no document controls. */
@@ -557,9 +614,12 @@ function MenuBar({
   onChange: (next: Session) => void
   onOpen: () => void
   onHelp: () => void
+  onDiff: () => void
 }) {
   const doc = !atStart && session ? currentDoc(session) : null
   const fileRef = useRef<HTMLInputElement>(null)
+  const [shared, setShared] = useState(false)
+  const head = doc ? headVersion(doc) : null
 
   return (
     <div className="menubar">
@@ -610,6 +670,14 @@ function MenuBar({
       )}
       <button
         type="button"
+        title="What this version changed against the one it was made from"
+        disabled={!doc || !head?.parentId}
+        onClick={onDiff}
+      >
+        Diff
+      </button>
+      <button
+        type="button"
         disabled={!session || !doc}
         onClick={() => {
           if (!session || !doc) return
@@ -652,6 +720,23 @@ function MenuBar({
       </button>
       <button type="button" disabled={!session} onClick={() => fileRef.current?.click()}>
         Import project
+      </button>
+      <button
+        type="button"
+        title="Copy a link that opens this source as a new document — the source only, no conversation"
+        disabled={!doc}
+        onClick={() => {
+          if (!doc) return
+          void encodeShare(doc.source)
+            .then((hash) => navigator.clipboard.writeText(`${location.origin}${location.pathname}#${hash}`))
+            .then(() => {
+              setShared(true)
+              setTimeout(() => setShared(false), 1500)
+            })
+            .catch(() => window.alert('Could not reach the clipboard.'))
+        }}
+      >
+        {shared ? 'Link copied' : 'Share'}
       </button>
       <input
         ref={fileRef}
@@ -705,6 +790,53 @@ function MenuBar({
   )
 }
 
+/** Head against its parent, as a unified diff in the help overlay's frame. */
+function VersionDiff({ doc, onClose }: { doc: Doc; onClose: () => void }) {
+  const head = headVersion(doc)
+  const parent = doc.versions.find((v) => v.id === head.parentId)
+  const lines = useMemo(() => hunks(diffLines(parent?.source ?? '', head.source)), [parent, head])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div className="help" role="dialog" aria-labelledby="diff-title">
+      <article className="help-card">
+        <div className="help-head">
+          <h1 id="diff-title">
+            v{head.id} · {head.label} — against v{parent?.id ?? '?'}
+          </h1>
+          <button type="button" className="help-close" onClick={onClose}>
+            Close <kbd>Esc</kbd>
+          </button>
+        </div>
+        <pre className="diff">
+          {lines.length === 0
+            ? 'No difference.'
+            : lines.map((line, i) => (
+                <span key={i} className={line.kind === '+' ? 'add' : line.kind === '-' ? 'del' : ''}>
+                  {line.kind} {line.text}
+                  {'\n'}
+                </span>
+              ))}
+        </pre>
+      </article>
+    </div>
+  )
+}
+
+/** A document's thumbnail: an object URL for the Blob's lifetime on screen. */
+function Thumb({ blob }: { blob: Blob | undefined }) {
+  const url = useMemo(() => (blob ? URL.createObjectURL(blob) : null), [blob])
+  useEffect(() => () => {
+    if (url) URL.revokeObjectURL(url)
+  }, [url])
+  return <span className="start-thumb">{url && <img src={url} alt="" />}</span>
+}
+
 /**
  * The launcher. Documents, most recently edited first, because the top row is
  * almost always the thing you were in the middle of.
@@ -740,6 +872,7 @@ function StartWindow({
           {rows.map((d) => (
             <li key={d.id}>
               <button type="button" className="start-open" onClick={() => onOpen(d.id)}>
+                <Thumb blob={d.thumb} />
                 <span className="start-name">{d.name}</span>
                 {d.versions.length > 1 && <span className="start-ver">v{d.versions.length}</span>}
                 <span className="start-when">{whenEdited(d.updatedAt)}</span>

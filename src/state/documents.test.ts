@@ -15,10 +15,12 @@ import {
   removeComponent,
   renameDoc,
   restoreVersion,
+  reviveDoc,
   reviveSession,
   saveVersion,
   selectDoc,
   setChat,
+  setThumb,
   suggestName,
   undoVersion,
   updateSource,
@@ -540,4 +542,14 @@ test('revive keeps well-formed components, accepts base64 bytes, and drops the r
 test('a row with no components field revives with an empty list', () => {
   const revived = reviveSession({ docs: [doc('a', 'A', 'cube(1);', 1)], currentId: 'a' }, '', 'x', 0)
   expect(currentDoc(revived).components).toEqual([])
+})
+
+test('a thumbnail is set by document id, survives revive as a Blob, and anything else is dropped', () => {
+  const session = createSession('cube(1);', 'a', 0)
+  const blob = new Blob(['x'], { type: 'image/jpeg' })
+  const next = setThumb(session, 'a', blob)
+  expect(currentDoc(next).thumb).toBe(blob)
+  expect(setThumb(session, 'missing', blob)).toBe(session)
+  expect(reviveDoc({ ...currentDoc(next) }, 0)?.thumb).toBe(blob)
+  expect(reviveDoc({ ...currentDoc(next), thumb: 'data:image/jpeg;base64,AAAA' }, 0)?.thumb).toBeUndefined()
 })
