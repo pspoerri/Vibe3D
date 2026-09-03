@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.4.0 — 2026-09-03
 
-The review of 2026-09-02: harness defects, harness improvements, and the missing features.
+The harness review: defects fixed, the loop made cheaper and observable, an eval runner, BOSL2,
+and the viewport tools that were missing. Ten of ten bake-off parts commit on the first run of
+`pnpm eval` against gemini-3.7-flash at high thinking, with no repairs.
 
 ### Fixed in the harness
 
