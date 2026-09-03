@@ -512,6 +512,25 @@ the whole airplane in green and magenta because `z_ground` had moved it 4.6 mm.
 
 ---
 
+### Review 2026-09-02
+
+Defects found reading the harness, all fixed: the window headed the source "with your edits
+applied" after an edit that had not applied (`compile.edit` marks a miss now); the prompt's
+one example broke its own PART rule; kernel warnings on a successful compile reached nobody
+(they go to the model before the report and to the user under the viewport); every live
+inspect event carried its image, so a six-look turn sent 21 renders (only the newest rides);
+no oscillation guard (a source compiled earlier in the turn is a confirmation or a repeated
+failure); a length finish discarded a closed block; the first send could outrun the
+catalogue and lose its render. Added: `pnpm eval` (`eval/turns.eval.ts`, the controller with
+the Node kernel for compiles and diffs, no render — the numeric half every model gets); one
+retry on 429/5xx/network before the stream; `max_tokens` from the catalogue; a cache
+breakpoint on the system prompt for Anthropic models; one timeout diagnostic before failing;
+indentation-forgiving edits; per-turn cost in the status line; overhang share per part and a
+bed-size check (the bed is a setting). BOSL2 is not vendored: `scripts/fetch-bosl2.mjs` downloads it at a pinned
+commit on install and before build, test and dev, and packs the 57 library files into
+`kernel/vendor/BOSL2.zip` (1 MB, gitignored); `kernel/libraries.ts` unzips that into the kernel
+FS when the source includes it — ~200 ms on top of a compile under Node.
+
 ## 7. State, time travel, persistence
 
 **Split by growth.** `localStorage`: API key plus a few settings — chosen because it reads
