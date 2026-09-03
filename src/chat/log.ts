@@ -46,6 +46,8 @@ export type ChatEvent =
       ms: number
       attempt: number
       stderr: string
+      /** The failure was an edit or part block that did not apply: the source the model is shown is unchanged. */
+      edit?: true
     }
   | {
       id: string
@@ -146,6 +148,15 @@ export function buildWindow({
     break
   }
 
+  let lastImage = -1
+  for (let i = log.length - 1; i >= start; i--) {
+    const event = log[i]!
+    if (event.kind === 'inspect' && event.turn === turn && event.image) {
+      lastImage = i
+      break
+    }
+  }
+
   let liveReply = false
   // Whether the latest live reply carries the whole source. An edit, a part
   // block or a view request does not, so the source — the applied result, for
@@ -202,7 +213,17 @@ export function buildWindow({
       case 'compile':
         // Verbatim, and only from the live turn: stderr that points at source
         // which no longer exists does not just waste tokens, it misleads.
-        if (!event.ok && event.turn === turn) messages.push({ role: 'user', content: event.stderr })
+        if (event.turn !== turn) break
+        if (!event.ok) {
+          messages.push({ role: 'user', content: event.stderr })
+          // The edit never landed, so the source below is the one it was shown.
+          if (event.edit) liveEdits = false
+        } else if (event.stderr.trim() !== '') {
+          // A successful compile can still warn — an unknown variable, a
+          // non-manifold hint — and that is exactly the valid-code-wrong-shape
+          // failure the round exists to catch.
+          messages.push({ role: 'user', content: `The source compiled with warnings:\n${event.stderr}` })
+        }
         break
       case 'skill':
         // The refusal is live only, like stderr; a body is attached below.
@@ -212,7 +233,9 @@ export function buildWindow({
         // Live only, like stderr: a report about a mesh that no longer exists
         // does not just waste tokens, it misleads (design.md §12).
         if (event.turn !== turn) break
-        const url = images ? event.image : undefined
+        // Only the newest render rides: every earlier round's picture would
+        // be paid for again on every call of a long turn.
+        const url = images && i === lastImage ? event.image : undefined
         if (!url) {
           messages.push({ role: 'user', content: event.text })
           break
@@ -341,6 +364,7 @@ function reviveEvent(raw: unknown): ChatEvent | null {
             ms: typeof e.ms === 'number' ? e.ms : 0,
             attempt: typeof e.attempt === 'number' ? e.attempt : 0,
             stderr: e.stderr,
+            ...(e.edit === true ? { edit: true as const } : {}),
           }
     case 'clear':
       return { ...base, kind: 'clear' }

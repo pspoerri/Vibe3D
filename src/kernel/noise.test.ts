@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { stderrForModel, stripKernelNoise } from './noise'
+import { kernelWarnings, stderrForModel, stripKernelNoise } from './noise'
 
 test('strips the localization warning the kernel always prints', () => {
   const raw =
@@ -52,4 +52,19 @@ test('the model form caps runaway output the same way', () => {
 test('the two forms differ only in the path rewrite', () => {
   const raw = 'ERROR: something in file /in.scad, line 9\n'
   expect(stripKernelNoise(raw)).toBe(stderrForModel(raw).replaceAll('/in.scad', 'model.scad'))
+})
+
+test('kernelWarnings keeps WARNING and DEPRECATED lines and drops the statistics chatter', () => {
+  const stderr = [
+    'Could not initialize localization (application path is ...)',
+    'WARNING: Ignoring unknown variable "size" in file /in.scad, line 1',
+    'Geometries in cache: 1',
+    'DEPRECATED: The assign() module will be removed in future releases.',
+    'Total rendering time: 0:00:00.002',
+    'Top level object is a 3D object (PolySet):',
+  ].join('\n')
+  expect(kernelWarnings(stderr)).toBe(
+    'WARNING: Ignoring unknown variable "size" in file /in.scad, line 1\nDEPRECATED: The assign() module will be removed in future releases.',
+  )
+  expect(kernelWarnings('Geometries in cache: 1\n')).toBe('')
 })

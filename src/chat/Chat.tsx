@@ -7,7 +7,7 @@ import {
 } from '../llm/openrouter'
 import { loadKey, saveKey } from '../state/key'
 import {
-  loadSettings, saveSettings, THINKING, thinkingOf, withThinking, type PortableSettings, type Thinking,
+  loadSettings, parseBed, saveSettings, THINKING, thinkingOf, withThinking, type PortableSettings, type Thinking,
 } from '../state/settings'
 import type { DownloadFormat } from '../export/download'
 import type { Component } from '../state/documents'
@@ -56,6 +56,7 @@ export function Chat({
   onClearMarkup,
   construction,
   onCandidate,
+  onBed,
 }: {
   source: string
   /** The document's mesh files, for the kernel FS of every compile this pane runs. */
@@ -89,6 +90,8 @@ export function Chat({
   onBusyChange: (busy: boolean) => void
   /** The user's words for the part. The document takes its name from the first. */
   onPrompt: (text: string) => void
+  /** The build volume changed in the settings: the viewport draws its plate from it. */
+  onBed?: (bed: readonly [number, number, number]) => void
 }) {
   const [log, setLog] = useState<ChatEvent[]>(() => [...initialLog])
   const [turn, setTurn] = useState(() => nextTurn(initialLog))
@@ -116,6 +119,9 @@ export function Chat({
   const [showSettings, setShowSettings] = useState(() => loadKey() === '')
   const [revoke, setRevoke] = useState(REVOKE_HOME)
   const [spend, setSpend] = useState<Spend>(ZERO_SPEND)
+  /** The session's spend when the running turn began, so the status line can say what this turn has cost. */
+  const [turnStart, setTurnStart] = useState<number | null>(null)
+  const [bedText, setBedText] = useState(() => loadSettings().bed.join(' × '))
   // A custom base URL may be a keyless local server (Ollama, LM Studio), so an
   // empty key only blocks prompting against OpenRouter itself.
   const canPrompt = apiKey !== '' || settings.baseUrl !== DEFAULT_BASE_URL
@@ -259,6 +265,7 @@ export function Chat({
   const persistSettings = (next: PortableSettings) => {
     setSettings(next)
     saveSettings(next)
+    if (next.bed !== settings.bed) onBed?.(next.bed)
   }
 
   // A markup from the viewport joins the tray like a picked file, flagged so
@@ -454,13 +461,19 @@ export function Chat({
     const images = attachments.map((a) => a.url)
     const thinking = thinkingOf(settings)
     const looks = thinking !== 'off'
-    const vision = models.find((m) => m.id === settings.model)?.vision ?? false
     const controller = new AbortController()
     abortRef.current = controller
     busyRef.current = true
     setBusy(true)
     setThinking(true)
+    setTurnStart(spend.usd)
     onBusyChange(true)
+    // The catalogue decides whether this model gets a render and how long it
+    // may answer; a first send right after boot must not outrun the fetch.
+    const catalogue = models.length > 0 ? models : await fetchModels(settings.baseUrl).catch(() => [])
+    if (catalogue !== models) setModels(catalogue)
+    const info = catalogue.find((m) => m.id === settings.model)
+    const vision = info?.vision ?? false
 
     // The latest inspection's changed pieces: what a {"closeup": N} request names.
     let closeups: Closeup[] = []
@@ -495,6 +508,7 @@ export function Chat({
               apiKey,
               model: settings.model,
               ...(looks ? { reasoning: thinking as Exclude<Thinking, 'off'> } : {}),
+              ...(info?.maxOutput ? { maxTokens: info.maxOutput } : {}),
             }),
           compile: async (candidate) => {
             const result = await compiler.compile(candidate, 'off', { files })
@@ -520,7 +534,7 @@ export function Chat({
             return {
               text: verifyMessage(
                 formatReport(insp.report),
-                meshChecks(insp.report, partCount(candidate), usesText(candidate)),
+                meshChecks(insp.report, partCount(candidate), usesText(candidate), settings.bed),
                 insp.legend,
                 looks,
                 closeups.length,
@@ -554,9 +568,7 @@ export function Chat({
           onReasoning: setLiveReasoning,
           onUsage: (usage) => {
             usageRef.current = usage
-            setSpend((current) =>
-              addUsage(current, usage, models.find((m) => m.id === settings.model)?.pricing),
-            )
+            setSpend((current) => addUsage(current, usage, info?.pricing))
           },
           now: () => performance.now(),
           newId: () => crypto.randomUUID(),
@@ -580,7 +592,7 @@ export function Chat({
         setChatError(outcome.message)
       }
 
-      const limit = contextLimit(models, settings.model)
+      const limit = contextLimit(catalogue, settings.model)
       const used = usageRef.current?.total_tokens ?? 0
       // limit === 0 means the catalogue has not resolved or the id is unknown;
       // without this guard the ratio is Infinity and compaction fires forever.
@@ -593,6 +605,7 @@ export function Chat({
       onStreamSource(null)
       onCandidate(null)
       setThinking(false)
+      setTurnStart(null)
       setPhase('')
       setLiveText('')
       setLiveReasoning('')
@@ -666,6 +679,9 @@ export function Chat({
           >
             <span className="spinner" aria-hidden="true" />
             {phase || 'thinking'}
+            {turnStart !== null && spend.usd !== null && spend.usd > turnStart && (
+              <span className="chat-turn-cost"> · {formatUsd(spend.usd - turnStart)}</span>
+            )}
           </button>
         )}
       </div>
@@ -867,6 +883,19 @@ export function Chat({
                   </option>
                 ))}
               </select>
+            </label>
+            <label>
+              Bed
+              <input
+                value={bedText}
+                placeholder="256 × 256 × 256"
+                title="The printer's build volume in mm: the plate outline, and a check the part fits"
+                onChange={(e) => {
+                  setBedText(e.target.value)
+                  const bed = parseBed(e.target.value)
+                  if (bed) persistSettings({ ...settings, bed })
+                }}
+              />
             </label>
             <p className="chat-hint">
               Thinking <b>off</b> is one model call per message. Any other level is the model's

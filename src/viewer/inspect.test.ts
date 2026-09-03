@@ -66,7 +66,7 @@ test('a first generation reports the part alone, every diff field null', () => {
     volume_mm3: 6000,
     watertight: true,
     parts: 1,
-    per_part: [{ bbox_mm: { min: [0, 0, 0], max: [10, 20, 30], size: [10, 20, 30] }, volume_mm3: 6000, colours: 'no colour' }],
+    per_part: [{ bbox_mm: { min: [0, 0, 0], max: [10, 20, 30], size: [10, 20, 30] }, volume_mm3: 6000, colours: 'no colour', overhang_pct: 0 }],
     voids: [],
     genus: 0,
     tri_count: 12,
@@ -111,10 +111,11 @@ test('the formatted report is JSON, one field per line', () => {
 
 const first = (w: number, d: number, h: number): Report =>
   buildReport({ after: stats(w, d, h), before: null, added: null, removed: null })
-const shell = (min: [number, number, number], size: [number, number, number], volume_mm3: number, colours = 'no colour') => ({
+const shell = (min: [number, number, number], size: [number, number, number], volume_mm3: number, colours = 'no colour', overhang_pct = 0) => ({
   bbox_mm: { min, max: [min[0] + size[0], min[1] + size[1], min[2] + size[2]] as [number, number, number], size },
   volume_mm3,
   colours,
+  overhang_pct,
 })
 
 test('a sound single part passes every check in one line each', () => {
@@ -123,7 +124,20 @@ test('a sound single part passes every check in one line each', () => {
     'solids: 1 for 1 PART section: ok',
     'closed voids: none',
     'watertight: yes',
+    'overhangs past 45°: none',
   ])
+})
+
+test('a part with a tenth of its surface hanging is named; the bed is checked only when given', () => {
+  const report: Report = { ...first(10, 20, 30), per_part: [shell([0, 0, 0], [10, 20, 30], 6000, 'no colour', 23)] }
+  expect(meshChecks(report, 1).find((c) => c.startsWith('overhangs'))).toMatch(
+    /^overhangs: NO — part 1 has 23% of its surface facing down past 45°/,
+  )
+  expect(meshChecks(first(300, 40, 5), 1, false, [256, 256, 256])[1]).toBe(
+    'fits the bed: NO — 300 × 40 × 5 mm against a 256 × 256 × 256 mm build volume; shrink it, split it, or lay it on another face',
+  )
+  expect(meshChecks(first(10, 20, 30), 1, false, [256, 256, 256])[1]).toBe('fits the bed: yes')
+  expect(meshChecks(first(10, 20, 30), 1).some((c) => c.startsWith('fits'))).toBe(false)
 })
 
 test('a part off the plane, a stray piece, a void and a genus change are each named with numbers', () => {
@@ -140,7 +154,7 @@ test('a part off the plane, a stray piece, a void and a genus change are each na
   expect(checks[1]).toMatch(/^solids: NO — 3 for 2 PART sections: .*smallest solid is 8 mm³ at \[40, 0, 0\] to \[42, 2, 2\]/)
   expect(checks[2]).toMatch(/^closed void: NO — 192 mm³ at \[50, 20, 5\] to \[54, 28, 11\] inside part 1/)
   expect(checks[3]).toBe('watertight: yes')
-  expect(checks[4]).toBe('genus 0 → 7: the part gained 7 through-holes or loops — intended?')
+  expect(checks.at(-1)).toBe('genus 0 → 7: the part gained 7 through-holes or loops — intended?')
 })
 
 test('too few solids, no PART sections, and a first-generation genus each get their own line', () => {

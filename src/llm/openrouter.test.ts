@@ -212,7 +212,7 @@ const CATALOGUE = {
       context_length: 1048576,
       architecture: { modality: 'text+image->text', input_modalities: ['text', 'image'] },
       pricing: { prompt: '0.00000075', completion: '0.00000375', image: '0' },
-      top_provider: { context_length: null },
+      top_provider: { context_length: null, max_completion_tokens: 65536 },
     },
     {
       id: '~anthropic/claude-sonnet-5',
@@ -258,6 +258,7 @@ test('keeps aliases and :free, drops :batch and openrouter/*, and memoises', asy
     'context_length',
     'pricing',
     'vision',
+    'maxOutput',
   ])
   expect(models[0]?.context_length).toBe(1048576)
   expect(models[0]?.pricing.prompt).toBe('0.00000075')
@@ -275,6 +276,46 @@ test('vision is flagged from input_modalities, and absent means unknown not no',
   // and it must never hide or disable the model — support is per-provider while
   // OpenRouter load-balances providers, so the flag is a hint either way.
   expect(models[1]?.vision).toBe(false)
+})
+
+test('the output ceiling comes from top_provider, and is null when the catalogue is silent', async () => {
+  stubFetch(() => new Response(JSON.stringify(CATALOGUE), { status: 200 }))
+  const models = await fetchModels('https://ceiling.example/v1')
+  expect(models[0]?.maxOutput).toBe(65536)
+  expect(models[1]?.maxOutput).toBe(null)
+})
+
+test('max_tokens rides only when asked for, and an Anthropic model gets a cache breakpoint on the system prompt', async () => {
+  stubFetch(() => new Response(STREAM, { status: 200 }))
+  await drain(streamChat(MESSAGES, signal(), { ...OPTIONS, maxTokens: 8192 }))
+  expect(JSON.parse(String(calls[0]?.init?.body)).max_tokens).toBe(8192)
+
+  await drain(streamChat(MESSAGES, signal(), { ...OPTIONS, model: 'anthropic/claude-sonnet-5' }))
+  expect(JSON.parse(String(calls[1]?.init?.body)).messages[0]).toEqual({
+    role: 'system',
+    content: [{ type: 'text', text: 'You write OpenSCAD.', cache_control: { type: 'ephemeral' } }],
+  })
+  expect(JSON.parse(String(calls[1]?.init?.body)).messages[1]).toEqual(MESSAGES[1])
+})
+
+test('a 429, a 5xx or a dropped connection before the stream opens is retried exactly once', async () => {
+  let n = 0
+  stubFetch(() => (n++ === 0 ? new Response('{"error":{"message":"Rate limited"}}', { status: 429 }) : new Response(STREAM, { status: 200 })))
+  const events = await drain(streamChat(MESSAGES, signal(), { ...OPTIONS, retryMs: 1 }))
+  expect(events.some((e) => e.type === 'delta')).toBe(true)
+  expect(calls).toHaveLength(2)
+
+  calls = []
+  stubFetch(() => {
+    throw new TypeError('Failed to fetch')
+  })
+  await expect(drain(streamChat(MESSAGES, signal(), { ...OPTIONS, retryMs: 1 }))).rejects.toThrow('Failed to fetch')
+  expect(calls).toHaveLength(2)
+
+  calls = []
+  stubFetch(() => new Response('{"error":{"message":"User not found."}}', { status: 401 }))
+  await expect(drain(streamChat(MESSAGES, signal(), { ...OPTIONS, retryMs: 1 }))).rejects.toThrow('User not found.')
+  expect(calls).toHaveLength(1)
 })
 
 test('degrades to an empty catalogue when data is not an array', async () => {
@@ -301,6 +342,7 @@ test('contextLimit answers 0 for an unknown id', () => {
       context_length: 8192,
       pricing: { prompt: '0', completion: '0' },
       vision: false,
+      maxOutput: null,
     },
   ]
   expect(contextLimit(models, 'a/b')).toBe(8192)

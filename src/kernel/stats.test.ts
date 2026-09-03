@@ -153,3 +153,13 @@ test('a void takes its holder\'s label, so a click never sees a part number the 
   expect(count).toBe(1)
   expect(new Set(labels)).toEqual(new Set([0]))
 })
+
+test('overhang is the share of surface facing down past 45° that does not rest on the bed', () => {
+  // On the bed: the bottom face rests, nothing hangs.
+  expect(meshStats(parseOff(box(10, 10, 10))).shells[0]?.overhang).toBe(0)
+  // Lifted: the bottom face is one sixth of the surface, and it hangs.
+  const a = boxLists(10, 10, 10, [0, 0, 3])
+  const b = boxLists(1, 1, 1, [30, 30, 0])
+  const lifted = off([...a.v, ...b.v], [...a.f, ...b.f.map((t) => t.map((k) => k + 8))])
+  expect(meshStats(parseOff(lifted)).shells[0]?.overhang).toBeCloseTo(1 / 6, 5)
+})

@@ -42,3 +42,13 @@ export function stripKernelNoise(stderr: string): string {
 export function stderrForModel(stderr: string): string {
   return capLines(dropNoise(stderr))
 }
+
+/**
+ * What a successful compile still has to say: WARNING and DEPRECATED lines
+ * only. The rest of a good run's stderr is cache and timing chatter — it
+ * would show as an amber pane on every compile, and read to the model as
+ * something to fix.
+ */
+export function kernelWarnings(stderr: string): string {
+  return capLines(dropNoise(stderr).filter((line) => /^(WARNING|DEPRECATED)\b/.test(line)))
+}

@@ -86,7 +86,11 @@ export function applyEdits(
   return { source: lines.join('\n') }
 }
 
-/** Start lines where `wanted` occurs in `lines`. Exact first; trailing whitespace forgiven only if nothing is exact. */
+/**
+ * Start lines where `wanted` occurs in `lines`. Exact first; trailing
+ * whitespace forgiven only if nothing is exact; then indentation too — the
+ * miss models actually make is a tab for two spaces, not a wrong word.
+ */
 function matches(lines: string[], wanted: string[]): number[] {
   const at = (same: (a: string, b: string) => boolean): number[] => {
     const found: number[] = []
@@ -98,5 +102,7 @@ function matches(lines: string[], wanted: string[]): number[] {
     return found
   }
   const exact = at((a, b) => a === b)
-  return exact.length > 0 ? exact : at((a, b) => a.trimEnd() === b.trimEnd())
+  if (exact.length > 0) return exact
+  const trailing = at((a, b) => a.trimEnd() === b.trimEnd())
+  return trailing.length > 0 ? trailing : at((a, b) => a.trim() === b.trim())
 }
