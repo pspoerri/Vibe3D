@@ -3,6 +3,9 @@ import OpenSCAD from './vendor/openscad.js'
 // inlined and stays out of the main chunk.
 import wasmUrl from './vendor/openscad.wasm?url'
 import { FONT_FILES, installFonts, usesText, type FontSet } from './fonts'
+import { installLibraries, usesLibrary } from './libraries'
+// One hashed asset, fetched on the first source that includes it.
+import librariesUrl from './vendor/BOSL2.zip?url'
 import { IN_PATH, kernelArgs, outPath, type CompileRequest, type CompileResponse } from './protocol'
 
 // Each face is its own hashed asset, fetched on the first source that uses text().
@@ -32,6 +35,21 @@ function loadFonts(): Promise<FontSet> {
   return fontsLoading
 }
 
+let librariesLoading: Promise<Uint8Array> | null = null
+/** The library zip, fetched once per worker; the browser's HTTP cache makes that once per session. */
+function loadLibraries(): Promise<Uint8Array> {
+  librariesLoading ??= fetch(librariesUrl)
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`BOSL2: HTTP ${response.status}`)
+      return new Uint8Array(await response.arrayBuffer())
+    })
+    .catch((error: unknown) => {
+      librariesLoading = null
+      throw error
+    })
+  return librariesLoading
+}
+
 const post = (message: CompileResponse, transfer: Transferable[] = []) =>
   (self as unknown as Worker).postMessage(message, transfer)
 
@@ -41,7 +59,7 @@ self.onmessage = async (event: MessageEvent<CompileRequest>) => {
   let stderr = ''
 
   try {
-    const [kernel, fonts] = await Promise.all([
+    const [kernel, fonts, libraries] = await Promise.all([
       OpenSCAD({
         noInitialRun: true,
         locateFile: () => wasmUrl,
@@ -51,11 +69,13 @@ self.onmessage = async (event: MessageEvent<CompileRequest>) => {
         },
       }),
       usesText(source) ? loadFonts() : null,
+      usesLibrary(source) ? loadLibraries() : null,
     ])
 
     kernel.FS.writeFile(IN_PATH, source)
     for (const [path, bytes] of Object.entries(files ?? {})) kernel.FS.writeFile(path, bytes)
     if (fonts) installFonts(kernel, fonts)
+    if (libraries) installLibraries(kernel, libraries)
     const outputPath = outPath(format)
     // Failure is signalled by a non-zero exit code, for both parse errors and
     // empty top-level geometry. Never infer failure from stderr contents.

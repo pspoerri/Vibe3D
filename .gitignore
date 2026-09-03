@@ -4,3 +4,6 @@ dist/
 .DS_Store
 test-results/
 playwright-report/
+eval/results/
+src/kernel/vendor/BOSL2.zip
+src/kernel/vendor/BOSL2.zip.commit
