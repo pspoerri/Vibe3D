@@ -27,7 +27,7 @@ import {
 import {
   addComponent, commitEdit, commitTurn, currentDoc, deleteDoc, headVersion, nameFromFirstPrompt,
   nameFromFirstTurn, newDoc, removeComponent,
-  renameDoc, restoreVersion, reviveSession, saveVersion, selectDoc, setChat, setThumb, undoVersion,
+  renameDoc, restoreVersion, reviveSession, saveVersion, selectDoc, setCache, setChat, setThumb, undoVersion,
   suggestName, updateSource, UNTITLED, type Component, type Doc, type Session,
 } from './state/documents'
 import { exportProject, importProject } from './state/project'
@@ -199,6 +199,11 @@ export function App() {
     })
   }
 
+  /** A compile's bytes, filed under the document, so reopening it shows the mesh without the kernel. */
+  const cacheMesh = (key: string, off: Uint8Array, docId: string | null): void => {
+    if (docId) setSession((s) => (s ? setCache(s, docId, { key, off }) : s))
+  }
+
   /** The single place busy, mesh, ms and error move together. */
   const applyCompiled = (key: string, result: CompileResult) => {
     appliedKeyRef.current = key
@@ -259,6 +264,24 @@ export function App() {
       return
     }
 
+    // The document's last compile, while the source and components are still
+    // what made it: on screen at once, and the kernel never starts for it.
+    // Read through the ref so a cache write does not re-run this effect.
+    const cache = sessionRef.current?.docs.find((d) => d.id === currentId)?.cache
+    if (cache && cache.key === key) {
+      try {
+        setMesh(parseOff(new TextDecoder().decode(cache.off)))
+        appliedKeyRef.current = key
+        setBusy(false)
+        setError(null)
+        setWarnings(null)
+        setBefore(cache.off)
+        return
+      } catch {
+        // A cache that no longer parses is compiled over.
+      }
+    }
+
     const runId = ++runIdRef.current
     setBusy(true)
     const timer = setTimeout(
@@ -280,6 +303,7 @@ export function App() {
         if (result.ok && previewDefines.length === 0) {
           setBefore(result.data)
           setSession((s) => (s ? commitEdit(s, source, Date.now()) : s))
+          cacheMesh(key, result.data, currentId)
           try {
             thumbnail(parseOff(new TextDecoder().decode(result.data)), currentId)
           } catch {
@@ -543,9 +567,13 @@ export function App() {
             setSession((s) =>
               s ? nameFromFirstTurn(commitTurn(s, next, label, result.ok, Date.now()), next) : s,
             )
-            applyCompiled(compileKey(next, NO_DEFINES), result)
+            // With the components: the turn compiled with the files, and the
+            // preview effect's key carries them too.
+            const key = compileKey(next, NO_DEFINES, components)
+            applyCompiled(key, result)
             if (result.ok) {
               setBefore(result.data)
+              cacheMesh(key, result.data, currentId)
               try {
                 thumbnail(parseOff(new TextDecoder().decode(result.data)), currentId)
               } catch {

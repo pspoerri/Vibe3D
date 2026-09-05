@@ -20,6 +20,7 @@ import {
   saveVersion,
   selectDoc,
   setChat,
+  setCache,
   setThumb,
   suggestName,
   undoVersion,
@@ -552,4 +553,15 @@ test('a thumbnail is set by document id, survives revive as a Blob, and anything
   expect(setThumb(session, 'missing', blob)).toBe(session)
   expect(reviveDoc({ ...currentDoc(next) }, 0)?.thumb).toBe(blob)
   expect(reviveDoc({ ...currentDoc(next), thumb: 'data:image/jpeg;base64,AAAA' }, 0)?.thumb).toBeUndefined()
+})
+
+test('a compiled mesh is cached by document id under its key, survives revive, and a malformed one is dropped', () => {
+  const session = createSession('cube(1);', 'a', 0)
+  const off = new TextEncoder().encode('OFF\n0 0 0\n')
+  const next = setCache(session, 'a', { key: 'k', off })
+  expect(currentDoc(next).cache).toEqual({ key: 'k', off })
+  expect(setCache(session, 'missing', { key: 'k', off })).toBe(session)
+  expect(reviveDoc({ ...currentDoc(next) }, 0)?.cache).toEqual({ key: 'k', off })
+  expect(reviveDoc({ ...currentDoc(next), cache: { key: 'k', off: 'OFF' } }, 0)?.cache).toBeUndefined()
+  expect(reviveDoc({ ...currentDoc(next), cache: { off } }, 0)?.cache).toBeUndefined()
 })

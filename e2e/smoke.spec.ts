@@ -405,3 +405,18 @@ test('a share link opens as a new document with that source', async ({ page }) =
   await expect(page.locator('.cm-content')).toContainText('cube(10);', { timeout: 30_000 })
   expect(page.url()).not.toContain('#s=')
 })
+
+test('a reopened document shows its last mesh without a compile', async ({ page }) => {
+  await openStarter(page)
+  // Let the save debounce write the compiled bytes with the document.
+  await page.waitForTimeout(1000)
+
+  await page.reload()
+  await page.locator('.start-open').first().click({ timeout: 90_000 })
+  await expect(page.locator('.tag', { hasText: '60.0 × 40.0 × 3.0 mm' })).toBeVisible({
+    timeout: 90_000,
+  })
+  // The mesh came from the cache: the kernel never ran, so nothing was timed.
+  expect(await page.locator('.app').getAttribute('data-compiles')).toBe('0')
+  await expect(page.locator('.tag', { hasText: / ms$/ })).toHaveCount(0)
+})

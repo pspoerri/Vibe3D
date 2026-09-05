@@ -60,6 +60,19 @@ export interface Doc {
   components: Component[]
   /** A small render of the last compile, for the list. A Blob, never base64 (design.md §7). */
   thumb?: Blob
+  /**
+   * The last successful compile's OFF bytes under the compile key that made
+   * them, so a reopened document shows its mesh before the kernel has even
+   * loaded. Not part of a version and never written to the project file.
+   * ponytail: rides in the single session record, so every save clones every
+   * document's bytes; move to a record per document if saves get slow.
+   */
+  cache?: MeshCache
+}
+
+export interface MeshCache {
+  key: string
+  off: Uint8Array
 }
 
 export interface Session {
@@ -273,6 +286,12 @@ export function setThumb(session: Session, id: string, thumb: Blob): Session {
   return doc ? withDoc(session, { ...doc, thumb }) : session
 }
 
+/** The cached compile of document `id` — by id, for the same reason as setThumb. */
+export function setCache(session: Session, id: string, cache: MeshCache): Session {
+  const doc = session.docs.find((d) => d.id === id)
+  return doc ? withDoc(session, { ...doc, cache }) : session
+}
+
 export function setChat(session: Session, chat: readonly ChatEvent[]): Session {
   return withDoc(session, { ...currentDoc(session), chat: chat.map(stripImages) })
 }
@@ -360,7 +379,13 @@ export function reviveDoc(raw: unknown, now: number, taken: string[] = []): Doc 
     components: reviveComponents(d.components),
     ...(d.named === true ? { named: true as const } : {}),
     ...(typeof Blob !== 'undefined' && d.thumb instanceof Blob ? { thumb: d.thumb } : {}),
+    ...(isMeshCache(d.cache) ? { cache: { key: d.cache.key, off: d.cache.off } } : {}),
   }
+}
+
+const isMeshCache = (v: unknown): v is MeshCache => {
+  const c = v as Partial<Record<keyof MeshCache, unknown>> | null
+  return !!c && typeof c === 'object' && typeof c.key === 'string' && c.off instanceof Uint8Array
 }
 
 const isVec3 = (v: unknown): v is [number, number, number] =>

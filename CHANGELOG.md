@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **A reopened document shows its mesh at once.** The last successful compile's OFF bytes are
+  kept with the document in IndexedDB under the key that made them (source, defines and
+  components). Opening the app or switching documents shows that mesh without starting the
+  kernel; the first edit compiles as before. The bytes stay out of the project file, like the
+  thumbnail. A turn's result is now keyed with the document's components too, so a turn on a
+  document with an attached mesh no longer compiles a second time.
+
 ## v0.4.0 — 2026-09-03
 
 The harness review: defects fixed, the loop made cheaper and observable, an eval runner, BOSL2,
