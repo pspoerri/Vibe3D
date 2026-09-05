@@ -101,3 +101,13 @@ test('a mesh named by import() is read from beside the source', async () => {
   expect(code, out).toBe(0)
   expect(out).toContain('"parts": 2')
 })
+
+test('prompt prints the system prompt, the protocol note and the three skills', async () => {
+  const { code, out } = await run(['prompt'])
+  expect(code).toBe(0)
+  // The note names the sections it waives, so its own "OUTPUT CONTRACT" mention comes first;
+  // what matters is that the note precedes the real heading further down in SYSTEM_PROMPT.
+  const noteEnd = out.indexOf('do not apply here')
+  expect(noteEnd).toBeLessThan(out.indexOf('OUTPUT CONTRACT', noteEnd))
+  for (const heading of ['# BOSL2', 'text() has exactly these faces', '# Reading a report']) expect(out).toContain(heading)
+})

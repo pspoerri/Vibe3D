@@ -9,6 +9,8 @@ import { basename, dirname, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { compileNode, compileResult } from '../../eval/kernel'
 import { checkParts, partCount } from '../../src/chat/parts'
+import { SYSTEM_PROMPT } from '../../src/chat/prompt'
+import { renderSkill } from '../../src/chat/skills'
 import { encodeObj } from '../../src/export/obj'
 import { part3mf, partMesh } from '../../src/export/part'
 import { encodeStl } from '../../src/export/stl'
@@ -128,6 +130,18 @@ async function exportPart(args: string[]): Promise<{ code: number; out: string }
   return { code: 0, out: `wrote ${out}` }
 }
 
+const PROTOCOL_NOTE =
+  "The browser app's system prompt follows. Its OUTPUT CONTRACT, SELECTION and SKILLS sections are the app's chat protocol and do not apply here: write the .scad file directly, and the skills are printed below it."
+
+/** The app's system prompt, plus the skills a shell session gets no other way to load. */
+const prompt = (): string =>
+  [
+    PROTOCOL_NOTE,
+    '',
+    SYSTEM_PROMPT,
+    ...['bosl2', 'fonts', 'diff'].flatMap((name) => ['', '---', '', renderSkill(name, { source: '', mesh: null, looks: true })!]),
+  ].join('\n')
+
 export async function run(argv: string[]): Promise<{ code: number; out: string }> {
   const [command, ...rest] = argv
   try {
@@ -136,6 +150,8 @@ export async function run(argv: string[]): Promise<{ code: number; out: string }
         return await check(rest)
       case 'export':
         return await exportPart(rest)
+      case 'prompt':
+        return { code: 0, out: prompt() }
       default:
         return { code: 2, out: USAGE }
     }
