@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
+import { strFromU8, unzipSync } from 'three/examples/jsm/libs/fflate.module.js'
 import { compileNode, compileResult } from '../../eval/kernel'
 import { checkParts, constructionSource, partCount } from '../../src/chat/parts'
 import { SYSTEM_PROMPT } from '../../src/chat/prompt'
@@ -123,9 +124,11 @@ async function exportPart(args: string[]): Promise<{ code: number; out: string }
   if (!['3mf', 'stl', 'obj'].includes(ext)) throw new Error(`export writes .3mf, .stl or .obj, not .${ext}`)
   if (ext === '3mf') {
     const { data } = await compiled(path, '3mf')
-    const picked = part ? part3mf(data, part) : data
-    if (part && picked === data) throw new Error(`no part ${part} in ${path}`)
-    writeFileSync(out, paint3mf(picked))
+    if (part) {
+      const objects = strFromU8(unzipSync(data)['3D/3dmodel.model'] ?? new Uint8Array()).match(/<object /g)?.length ?? 0
+      if (part > objects) throw new Error(`no part ${part} in ${path}`)
+    }
+    writeFileSync(out, paint3mf(part ? part3mf(data, part) : data))
   } else {
     const whole = parseOff(decode((await compiled(path)).data))
     const mesh = part ? partMesh(whole, part) : whole

@@ -93,6 +93,14 @@ test('--part rejects a non-number and an out-of-range part, on the 3MF and STL p
   expect(rangeStl.out).toContain('no part 5')
 })
 
+test('--part 1 on a single-part source is not mistaken for out of range', async () => {
+  const one = join(dir, 'solo.3mf')
+  const source = file('solo.scad', '// One\n\n// ---- PART 1 ----\ncube(10);\n// ---- PART 1 END ----\n')
+  const { code, out } = await run(['export', source, one, '--part', '1'])
+  expect(code, out).toBe(0)
+  expect(objects(one)).toBe(1)
+})
+
 test('export writes binary STL and OBJ with its MTL', async () => {
   const stl = join(dir, 'two.stl')
   await run(['export', file('two.scad', TWO), stl])
