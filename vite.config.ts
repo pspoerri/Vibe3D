@@ -68,5 +68,5 @@ export default defineConfig({
   base: './',
   define: { __APP_VERSION__: JSON.stringify(version), __APP_COMMIT__: JSON.stringify(commit) },
   worker: { format: 'es' },
-  test: { environment: 'node', include: ['src/**/*.test.ts'] },
+  test: { environment: 'node', include: ['src/**/*.test.ts', 'skills/**/*.test.ts'] },
 })

@@ -1,10 +1,10 @@
 /**
  * The real kernel under Node: what the real-kernel tests and the eval runner
- * compile with. Each call is a fresh instance (callMain runs to exit), ~0.5 s
- * apiece, and the web glue has no file reader here, so the bytes are handed
- * over as `wasmBinary`.
+ * compile with, and the skill's CLI, built or not. Each call is a fresh
+ * instance (callMain runs to exit), ~0.5 s apiece, and the web glue has no
+ * file reader here, so the bytes are handed over as `wasmBinary`.
  */
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import type { CompileResult } from '../src/kernel/compile'
 import { FONT_FILES, installFonts, usesText, type FontSet } from '../src/kernel/fonts'
 import { installLibraries, usesLibrary } from '../src/kernel/libraries'
@@ -12,7 +12,10 @@ import { stripKernelNoise } from '../src/kernel/noise'
 import { IN_PATH, kernelArgs, outPath, type ExportFormat } from '../src/kernel/protocol'
 import OpenSCAD from '../src/kernel/vendor/openscad.js'
 
-const VENDOR = new URL('../src/kernel/vendor/', import.meta.url)
+/** vendor/ beside the running file — the built skill's copy — else the repo's. */
+const VENDOR = [new URL('vendor/', import.meta.url), new URL('../src/kernel/vendor/', import.meta.url)].find(
+  (dir) => existsSync(dir),
+)!
 const wasmBinary = readFileSync(new URL('openscad.wasm', VENDOR))
 export const FONTS: FontSet = Object.fromEntries(
   FONT_FILES.map((name) => [name, new Uint8Array(readFileSync(new URL(`fonts/${name}`, VENDOR)))]),

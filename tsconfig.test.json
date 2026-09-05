@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "types": ["vite/client", "node"] },
-  "include": ["src/**/*.test.ts", "eval/**/*.ts", "vitest.eval.config.ts"],
+  "include": ["src/**/*.test.ts", "eval/**/*.ts", "skills/**/*.ts", "vitest.eval.config.ts"],
   "exclude": []
 }
