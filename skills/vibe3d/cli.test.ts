@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { strFromU8, unzipSync } from 'three/examples/jsm/libs/fflate.module.js'
 import { expect, test } from 'vitest'
-import { run } from './cli'
+import { findChrome, run } from './cli'
 
 const dir = mkdtempSync(join(tmpdir(), 'vibe3d-cli-'))
 const file = (name: string, text: string): string => {
@@ -110,4 +110,33 @@ test('prompt prints the system prompt, the protocol note and the three skills', 
   const noteEnd = out.indexOf('do not apply here')
   expect(noteEnd).toBeLessThan(out.indexOf('OUTPUT CONTRACT', noteEnd))
   for (const heading of ['# BOSL2', 'text() has exactly these faces', '# Reading a report']) expect(out).toContain(heading)
+})
+
+/** Width and height from a PNG's IHDR. */
+const png = (path: string): [number, number] => {
+  const bytes = readFileSync(path)
+  return [bytes.readUInt32BE(16), bytes.readUInt32BE(20)]
+}
+/** TWO with a small block fused onto part 1: a change small against its part, so the composite gets a close-up pane. */
+const BUMPED = TWO.replace('cube(10);\n// ---- PART 1 END', 'union() { cube(10); translate([3, 3, 9]) cube(4); }\n// ---- PART 1 END')
+
+test.skipIf(!findChrome())('look renders a 768 px view, and a two-pane composite after a change', async () => {
+  const view = join(dir, 'view.png')
+  const r = await run(['look', file('two.scad', TWO), view, '--view', 'front', '--cut', 'z=5'])
+  expect(r.code, r.out).toBe(0)
+  expect(r.out).toContain('front view, cut at z = 5 mm')
+  expect(png(view)).toEqual([768, 768])
+
+  const composite = join(dir, 'composite.png')
+  const c = await run(['look', file('bumped.scad', BUMPED), composite, '--before', file('two.scad', TWO)])
+  expect(c.code, c.out).toBe(0)
+  expect(c.out).toContain('two panes')
+  expect(png(composite)).toEqual([1536, 768])
+}, 60_000)
+
+test('look rejects a bad view, cut or box before touching Chrome', async () => {
+  const src = file('two.scad', TWO)
+  expect((await run(['look', src, join(dir, 'x.png'), '--view', 'sideways'])).out).toContain('--view is one of')
+  expect((await run(['look', src, join(dir, 'x.png'), '--cut', '12'])).out).toContain('--cut is axis=mm')
+  expect((await run(['look', src, join(dir, 'x.png'), '--box', '1,2,3'])).out).toContain('--box is x0,y0,z0,x1,y1,z1')
 })
