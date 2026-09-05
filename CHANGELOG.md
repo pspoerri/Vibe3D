@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **The model list is alphabetical, with the rolling aliases on top.** A "Latest" group holds
+  OpenRouter's `…-latest` aliases — Anthropic, OpenAI, Google and Kimi first, then the rest;
+  "All models" follows, sorted by name.
+- **The default model is `~google/gemini-flash-latest`**, so a new Gemini Flash is picked up
+  without a release. A stored `google/gemini-3.7-flash` (the old default) becomes the alias.
+
 ## v0.5.0 — 2026-09-05
 
 The app's loop from a shell.

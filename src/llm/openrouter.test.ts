@@ -4,6 +4,7 @@ import {
   contextLimit,
   errorMessage,
   fetchModels,
+  latestModels,
   streamChat,
   type ChatMessage,
   type ChatOptions,
@@ -241,18 +242,19 @@ const CATALOGUE = {
   ],
 }
 
-test('keeps aliases and :free, drops :batch and openrouter/*, and memoises', async () => {
+test('keeps aliases and :free, drops :batch and openrouter/*, sorts by name, and memoises', async () => {
   stubFetch(() => new Response(JSON.stringify(CATALOGUE), { status: 200 }))
 
   const models = await fetchModels('https://catalogue.example/v1')
   expect(calls[0]?.url).toBe('https://catalogue.example/v1/models')
+  // Alphabetical by display name, which the catalogue prefixes with the vendor.
   expect(models.map((model) => model.id)).toEqual([
-    'google/gemini-3.7-flash',
     '~anthropic/claude-sonnet-5',
+    'google/gemini-3.7-flash',
     'meta-llama/llama-4-scout:free',
   ])
   // Only the declared fields survive the parse; pricing passes through whole.
-  expect(Object.keys(models[0] ?? {})).toEqual([
+  expect(Object.keys(models[1] ?? {})).toEqual([
     'id',
     'name',
     'context_length',
@@ -260,8 +262,8 @@ test('keeps aliases and :free, drops :batch and openrouter/*, and memoises', asy
     'vision',
     'maxOutput',
   ])
-  expect(models[0]?.context_length).toBe(1048576)
-  expect(models[0]?.pricing.prompt).toBe('0.00000075')
+  expect(models[1]?.context_length).toBe(1048576)
+  expect(models[1]?.pricing.prompt).toBe('0.00000075')
 
   await fetchModels('https://catalogue.example/v1')
   expect(calls).toHaveLength(1)
@@ -271,18 +273,18 @@ test('vision is flagged from input_modalities, and absent means unknown not no',
   stubFetch(() => new Response(JSON.stringify(CATALOGUE), { status: 200 }))
   const models = await fetchModels('https://vision.example/v1')
 
-  expect(models[0]?.vision).toBe(true)
+  expect(models[1]?.vision).toBe(true)
   // The alias entry declares no architecture at all. That is "we cannot tell",
   // and it must never hide or disable the model — support is per-provider while
   // OpenRouter load-balances providers, so the flag is a hint either way.
-  expect(models[1]?.vision).toBe(false)
+  expect(models[0]?.vision).toBe(false)
 })
 
 test('the output ceiling comes from top_provider, and is null when the catalogue is silent', async () => {
   stubFetch(() => new Response(JSON.stringify(CATALOGUE), { status: 200 }))
   const models = await fetchModels('https://ceiling.example/v1')
-  expect(models[0]?.maxOutput).toBe(65536)
-  expect(models[1]?.maxOutput).toBe(null)
+  expect(models[1]?.maxOutput).toBe(65536)
+  expect(models[0]?.maxOutput).toBe(null)
 })
 
 test('max_tokens rides only when asked for, and an Anthropic model gets a cache breakpoint on the system prompt', async () => {
@@ -369,5 +371,33 @@ test('a chunk carrying the same thought as `reasoning` and as `reasoning_details
     { type: 'reasoning', text: ' the plate' },
     { type: 'delta', text: 'ok' },
     { type: 'finish', reason: 'stop' },
+  ])
+})
+
+test('latestModels is the -latest aliases: the named vendors in order, then the rest, alphabetical within', () => {
+  const model = (id: string) =>
+    ({ id, name: id, context_length: 1, pricing: { prompt: '0', completion: '0' }, vision: false, maxOutput: null })
+  // As fetchModels hands it over: sorted by name.
+  const models = [
+    '~anthropic/claude-haiku-latest',
+    '~anthropic/claude-opus-latest',
+    'anthropic/claude-opus-5',
+    '~google/gemini-flash-latest',
+    '~moonshotai/kimi-latest',
+    'openai/gpt-chat-latest',
+    '~openai/gpt-latest',
+    'qwen/qwen3.8-max',
+    '~x-ai/grok-latest',
+    '~z-ai/glm-latest',
+  ].map(model)
+  expect(latestModels(models).map((m) => m.id)).toEqual([
+    '~anthropic/claude-haiku-latest',
+    '~anthropic/claude-opus-latest',
+    'openai/gpt-chat-latest',
+    '~openai/gpt-latest',
+    '~google/gemini-flash-latest',
+    '~moonshotai/kimi-latest',
+    '~x-ai/grok-latest',
+    '~z-ai/glm-latest',
   ])
 })

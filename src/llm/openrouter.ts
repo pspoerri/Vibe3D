@@ -2,7 +2,8 @@ import { sseData } from './sse'
 
 export const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1'
 /** One named constant: the catalogue moves and this is the only line to change. */
-export const DEFAULT_MODEL = 'google/gemini-3.7-flash'
+/** OpenRouter's rolling alias: whatever Google's newest Flash is, without a release here. */
+export const DEFAULT_MODEL = '~google/gemini-flash-latest'
 
 /**
  * One part of a multimodal message. `image_url.url` takes a `data:` URL exactly
@@ -344,7 +345,21 @@ async function loadModels(baseUrl: string): Promise<readonly ModelInfo[]> {
               : null,
         }
       })
+      .sort((a, b) => a.name.localeCompare(b.name))
   )
+}
+
+/** The vendors pinned first in the Latest group, in this order (Kimi is `moonshotai/`; Alibaba has no alias). */
+const LATEST = ['anthropic/', 'openai/', 'google/', 'qwen/', 'moonshotai/']
+
+/** The catalogue's rolling `…-latest` aliases: the LATEST vendors first, then the rest, each run alphabetical. */
+export function latestModels(models: readonly ModelInfo[]): ModelInfo[] {
+  const rank = (id: string) => {
+    const i = LATEST.findIndex((vendor) => id.replace(/^~/, '').startsWith(vendor))
+    return i < 0 ? LATEST.length : i
+  }
+  // A stable sort over the already name-sorted list keeps each vendor's run alphabetical.
+  return models.filter((model) => model.id.endsWith('-latest')).sort((a, b) => rank(a.id) - rank(b.id))
 }
 
 /** 0 when the id is unknown. Callers MUST guard `> 0` before dividing. */

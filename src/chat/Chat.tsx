@@ -3,7 +3,7 @@ import { Compiler, type CompileResult } from '../kernel/compile'
 import { completePkce, pkceAvailable, revokeUrl, startPkce } from '../llm/auth'
 import { toDataUrl } from '../llm/images'
 import {
-  contextLimit, DEFAULT_BASE_URL, fetchModels, streamChat, type ModelInfo, type Usage,
+  contextLimit, DEFAULT_BASE_URL, fetchModels, latestModels, streamChat, type ModelInfo, type Usage,
 } from '../llm/openrouter'
 import { loadKey, saveKey } from '../state/key'
 import {
@@ -850,12 +850,22 @@ export function Chat({
                   value={settings.model}
                   onChange={(e) => persistSettings({ ...settings, model: e.target.value })}
                 >
-                  {models.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.name}
-                      {model.vision ? ' · vision' : ''}
-                    </option>
-                  ))}
+                  <optgroup label="Latest">
+                    {latestModels(models).map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.name}
+                        {model.vision ? ' · vision' : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="All models">
+                    {models.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {model.name}
+                        {model.vision ? ' · vision' : ''}
+                      </option>
+                    ))}
+                  </optgroup>
                 </select>
               ) : (
                 <input

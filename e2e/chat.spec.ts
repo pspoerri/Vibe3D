@@ -37,8 +37,8 @@ async function seedKey(page: Page): Promise<void> {
       body: JSON.stringify({
         data: [
           {
-            id: 'google/gemini-3.7-flash',
-            name: 'Gemini 3.7 Flash',
+            id: '~google/gemini-flash-latest',
+            name: 'Gemini Flash Latest',
             context_length: 1048576,
             architecture: { input_modalities: ['text', 'image'] },
             pricing: { prompt: '0.00000075', completion: '0.00000375' },
@@ -1257,8 +1257,8 @@ test('switching the model applies to the meter and to the next request', async (
       body: JSON.stringify({
         data: [
           {
-            id: 'google/gemini-3.7-flash',
-            name: 'Gemini 3.7 Flash',
+            id: '~google/gemini-flash-latest',
+            name: 'Gemini Flash Latest',
             context_length: 1048576,
             architecture: { input_modalities: ['text', 'image'] },
             pricing: { prompt: '0.00000075', completion: '0.00000375' },
@@ -1288,7 +1288,7 @@ test('switching the model applies to the meter and to the next request', async (
   // Thinking is per model: low on Gemini must not follow us to Qwen, which
   // has no stored level and so sits at the default, high.
   await thinkingSelect.selectOption('low')
-  await expect(page.locator('.chat-meter')).toContainText('google/gemini-3.7-flash · low')
+  await expect(page.locator('.chat-meter')).toContainText('~google/gemini-flash-latest · low')
   await modelSelect.selectOption('qwen/qwen3-coder')
   await expect(page.locator('.chat-meter')).toContainText('qwen/qwen3-coder')
   await expect(page.locator('.chat-meter')).not.toContainText('· low')
@@ -1302,9 +1302,9 @@ test('switching the model applies to the meter and to the next request', async (
   expect(body.reasoning).toEqual({ effort: 'high' })
 
   // And Gemini still remembers its own level (the settings panel is still open).
-  await modelSelect.selectOption('google/gemini-3.7-flash')
+  await modelSelect.selectOption('~google/gemini-flash-latest')
   await expect(thinkingSelect).toHaveValue('low')
-  await expect(page.locator('.chat-meter')).toContainText('google/gemini-3.7-flash · low')
+  await expect(page.locator('.chat-meter')).toContainText('~google/gemini-flash-latest · low')
 })
 
 test('copy puts a debug report on the clipboard: settings, source, transcript — and no key', async ({
@@ -1329,7 +1329,7 @@ test('copy puts a debug report on the clipboard: settings, source, transcript �
   await expect(page.getByRole('button', { name: 'copied', exact: true })).toBeVisible()
   const text = await page.evaluate(() => navigator.clipboard.readText())
   expect(text).toContain('# Vibe3D debug report')
-  expect(text).toContain('model: google/gemini-3.7-flash · thinking: off')
+  expect(text).toContain('model: ~google/gemini-flash-latest · thinking: off')
   expect(text).toContain('[1] user:\na tiny cube')
   expect(text).toContain('[1] assistant:')
   expect(text).toContain('cube([3, 3, 3]);')

@@ -68,7 +68,9 @@ export function loadSettings(): PortableSettings {
     // Falls through to the defaults below rather than returning DEFAULT_SETTINGS
     // itself, so no caller can mutate the constant every later reader sees.
   }
-  const model = typeof stored?.model === 'string' ? stored.model : DEFAULT_SETTINGS.model
+  let model = typeof stored?.model === 'string' ? stored.model : DEFAULT_SETTINGS.model
+  // ponytail: the old fixed default; the alias it became follows the catalogue.
+  if (model === 'google/gemini-3.7-flash') model = DEFAULT_MODEL
   const raw = stored?.thinking as unknown
   // The pre-per-model record held one level for every model: it becomes this model's.
   const thinking: Partial<Record<string, Thinking>> = isLevel(raw)
