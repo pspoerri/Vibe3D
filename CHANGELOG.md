@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.4.3 — 2026-09-05
 
 - **A link opens an example.** `#example=mounting-plate`, `#example=potted-plant` or
   `#example=biergarten-sign` on the app's URL creates a document from that example and opens
