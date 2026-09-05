@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.4.1 — 2026-09-05
+
+A reopened document no longer waits for the kernel.
 
 - **A reopened document shows its mesh at once.** The last successful compile's OFF bytes are
   kept with the document in IndexedDB under the key that made them (source, defines and
