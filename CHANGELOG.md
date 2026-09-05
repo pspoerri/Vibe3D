@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.2 — 2026-09-05
+
+The open document is in the address bar and the tab.
+
+- **The URL hash is the open document.** `#<id>` while a document is open, none at the start
+  window, and a history entry per move: Back and Forward walk between documents and the start
+  window, and a reload or a bookmark lands on the document instead of the launcher. Share links
+  keep their `#s=` form and still take precedence.
+- **The tab title names the model.** `<name> · Vibe3D` while a document is open, `Vibe3D` at the
+  start window.
+
 ## v0.4.1 — 2026-09-05
 
 A reopened document no longer waits for the kernel.
