@@ -84,9 +84,12 @@ app; the composite is 1536 × 768 when it has a close-up pane. Exit 1 with one l
 Chromium is not installed (`pnpm exec playwright install chromium` is the fix it names).
 
 **`vibe3d prompt`**
-Prints `systemPromptFor('mm', true, true)` followed by the rendered `bosl2`, `fonts` and
-`diff` skills (`renderSkill` with no mesh), each under a heading. `SKILL.md` tells the model to
-read it once per session, so the rules in this skill are always the app's current ones.
+Prints the app's `SYSTEM_PROMPT` followed by the rendered `bosl2`, `fonts` and `diff` skills
+(`renderSkill` with no mesh), each under a heading. A one-line preface says that the OUTPUT
+CONTRACT, SELECTION and SKILLS sections are the browser app's chat protocol and do not apply
+here: the local model writes the `.scad` file directly and the skills are already printed.
+`SKILL.md` tells the model to read it once per session, so the modelling rules in this skill
+are always the app's current ones.
 
 ## SKILL.md
 
