@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# cli.js in the built skill, cli.ts in the source tree — never both.
+exec bun "$(dirname "$0")"/cli.[jt]s "$@"

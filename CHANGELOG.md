@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **A local skill.** `pnpm build:skill` builds `dist/skill`, a copy-installable Claude Code skill
+  whose `vibe3d` CLI runs the app's loop from a shell under bun: `check` (report and checks),
+  `look` (views, cuts and the before/after composite through headless Chrome), `export` (3MF,
+  STL, OBJ) and `prompt` (the app's modelling rules).
+
 ## v0.4.3 — 2026-09-05
 
 - **A link opens an example.** `#example=mounting-plate`, `#example=potted-plant` or

@@ -8,6 +8,7 @@
     "dev": "vite",
     "prebuild": "node scripts/fetch-bosl2.mjs",
     "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json && vite build",
+    "build:skill": "node scripts/fetch-bosl2.mjs && node scripts/build-skill.mjs",
     "preview": "vite preview",
     "pretest": "node scripts/fetch-bosl2.mjs",
     "test": "vitest run",

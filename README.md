@@ -95,6 +95,16 @@ when you install, and again before a build if it is missing; bump the pin in
 `scripts/fetch-bosl2.mjs`. The model is told to reach for it for
 fillets, threads and gears, and a `bosl2` skill lists the calls.
 
+## Local skill
+
+The same loop for a model that runs on your machine — Claude Code, or anything that reads a
+`SKILL.md` and runs a shell command. `pnpm build:skill` writes a self-contained directory to
+`dist/skill`: copy it wherever skills live (`cp -r dist/skill ~/.claude/skills/vibe3d`, or into a
+sandbox) and it needs only `bun`, plus Chrome or Chromium for renders. `vibe3d check` prints the
+measured report and the app's checks, `vibe3d look` a named view, cut or before/after composite,
+`vibe3d export` a 3MF, STL or OBJ, and `vibe3d prompt` the modelling rules the app gives its own
+model. The skill's `SKILL.md` is the loop.
+
 ## Partial updates
 
 For a small change to a large file the model can reply with an edit block that replaces just the

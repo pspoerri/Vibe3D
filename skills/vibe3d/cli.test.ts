@@ -2,7 +2,8 @@
  * The skill's CLI against the real kernel, ~0.5 s a compile. Sources are
  * written to a temp dir, as the model would write them.
  */
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { strFromU8, unzipSync } from 'three/examples/jsm/libs/fflate.module.js'
@@ -154,3 +155,19 @@ test('look fails in one line when Chrome cannot be spawned', async () => {
     else process.env.VIBE3D_CHROME = had
   }
 }, 20_000)
+
+const repo = join(import.meta.dirname, '..', '..')
+const hasBun = spawnSync('bun', ['--version']).status === 0
+
+test.skipIf(!hasBun)('the built skill runs from a directory outside the repo', () => {
+  const build = spawnSync('node', ['scripts/build-skill.mjs'], { cwd: repo, encoding: 'utf8' })
+  expect(build.status, build.stderr).toBe(0)
+  const copy = join(dir, 'skill')
+  cpSync(join(repo, 'dist', 'skill'), copy, { recursive: true })
+  for (const name of ['SKILL.md', 'vibe3d', 'cli.js', 'look.js', 'vendor/openscad.wasm', 'vendor/BOSL2.zip', 'vendor/fonts/LiberationSans-Regular.ttf']) {
+    expect(existsSync(join(copy, name)), name).toBe(true)
+  }
+  const r = spawnSync(join(copy, 'vibe3d'), ['check', file('two.scad', TWO)], { cwd: dir, encoding: 'utf8' })
+  expect(r.status, r.stderr).toBe(0)
+  expect(r.stdout).toContain('- solids: 2 for 2 PART sections: ok')
+}, 120_000)
