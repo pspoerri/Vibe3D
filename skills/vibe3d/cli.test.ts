@@ -2,9 +2,10 @@
  * The skill's CLI against the real kernel, ~0.5 s a compile. Sources are
  * written to a temp dir, as the model would write them.
  */
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { strFromU8, unzipSync } from 'three/examples/jsm/libs/fflate.module.js'
 import { expect, test } from 'vitest'
 import { run } from './cli'
 
@@ -63,4 +64,40 @@ test('unknown command prints usage with exit 2, a missing file is exit 1', async
   const missing = await run(['check', join(dir, 'nope.scad')])
   expect(missing.code).toBe(1)
   expect(missing.out).toContain('nope.scad')
+})
+
+const objects = (path: string): number =>
+  strFromU8(unzipSync(readFileSync(path))['3D/3dmodel.model']!).match(/<object /g)?.length ?? 0
+
+test('export writes a 3MF with one object per part, or one part alone', async () => {
+  const all = join(dir, 'two.3mf')
+  const { code, out } = await run(['export', file('two.scad', TWO), all])
+  expect(code, out).toBe(0)
+  expect(out).toContain('two.3mf')
+  expect(objects(all)).toBe(2)
+  const one = join(dir, 'one.3mf')
+  await run(['export', file('two.scad', TWO), one, '--part', '2'])
+  expect(objects(one)).toBe(1)
+})
+
+test('export writes binary STL and OBJ with its MTL', async () => {
+  const stl = join(dir, 'two.stl')
+  await run(['export', file('two.scad', TWO), stl])
+  // 80-byte header, a count, 50 bytes a triangle: two cubes are 24.
+  expect(readFileSync(stl).length).toBe(84 + 50 * 24)
+  const obj = join(dir, 'red.obj')
+  await run(['export', file('red.scad', '// Red\n\n// ---- PART 1 ----\ncolor("red") cube(10);\n// ---- PART 1 END ----\n'), obj])
+  expect(readFileSync(obj, 'utf8')).toContain('mtllib red.mtl')
+  expect(existsSync(join(dir, 'red.mtl'))).toBe(true)
+  const bad = await run(['export', file('two.scad', TWO), join(dir, 'two.step')])
+  expect(bad.code).toBe(1)
+  expect(bad.out).toContain('.3mf, .stl or .obj')
+})
+
+test('a mesh named by import() is read from beside the source', async () => {
+  const stl = join(dir, 'box.stl')
+  await run(['export', file('two.scad', TWO), stl])
+  const { code, out } = await run(['check', file('uses.scad', '// Import\n\n// ---- PART 1 ----\nimport("box.stl");\n// ---- PART 1 END ----\n')])
+  expect(code, out).toBe(0)
+  expect(out).toContain('"parts": 2')
 })

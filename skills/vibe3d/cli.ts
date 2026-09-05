@@ -4,12 +4,17 @@
  * single file `pnpm build:skill` writes beside SKILL.md. Every command prints
  * what the app would show the model; a failure is the message and exit 1.
  */
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { basename, dirname, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { compileNode, compileResult } from '../../eval/kernel'
 import { checkParts, partCount } from '../../src/chat/parts'
+import { encodeObj } from '../../src/export/obj'
+import { part3mf, partMesh } from '../../src/export/part'
+import { encodeStl } from '../../src/export/stl'
+import { paint3mf } from '../../src/export/threemf'
 import { usesText } from '../../src/kernel/fonts'
+import { parseOff } from '../../src/kernel/off'
 import { stripKernelNoise } from '../../src/kernel/noise'
 import type { ExportFormat } from '../../src/kernel/protocol'
 import { DEFAULT_BED } from '../../src/state/settings'
@@ -31,6 +36,8 @@ const OPTIONS = {
 } as const
 
 const parse = (args: string[]) => parseArgs({ args, options: OPTIONS, allowPositionals: true })
+
+const decode = (bytes: Uint8Array): string => new TextDecoder().decode(bytes)
 
 /** The source, and every file an import("name") names, read from beside it. */
 // ponytail: flat names only — import("dir/x.stl") is not written into the kernel FS.
@@ -98,12 +105,37 @@ async function check(args: string[]): Promise<{ code: number; out: string }> {
   return { code: 0, out: checkText(source, insp, bedOf(values.bed)) }
 }
 
+/** 3MF is the kernel's own, painted; STL and OBJ are the app's encoders over the OFF mesh. */
+async function exportPart(args: string[]): Promise<{ code: number; out: string }> {
+  const { positionals: [path, out], values } = parse(args)
+  if (!path || !out) throw new Error(USAGE)
+  const ext = out.split('.').pop() ?? ''
+  const part = values.part ? Number(values.part) : 0
+  if (!['3mf', 'stl', 'obj'].includes(ext)) throw new Error(`export writes .3mf, .stl or .obj, not .${ext}`)
+  if (ext === '3mf') {
+    const { data } = await compiled(path, '3mf')
+    writeFileSync(out, paint3mf(part ? part3mf(data, part) : data))
+  } else {
+    const whole = parseOff(decode((await compiled(path)).data))
+    const mesh = part ? partMesh(whole, part) : whole
+    if (ext === 'stl') writeFileSync(out, encodeStl(mesh))
+    else {
+      const { obj, mtl } = encodeObj(mesh, basename(out, '.obj'))
+      writeFileSync(out, obj)
+      if (mtl) writeFileSync(out.replace(/\.obj$/, '.mtl'), mtl)
+    }
+  }
+  return { code: 0, out: `wrote ${out}` }
+}
+
 export async function run(argv: string[]): Promise<{ code: number; out: string }> {
   const [command, ...rest] = argv
   try {
     switch (command) {
       case 'check':
         return await check(rest)
+      case 'export':
+        return await exportPart(rest)
       default:
         return { code: 2, out: USAGE }
     }
