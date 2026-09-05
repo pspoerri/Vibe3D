@@ -789,7 +789,9 @@ test('a document survives a reload, and its name comes from the prompt', async (
 
   // The whole point: reopen and the latest code is still there.
   await page.reload()
-  // Back at the launcher, with the work listed and openable.
+  // The hash reopens the document; the launcher behind it lists the work too.
+  await expect(page.locator('.menubar-doc')).toHaveText('Knurled knob', { timeout: 90_000 })
+  await page.getByRole('button', { name: 'Vibe3D' }).click()
   await expect(page.locator('.start-name').first()).toHaveText('Knurled knob')
   await page.locator('.start-open').first().click()
   await expect(page.locator('.cm-content')).toContainText('cube([21, 21, 21]);', {
@@ -989,10 +991,11 @@ test("opening another document never shows the previous document's mesh", async 
   await page.waitForTimeout(1000)
 
   await page.reload()
-  // The last-current document (the small cube) compiles behind the launcher.
+  // The hash reopens the last-current document (the small cube).
   await expect(page.locator('.tag', { hasText: '9.0 × 9.0 × 9.0 mm' })).toBeVisible({
     timeout: 90_000,
   })
+  await page.getByRole('button', { name: 'Vibe3D' }).click()
   await page.locator('.start-open', { hasText: 'Knurled knob' }).click()
 
   // Not retried: the moment the other document is open, its predecessor's mesh

@@ -227,9 +227,9 @@ test('an imported mesh is measured, placed by import(), and survives a reload', 
   })
 
   // The bytes live in IndexedDB with the document, so the source still compiles after a reload.
+  await page.waitForTimeout(1000)
   await page.reload()
-  await page.locator('.start-open').first().click({ timeout: 90_000 })
-  await expect(page.locator('.component', { hasText: 'box.stl' })).toBeVisible()
+  await expect(page.locator('.component', { hasText: 'box.stl' })).toBeVisible({ timeout: 90_000 })
   await expect(page.locator('.tag', { hasText: '10.0 × 20.0 × 30.0 mm' })).toBeVisible({
     timeout: 90_000,
   })
@@ -411,12 +411,35 @@ test('a reopened document shows its last mesh without a compile', async ({ page 
   // Let the save debounce write the compiled bytes with the document.
   await page.waitForTimeout(1000)
 
+  // The hash reopens the same document straight away.
   await page.reload()
-  await page.locator('.start-open').first().click({ timeout: 90_000 })
   await expect(page.locator('.tag', { hasText: '60.0 × 40.0 × 3.0 mm' })).toBeVisible({
     timeout: 90_000,
   })
   // The mesh came from the cache: the kernel never ran, so nothing was timed.
   expect(await page.locator('.app').getAttribute('data-compiles')).toBe('0')
   await expect(page.locator('.tag', { hasText: / ms$/ })).toHaveCount(0)
+})
+
+test('the open document is the URL hash and the tab title; Back and Forward move between it and the start window', async ({ page }) => {
+  await page.goto('/')
+  await expect(page).toHaveTitle('Vibe3D')
+  await page.locator('.start-open').first().click({ timeout: 90_000 })
+  const name = await page.locator('.menubar-doc').textContent()
+  await expect(page).toHaveTitle(`${name} · Vibe3D`)
+  expect(page.url()).toMatch(/#[0-9a-f-]{36}$/)
+
+  // A reload lands on the same document, not the start window. The wait lets
+  // the save debounce write the session the hash points into.
+  await page.waitForTimeout(1000)
+  await page.reload()
+  await expect(page.locator('.menubar-doc')).toHaveText(name ?? '', { timeout: 90_000 })
+  await expect(page.locator('.start-card')).toBeHidden()
+
+  await page.goBack()
+  await expect(page.locator('.start-card')).toBeVisible()
+  await expect(page).toHaveTitle('Vibe3D')
+  await page.goForward()
+  await expect(page.locator('.start-card')).toBeHidden()
+  await expect(page.locator('.menubar-doc')).toHaveText(name ?? '')
 })

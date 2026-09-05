@@ -141,6 +141,12 @@ export function App() {
         history.replaceState(null, '', location.pathname + location.search)
         setOpen(true)
       }
+      // A reload or a bookmark: `#<id>` lands on that document, not the start window.
+      const wanted = location.hash.slice(1)
+      if (revived.docs.some((d) => d.id === wanted)) {
+        revived = selectDoc(revived, wanted)
+        setOpen(true)
+      }
       if (!live) return
       setSession(revived)
       // WebKit drops script-writable storage after 7 days without interaction,
@@ -158,6 +164,12 @@ export function App() {
   // pending timeout, so the hidden/unload path writes immediately instead.
   const sessionRef = useRef<Session | null>(null)
   sessionRef.current = session
+
+  const docName = open && session ? currentDoc(session).name : null
+  useEffect(() => {
+    document.title = docName ? `${docName} · Vibe3D` : 'Vibe3D'
+  }, [docName])
+
   useEffect(() => {
     const flush = () => {
       const current = sessionRef.current
@@ -226,10 +238,33 @@ export function App() {
     setCompiles((n) => n + 1)
   }
 
+  const currentId = session?.currentId ?? null
+  // The open document is the URL hash, `#<id>`, none at the start window: a
+  // history entry per move, so Back and Forward walk between them.
+  useEffect(() => {
+    if (!currentId) return
+    const want = open ? `#${currentId}` : ''
+    if (location.hash !== want) history.pushState(null, '', location.pathname + location.search + want)
+  }, [open, currentId])
+  useEffect(() => {
+    const sync = () => {
+      const s = sessionRef.current
+      if (!s) return
+      const id = location.hash.slice(1)
+      const known = s.docs.some((d) => d.id === id)
+      // A deleted document's entry: made the start window, not a trap for Back.
+      if (id && !known) history.replaceState(null, '', location.pathname + location.search)
+      if (known && s.currentId !== id) setSession(selectDoc(s, id))
+      setOpen(known)
+      setFitToken((n) => n + 1)
+    }
+    window.addEventListener('popstate', sync)
+    return () => window.removeEventListener('popstate', sync)
+  }, [])
+
   // Depends on `ready` and the document id, not `session`: a chat event or a
   // version commit changes the session without changing the source, and must
   // not restart a compile that is already in flight.
-  const currentId = session?.currentId ?? null
   const docRef = useRef<string | null>(null)
   useEffect(() => {
     if (!ready) return
