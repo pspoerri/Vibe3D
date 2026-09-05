@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **A link opens an example.** `#example=mounting-plate`, `#example=potted-plant` or
+  `#example=biergarten-sign` on the app's URL creates a document from that example and opens
+  it, like a share link does.
+
 ## v0.4.2 — 2026-09-05
 
 The open document is in the address bar and the tab.

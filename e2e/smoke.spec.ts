@@ -406,6 +406,12 @@ test('a share link opens as a new document with that source', async ({ page }) =
   expect(page.url()).not.toContain('#s=')
 })
 
+test('an example link opens that example as a new document', async ({ page }) => {
+  await page.goto('/#example=potted-plant')
+  await expect(page.locator('.menubar-doc')).toHaveText('A potted plant', { timeout: 90_000 })
+  expect(page.url()).not.toContain('#example=')
+})
+
 test('a reopened document shows its last mesh without a compile', async ({ page }) => {
   await openStarter(page)
   // Let the save debounce write the compiled bytes with the document.

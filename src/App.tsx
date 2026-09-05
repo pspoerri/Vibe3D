@@ -33,7 +33,7 @@ import {
 import { exportProject, importProject } from './state/project'
 import { loadAll, persistRequested, saveSession } from './state/store'
 import { loadSettings } from './state/settings'
-import { EXAMPLES, STARTER } from './examples'
+import { EXAMPLES, exampleFromHash, STARTER } from './examples'
 
 /** Injected by vite.config.ts: `git describe`, and the short commit hash — empty on the clean release tag. */
 declare const __APP_VERSION__: string
@@ -132,12 +132,13 @@ export function App() {
       // lastSource is the fallback, not the starter: if the session structure is
       // unreadable the user still gets the code they were last working on.
       let revived = reviveSession(raw, lastSource ?? STARTER, crypto.randomUUID(), Date.now())
-      // A shared link: its source becomes a document of its own, opened at once.
-      const shared = await decodeShare(location.hash)
-      if (shared !== null) {
+      // A share link or an `#example=` link: its source becomes a document of
+      // its own, opened at once.
+      const linked = (await decodeShare(location.hash)) ?? exampleFromHash(location.hash)
+      if (linked !== null) {
         const id = crypto.randomUUID()
-        const name = suggestName(shared, revived.docs.map((d) => d.name))
-        revived = { docs: [...revived.docs, newDoc(name, shared, id, Date.now())], currentId: id }
+        const name = suggestName(linked, revived.docs.map((d) => d.name))
+        revived = { docs: [...revived.docs, newDoc(name, linked, id, Date.now())], currentId: id }
         history.replaceState(null, '', location.pathname + location.search)
         setOpen(true)
       }

@@ -48,8 +48,10 @@ in imperial, "a two inch knob" means 50.8 mm in the source it writes.
 
 ## Examples, colour and names
 
-The start window offers two example models — a mounting plate and a potted plant — from
-[`src/examples`](src/examples); each is a plain `.scad` file that also opens in desktop OpenSCAD.
+The start window offers three example models — a mounting plate, a potted plant and a Biergarten
+sign — from [`src/examples`](src/examples); each is a plain `.scad` file that also opens in desktop
+OpenSCAD. A link opens one straight away as a new document: `#example=mounting-plate`,
+`#example=potted-plant` or `#example=biergarten-sign` on the app's URL.
 `color()` in the source is what the viewport shows, per face, through unions and differences.
 A document is named after your first prompt while the model works, then after the title comment
 the model puts on the first line of the file; **Rename** makes a title yours for good.
