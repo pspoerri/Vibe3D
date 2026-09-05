@@ -7,30 +7,43 @@ an OpenRouter key.
 
 ## Goal
 
-A directory that installs with one symlink and gives the local model the same evidence the
-app gives the hosted one: the measured report and the app's checks after every compile, the
+A directory that installs by copying it anywhere — sandboxes included — and gives the local
+model the same evidence the app gives the hosted one: the measured report and the app's checks after every compile, the
 green-over-magenta diff and named views on request, and a 3MF, STL or OBJ at the end. The
 modelling rules come from the app's own system prompt so they never fork.
 
 ## Layout
 
+Source, in the repo:
+
 ```
 skills/vibe3d/
   SKILL.md       the workflow the model follows
-  vibe3d         bash wrapper — resolves its own symlink, runs `bun cli.ts` beside it
+  vibe3d         bash wrapper: exec bun "$(dirname "$0")"/cli.[jt]s "$@" — cli.js built, cli.ts in the tree
   cli.ts         the commands
-  look.ts        browser entry, bundled by vite: window.vibe3dLook(...) → JPEG data URL
+  look.ts        browser entry: window.vibe3dLook(...) draws one render into the page
   cli.test.ts    real-kernel tests
-  .build/        the look bundle, gitignored, built on first use
 ```
 
-Install: `pnpm install` in the repo, then `ln -s "$PWD/skills/vibe3d" ~/.claude/skills/vibe3d`.
-The wrapper uses `readlink -f` on itself, so it finds the repo whether it is run from the
-symlink or in place; a copied skill directory does not work and the wrapper says so. The CLI
-runs under Bun (`brew install oven-sh/bun/bun`), which executes the repo's TypeScript as it is
-— extensionless imports included — so no dependency is added. Verified 2026-09-05 with Bun
-1.4.0: the Emscripten kernel compiles in ~0.25 s, and Playwright launches Chromium with WebGL
-available.
+Built, by `pnpm build:skill` (`scripts/build-skill.mjs`), into `dist/skill/`:
+
+```
+dist/skill/
+  SKILL.md, vibe3d          copied
+  cli.js                    bun build cli.ts --target=bun: one file, node_modules inlined
+  look.js                   bun build look.ts --target=browser --format=iife: three.js inlined
+  vendor/openscad.wasm      the kernel
+  vendor/BOSL2.zip          the library
+  vendor/fonts/*.ttf        the Liberation family
+```
+
+Install is a copy of that directory to wherever skills live — `cp -r dist/skill
+~/.claude/skills/vibe3d`, or into a sandbox — and nothing in it refers back to the repo. The
+runtime is Bun (`brew install oven-sh/bun/bun`; the sandboxes have it), which the wrapper
+calls; no `node_modules` are needed. `cli.ts` finds its assets in `vendor/` beside itself and,
+when that is absent, in `../../src/kernel/vendor/` — so the same file runs unbuilt from the
+source tree, which is what the tests do. Verified 2026-09-05 with Bun 1.4.0: the bundled CLI
+runs from a bare copied directory, the Emscripten kernel compiles in ~0.25 s.
 
 ## Commands
 
@@ -67,8 +80,8 @@ per part, colours as materials); STL and OBJ are the app's encoders over the OFF
 exports one part alone via `part3mf` / `partMesh`. OBJ writes its `.mtl` beside the `.obj` when
 the mesh has colour. Exit 1 on a compile failure, with the diagnostics.
 
-**`vibe3d look part.scad out.jpg [--view V] [--cut z=12] [--box x0,y0,z0,x1,y1,z1] [--before prev.scad]`**
-Renders through the app's `capture.ts`, in headless Chromium via Playwright:
+**`vibe3d look part.scad out.png [--view V] [--cut z=12] [--box x0,y0,z0,x1,y1,z1] [--before prev.scad]`**
+Renders through the app's `capture.ts`, in headless Chrome:
 
 - Without `--before`: `renderView` — a shaded view from `V` (`iso`, `iso_back`, `front`,
   `back`, `left`, `right`, `top`, `bottom`, `auto`; default `iso`), an optional cut, an
@@ -78,12 +91,21 @@ Renders through the app's `capture.ts`, in headless Chromium via Playwright:
   aligned before (green) over after (magenta), framed by `frameBox`, with the close-up pane
   when `detailOf` chooses one. `--view` etc. are ignored in this mode.
 
-`look.ts` is the browser side: it takes the OFF texts and the request, calls the two render
-functions and returns the data URL. It is built once by `vite build` (lib mode, IIFE, three.js
-inlined) into `.build/look.js` when the file is missing; the CLI launches Chromium, adds the
-script to an empty page, evaluates, decodes the data URL and writes the JPEG. 768 px, as in the
-app; the composite is 1536 × 768 when it has a close-up pane. Exit 1 with one line when
-Chromium is not installed (`pnpm exec playwright install chromium` is the fix it names).
+The CLI does the geometry (compile, inspect, frame, direction) and writes one temporary HTML
+page: `look.js` inline, then a script that calls `window.vibe3dLook(job)` with the OFF texts
+and the render parameters as JSON; `look.ts` parses the meshes, calls the render function and
+appends the resulting image to the body. Chrome is run as
+
+    chrome --headless=new --no-sandbox --user-data-dir=<tmp> --no-first-run --hide-scrollbars
+           --use-angle=swiftshader --enable-unsafe-swiftshader
+           --window-size=768,768 --screenshot=out.png file://…/look.html
+
+(1536 × 768 when the composite has a close-up pane). The CLI polls for the output file, up to
+30 s, then kills Chrome: verified 2026-09-05 that the screenshot lands in ~3 s and that the
+process does not exit on its own under a sandbox. Chrome is found, in order, at
+`$VIBE3D_CHROME`, then on PATH as `google-chrome`, `google-chrome-stable`, `chromium`,
+`chromium-browser`, `chrome`, then the macOS app paths of Google Chrome and Chromium. None
+found: exit 1 with one line naming `VIBE3D_CHROME`; `check` and `export` never need it.
 
 **`vibe3d prompt`**
 Prints the app's `SYSTEM_PROMPT` followed by the rendered `bosl2`, `fonts` and `diff` skills
@@ -95,7 +117,8 @@ are always the app's current ones.
 
 ## SKILL.md
 
-Short: what the skill is for, the install line, then the loop —
+Short: what the skill is for, that every command is `<this skill's directory>/vibe3d …` (the
+harness names the directory when it loads the skill), then the loop —
 
 1. Run `vibe3d prompt` once and write the source to a `.scad` file by its rules (title line,
    parameters, PART sections, construction, colour).
@@ -111,19 +134,20 @@ app's rule, restated where the local model will see it.
 ## Tests
 
 `skills/vibe3d/cli.test.ts`, run by `pnpm test` with the rest under vitest, against the
-exported `run(argv)` (real kernel, ~0.5 s a compile). The wrapper is two lines and is not
-tested.
+exported `run(argv)` from the source tree (real kernel, ~0.5 s a compile):
 
 - `check` on a two-PART source prints `solids: 2 for 2 PART sections: ok` and a report whose
   `parts` is 2; with `--before` on a grown part, `added_volume_mm3` is positive.
 - `check` on a source with a syntax error exits 1 and prints the kernel's line.
 - `export` to 3MF yields two `<object` entries; `--part 2` yields one.
-- `look` writes a JPEG whose header is JFIF and whose size is 768 × 768 (and 1536 × 768 for a
-  `--before` render that has a close-up); skipped with a message when the Chromium download
-  is absent.
+- `look` writes a PNG of 768 × 768 (the IHDR says so), and 1536 × 768 for a `--before` render
+  that has a close-up; skipped with a message when no Chrome is found.
+- `pnpm build:skill` then `bun dist/skill/cli.js check` from a directory outside the repo
+  prints the same checks: the bundle is self-contained.
 
 ## Not in this design
 
-A plugin manifest, a self-contained copy-installable bundle, per-part `look`, imported-mesh
+A plugin manifest, a single-binary `bun build --compile` (platform-specific; the JS bundle
+is not), per-part `look`, imported-mesh
 listing for the model (it can read the file sizes itself), and a `chat` command that would
 call a hosted model — the local model is the chat.
