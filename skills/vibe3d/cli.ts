@@ -202,15 +202,26 @@ async function screenshot(chrome: string, job: LookJob, width: number, out: stri
     ],
     { stdio: 'ignore' },
   )
+  // A bad VIBE3D_CHROME is an 'error' event, and an unheard one is an uncaught throw past run's catch.
+  let spawnFailed: string | null = null
+  child.on('error', (error) => {
+    spawnFailed = error.message
+  })
   try {
     const tick = () => new Promise((done) => setTimeout(done, 250))
     const until = Date.now() + 30_000
-    while (!existsSync(out) && Date.now() < until) await tick()
+    while (!spawnFailed && !existsSync(out) && Date.now() < until) await tick()
+    if (spawnFailed) throw new Error(`${chrome}: ${spawnFailed}`)
     if (!existsSync(out)) throw new Error(`${chrome} wrote no screenshot in 30 s`)
     await tick() // ponytail: one beat for the write to finish; a size-stable poll if a truncated PNG ever shows up
   } finally {
     child.kill('SIGKILL')
-    rmSync(dir, { recursive: true, force: true })
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
+    } catch {
+      // Chrome's helpers outlive the process we killed and keep writing to the profile: a temp dir
+      // left behind is not worth failing a screenshot that already landed.
+    }
   }
 }
 

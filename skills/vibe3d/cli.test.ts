@@ -140,3 +140,17 @@ test('look rejects a bad view, cut or box before touching Chrome', async () => {
   expect((await run(['look', src, join(dir, 'x.png'), '--cut', '12'])).out).toContain('--cut is axis=mm')
   expect((await run(['look', src, join(dir, 'x.png'), '--box', '1,2,3'])).out).toContain('--box is x0,y0,z0,x1,y1,z1')
 })
+
+test('look fails in one line when Chrome cannot be spawned', async () => {
+  const had = process.env.VIBE3D_CHROME
+  process.env.VIBE3D_CHROME = '/nonexistent/chrome'
+  try {
+    const { code, out } = await run(['look', file('two.scad', TWO), join(dir, 'never.png')])
+    expect(code).toBe(1)
+    expect(out).toContain('/nonexistent/chrome')
+    expect(out.split('\n')).toHaveLength(1)
+  } finally {
+    if (had === undefined) delete process.env.VIBE3D_CHROME
+    else process.env.VIBE3D_CHROME = had
+  }
+}, 20_000)
