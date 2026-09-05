@@ -17,18 +17,20 @@ modelling rules come from the app's own system prompt so they never fork.
 ```
 skills/vibe3d/
   SKILL.md       the workflow the model follows
-  vibe3d         bash wrapper — resolves its own symlink, runs `pnpm exec tsx cli.ts` in the repo
+  vibe3d         bash wrapper — resolves its own symlink, runs `bun cli.ts` beside it
   cli.ts         the commands
   look.ts        browser entry, bundled by vite: window.vibe3dLook(...) → JPEG data URL
   cli.test.ts    real-kernel tests
   .build/        the look bundle, gitignored, built on first use
 ```
 
-Install: `ln -s "$PWD/skills/vibe3d" ~/.claude/skills/vibe3d`. The wrapper uses
-`readlink -f` on itself, so it finds the repo whether it is run from the symlink or in place;
-a copied skill directory does not work and the wrapper says so. The only new dependency is
-`tsx` (dev), because nothing in the repo runs TypeScript from a shell today and the sources
-use extensionless imports that Node's own type stripping cannot resolve.
+Install: `pnpm install` in the repo, then `ln -s "$PWD/skills/vibe3d" ~/.claude/skills/vibe3d`.
+The wrapper uses `readlink -f` on itself, so it finds the repo whether it is run from the
+symlink or in place; a copied skill directory does not work and the wrapper says so. The CLI
+runs under Bun (`brew install oven-sh/bun/bun`), which executes the repo's TypeScript as it is
+— extensionless imports included — so no dependency is added. Verified 2026-09-05 with Bun
+1.4.0: the Emscripten kernel compiles in ~0.25 s, and Playwright launches Chromium with WebGL
+available.
 
 ## Commands
 
@@ -108,7 +110,9 @@ app's rule, restated where the local model will see it.
 
 ## Tests
 
-`skills/vibe3d/cli.test.ts`, run by `pnpm test` with the rest (real kernel, ~0.5 s a compile):
+`skills/vibe3d/cli.test.ts`, run by `pnpm test` with the rest under vitest, against the
+exported `run(argv)` (real kernel, ~0.5 s a compile). The wrapper is two lines and is not
+tested.
 
 - `check` on a two-PART source prints `solids: 2 for 2 PART sections: ok` and a report whose
   `parts` is 2; with `--before` on a grown part, `added_volume_mm3` is positive.
