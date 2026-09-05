@@ -3,7 +3,7 @@ import type { CompileResult } from '../kernel/compile'
 import { parseOff, type Mesh } from '../kernel/off'
 import { meshStats } from '../kernel/stats'
 import {
-  buildReport, changeBox, changedPieces, detailOf, diffOf, formatReport, frameBox, hostOf, idealView,
+  buildReport, changeBox, changedPieces, detailOf, diffOf, formatReport, frameBox, hostOf, idealView, inspect,
   legendFor, lerpBox, meshChecks, partMoves, translateParts, type Report,
 } from './inspect'
 
@@ -265,4 +265,16 @@ test('lettering in one colour with its base is a NO; two colours are listed; no 
   expect(meshChecks(signed, 1, true).find((c) => c.startsWith('colours'))).toBe('colours: part 1 saddlebrown (#8b4513) 82%, gold (#ffd700) 18%')
   const oneColour: Report = { ...plain, per_part: [shell([0, 0, 0], [40, 20, 5], 2900, 'red (#ff0000) 100%')] }
   expect(meshChecks(oneColour, 1, false).find((c) => c.startsWith('colours'))).toBe('colours: part 1 red (#ff0000) 100%')
+})
+
+test('inspect exposes what the composite would draw', async () => {
+  // An "empty" diff result: nothing added, nothing removed.
+  // diffOf reads stderrRaw for the kernel's "empty" exit.
+  const empty: CompileResult = { ok: false, stderr: '', stderrRaw: 'ERROR: Current top level object is empty.', ms: 0 }
+  const same = new TextEncoder().encode(box(10, 10, 10))
+  const insp = await inspect({ before: same, after: same, vision: false, signal: new AbortController().signal, compile: async () => empty })
+  expect(insp.composite.after.triangleCount).toBe(12)
+  expect(insp.composite.before?.triangleCount).toBe(12)
+  expect(insp.composite.frame).toEqual({ min: [0, 0, 0], max: [10, 10, 10] })
+  expect(insp.composite.detail).toBeNull()
 })

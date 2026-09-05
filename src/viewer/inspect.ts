@@ -587,6 +587,8 @@ export interface Inspection {
    * the model cannot read an image.
    */
   closeups: Closeup[]
+  /** What renderComposite would draw — before aligned onto after, the frame, the close-up — for a renderer outside this context. */
+  composite: { before: Mesh | null; after: Mesh; frame: Box; detail: Detail | null }
 }
 
 /** The evidence for one verification round: the numbers always, the render when it is worth sending. */
@@ -616,10 +618,8 @@ export async function inspect(input: InspectInput): Promise<Inspection> {
   const detail = detailOf(pieces, change, parts, model)
   const colours = partColourShares(afterMesh).map(describeColours)
   const report = buildReport({ after, before, added: addedStats, removed: removedStats, moves, pieces, colours })
-  const image =
-    input.vision && !input.signal.aborted
-      ? renderComposite(aligned, afterMesh, frameBox(change, model), detail)
-      : null
+  const frame = frameBox(change, model)
+  const image = input.vision && !input.signal.aborted ? renderComposite(aligned, afterMesh, frame, detail) : null
   const closeups =
     change && input.vision
       ? pieces.map((piece) => ({
@@ -630,5 +630,11 @@ export async function inspect(input: InspectInput): Promise<Inspection> {
           },
         }))
       : []
-  return { report, image, legend: image ? legendFor(aligned !== null, detail) : null, closeups }
+  return {
+    report,
+    image,
+    legend: image ? legendFor(aligned !== null, detail) : null,
+    closeups,
+    composite: { before: aligned, after: afterMesh, frame, detail },
+  }
 }
