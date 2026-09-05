@@ -9,17 +9,24 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
   min-height: 0; min-width: 0;
 }
 .pane { min-width: 0; min-height: 0; position: relative; }
-/* The side panes resize with the platform's own grip (bottom corner); the
+/* The code pane resizes from its edge (the .splitter strip on the viewport's
+   left); the chat pane with the platform's own grip (bottom corner); the
    viewport takes what is left. Pixel widths, not percentages: a percentage
    on an item in an `auto` track resolves cyclically and collapses the grid.
    38vw each leaves the viewport at least 24vw, enough for its HUD. The right
    pane is laid out right-to-left so its grip sits on the inner corner, where
    there is room to drag. */
-.pane.side { width: 440px; min-width: 300px; max-width: 38vw; resize: horizontal; overflow: hidden; }
-/* The slide animates the constraints, not width: the platform resize grip owns
-   width (as an inline style), so the toggle must never fight a dragged value. */
+.pane.side { width: 440px; min-width: 300px; max-width: 38vw; overflow: hidden; }
+/* The slide animates the constraints, not width: a drag owns width (as an
+   inline style, clamped by min/max), so the toggle must never fight it. */
 .pane.side { transition: max-width .25s ease, min-width .25s ease; }
-.pane.side.collapsed { max-width: 0; min-width: 0; resize: none; }
+.pane.side.collapsed { max-width: 0; min-width: 0; }
+.splitter {
+  position: absolute; top: 0; bottom: 0; left: -3px; width: 7px; z-index: 1;
+  cursor: col-resize; user-select: none; touch-action: none;
+}
+.splitter:hover, .splitter:active { background: rgba(184, 134, 11, .35); }
+.splitter:focus-visible { outline: 2px solid #b8860b; outline-offset: -2px; }
 .code-toggle {
   position: absolute; top: 50%; left: 0; transform: translateY(-50%); z-index: 2;
   width: 15px; height: 52px; padding: 0; cursor: pointer;
@@ -29,7 +36,7 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
 }
 .code-toggle:hover { border-color: #b8860b; color: #b8860b; }
 .code-toggle:focus-visible { outline: 2px solid #b8860b; outline-offset: 1px; }
-.pane.side.right { width: 360px; direction: rtl; }
+.pane.side.right { width: 360px; direction: rtl; resize: horizontal; }
 .pane.side.right > * { direction: ltr; }
 .pane + .pane { border-left: 1px solid #c8ccc4; }
 .view { background: #f6f7f4; }
@@ -547,8 +554,8 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
   .warnings, .viewport-cut { bottom: 52px; }
   /* Only the view cube shares the top now. */
   .hud { max-width: calc(100% - 104px); }
-  /* There is no editor pane to slide. */
-  .code-toggle { display: none; }
+  /* There is no editor pane to slide or resize. */
+  .code-toggle, .splitter { display: none; }
 }
 
 /* Version picker (design.md §7). */

@@ -449,3 +449,21 @@ test('the open document is the URL hash and the tab title; Back and Forward move
   await expect(page.locator('.start-card')).toBeHidden()
   await expect(page.locator('.menubar-doc')).toHaveText(name ?? '')
 })
+
+test('drags the code pane edge to resize it', async ({ page }) => {
+  await page.goto('/')
+  await page.locator('.start-open').first().click({ timeout: 90_000 })
+  const pane = page.locator('.pane.side').first()
+  const grip = page.getByRole('separator', { name: 'Resize the code pane' })
+  const box = (await grip.boundingBox())!
+  const before = (await pane.boundingBox())!.width
+  // Well above the code toggle, which sits on the strip's vertical middle.
+  await page.mouse.move(box.x + box.width / 2, box.y + 40)
+  await page.mouse.down()
+  await page.mouse.move(box.x + 40, box.y + 40, { steps: 4 })
+  await page.mouse.up()
+  expect((await pane.boundingBox())!.width).toBeGreaterThan(before + 30)
+  // Hiding the code pane keeps the dragged width for when it comes back.
+  await page.getByRole('button', { name: 'Hide the code' }).click()
+  await expect(grip).toBeHidden()
+})

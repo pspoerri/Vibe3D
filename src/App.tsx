@@ -111,6 +111,7 @@ export function App() {
   // The launcher is the entry point: nothing is open until a document is picked.
   const [open, setOpen] = useState(false)
   const [codeOpen, setCodeOpen] = useState(true)
+  const codeRef = useRef<HTMLElement>(null)
   const [help, setHelp] = useState(false)
   /** The version picker's diff: head against the version it was made from. */
   const [diff, setDiff] = useState(false)
@@ -465,7 +466,7 @@ export function App() {
       )}
 
       <div className="panes">
-      <section className={codeOpen ? 'pane side' : 'pane side collapsed'}>
+      <section ref={codeRef} className={codeOpen ? 'pane side' : 'pane side collapsed'}>
         <div className="editor-pane">
           <div className="editor-host">
             {/* Remounts on a document switch, like the chat pane: a fresh
@@ -499,6 +500,29 @@ export function App() {
       </section>
 
       <section className="pane view">
+        {codeOpen && (
+          <div
+            className="splitter"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize the code pane"
+            tabIndex={0}
+            onPointerDown={(e) => {
+              e.preventDefault() // no text selection under the drag
+              e.currentTarget.setPointerCapture(e.pointerId)
+            }}
+            onPointerMove={(e) => {
+              const pane = codeRef.current
+              if (pane && e.currentTarget.hasPointerCapture(e.pointerId))
+                pane.style.width = `${e.clientX - pane.getBoundingClientRect().left}px`
+            }}
+            onKeyDown={(e) => {
+              const step = e.key === 'ArrowLeft' ? -24 : e.key === 'ArrowRight' ? 24 : 0
+              const pane = codeRef.current
+              if (pane && step) pane.style.width = `${pane.offsetWidth + step}px`
+            }}
+          />
+        )}
         <button
           type="button"
           className="code-toggle"

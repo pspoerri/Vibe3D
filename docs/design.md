@@ -691,8 +691,9 @@ Everything below was verified against the pinned kernel first, under Node with `
   which the system prompt explains. The model finds the part in the source by box and colour —
   no source↔mesh mapping to maintain. The selection is dropped with the mesh, since a
   recompile may renumber the parts.
-- **Resizable panes**: `resize: horizontal` on the editor and chat panes over a
-  `auto 1fr auto` grid — the platform's own grip. The chat pane is laid out `direction: rtl`
+- **Resizable panes**: over an `auto 1fr auto` grid. The editor pane has a drag strip on its
+  edge (pointer capture, width written as an inline style and clamped by the pane's min/max);
+  the chat pane keeps `resize: horizontal`, the platform's own grip, laid out `direction: rtl`
   (its children reset to `ltr`) so the grip sits on its inner corner, where there is room to
   drag. Widths are not persisted.
 

@@ -160,8 +160,8 @@ project** writes one `.json` you can keep or import anywhere; it never contains 
 
 ## Layout and help
 
-The editor and chat panes resize from the grip at their bottom corner (the browser's own); the
-viewport takes what is left. **Help** in the menu bar lists the chat commands on hover and opens
+The editor pane resizes by dragging its edge; the chat pane from the grip at its bottom corner
+(the browser's own); the viewport takes what is left. **Help** in the menu bar lists the chat commands on hover and opens
 the manual on click; `/help` prints the same list in the transcript.
 
 ## Licensing
