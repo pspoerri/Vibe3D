@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.5.1 — 2026-09-05
 
 - **The model list is alphabetical, with the rolling aliases on top.** A "Latest" group holds
   OpenRouter's `…-latest` aliases — Anthropic, OpenAI, Google and Kimi first, then the rest;
