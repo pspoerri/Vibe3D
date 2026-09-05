@@ -1,11 +1,16 @@
 # Changelog
 
-## Unreleased
+## v0.5.0 — 2026-09-05
+
+The app's loop from a shell.
 
 - **A local skill.** `pnpm build:skill` builds `dist/skill`, a copy-installable Claude Code skill
   whose `vibe3d` CLI runs the app's loop from a shell under bun: `check` (report and checks),
   `look` (views, cuts and the before/after composite through headless Chrome), `export` (3MF,
-  STL, OBJ) and `prompt` (the app's modelling rules).
+  STL, OBJ) and `prompt` (the app's modelling rules). `make install-skill` copies it into
+  `~/.claude/skills`; `make doctor` checks for bun and Chrome.
+- **The code pane resizes from its edge.** Drag the strip between the code and the model
+  (arrow keys work too); the chat pane keeps the grip at its bottom corner.
 
 ## v0.4.3 — 2026-09-05
 
