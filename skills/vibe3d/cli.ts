@@ -8,7 +8,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 import { compileNode, compileResult } from '../../eval/kernel'
 import { checkParts, constructionSource, partCount } from '../../src/chat/parts'
@@ -119,13 +119,17 @@ async function exportPart(args: string[]): Promise<{ code: number; out: string }
   if (!path || !out) throw new Error(USAGE)
   const ext = out.split('.').pop() ?? ''
   const part = values.part ? Number(values.part) : 0
+  if (values.part && !(Number.isInteger(part) && part >= 1)) throw new Error('--part is a part number, 1 or more')
   if (!['3mf', 'stl', 'obj'].includes(ext)) throw new Error(`export writes .3mf, .stl or .obj, not .${ext}`)
   if (ext === '3mf') {
     const { data } = await compiled(path, '3mf')
-    writeFileSync(out, paint3mf(part ? part3mf(data, part) : data))
+    const picked = part ? part3mf(data, part) : data
+    if (part && picked === data) throw new Error(`no part ${part} in ${path}`)
+    writeFileSync(out, paint3mf(picked))
   } else {
     const whole = parseOff(decode((await compiled(path)).data))
     const mesh = part ? partMesh(whole, part) : whole
+    if (part && mesh.triangleCount === 0) throw new Error(`no part ${part} in ${path}`)
     if (ext === 'stl') writeFileSync(out, encodeStl(mesh))
     else {
       const { obj, mtl } = encodeObj(mesh, basename(out, '.obj'))
@@ -153,6 +157,7 @@ export function findChrome(): string | null {
 }
 
 /** look.js beside this file (the built skill), else built now from look.ts (the source tree). */
+// ponytail: built once, never invalidated — delete look.js after editing look.ts; an mtime compare is the upgrade
 function lookBundle(): string {
   const here = dirname(fileURLToPath(import.meta.url))
   const built = join(here, 'look.js')
@@ -175,7 +180,7 @@ function viewRequest(values: { view?: string; cut?: string; box?: string }): Vie
   const cut = values.cut === undefined ? null : /^([xyz])=(-?\d+(?:\.\d+)?)$/.exec(values.cut)
   if (values.cut !== undefined && !cut) throw new Error('--cut is axis=mm, like z=12')
   const box = values.box?.split(',').map(Number)
-  if (box && (box.length !== 6 || box.some(Number.isNaN))) throw new Error('--box is x0,y0,z0,x1,y1,z1')
+  if (box && (box.length !== 6 || box.some((n) => !Number.isFinite(n)))) throw new Error('--box is x0,y0,z0,x1,y1,z1')
   return {
     view: view as ViewName | 'auto',
     section: cut ? { axis: cut[1] as Axis, at: Number(cut[2]) } : null,
@@ -190,7 +195,7 @@ async function screenshot(chrome: string, job: LookJob, width: number, out: stri
   const page = join(dir, 'look.html')
   writeFileSync(
     page,
-    `<!doctype html><body><script src="file://${lookBundle()}"></script><script>vibe3dLook(${JSON.stringify(job)})</script></body>`,
+    `<!doctype html><body><script src="${pathToFileURL(lookBundle()).href}"></script><script>vibe3dLook(${JSON.stringify(job)})</script></body>`,
   )
   rmSync(out, { force: true })
   const child = spawn(
@@ -198,7 +203,7 @@ async function screenshot(chrome: string, job: LookJob, width: number, out: stri
     [
       '--headless=new', '--no-sandbox', `--user-data-dir=${join(dir, 'profile')}`, '--no-first-run', '--hide-scrollbars',
       '--use-angle=swiftshader', '--enable-unsafe-swiftshader', `--window-size=${width},768`,
-      `--screenshot=${resolve(out)}`, `file://${page}`,
+      `--screenshot=${resolve(out)}`, pathToFileURL(page).href,
     ],
     { stdio: 'ignore' },
   )

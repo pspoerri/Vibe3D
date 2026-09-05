@@ -81,6 +81,18 @@ test('export writes a 3MF with one object per part, or one part alone', async ()
   expect(objects(one)).toBe(1)
 })
 
+test('--part rejects a non-number and an out-of-range part, on the 3MF and STL paths', async () => {
+  const bad = await run(['export', file('two.scad', TWO), join(dir, 'bad.3mf'), '--part', 'abc'])
+  expect(bad.code).toBe(1)
+  expect(bad.out).toContain('--part is a part number')
+  const range3mf = await run(['export', file('two.scad', TWO), join(dir, 'range.3mf'), '--part', '5'])
+  expect(range3mf.code).toBe(1)
+  expect(range3mf.out).toContain('no part 5')
+  const rangeStl = await run(['export', file('two.scad', TWO), join(dir, 'range.stl'), '--part', '5'])
+  expect(rangeStl.code).toBe(1)
+  expect(rangeStl.out).toContain('no part 5')
+})
+
 test('export writes binary STL and OBJ with its MTL', async () => {
   const stl = join(dir, 'two.stl')
   await run(['export', file('two.scad', TWO), stl])
@@ -121,7 +133,10 @@ const png = (path: string): [number, number] => {
 /** TWO with a small block fused onto part 1: a change small against its part, so the composite gets a close-up pane. */
 const BUMPED = TWO.replace('cube(10);\n// ---- PART 1 END', 'union() { cube(10); translate([3, 3, 9]) cube(4); }\n// ---- PART 1 END')
 
-test.skipIf(!findChrome())('look renders a 768 px view, and a two-pane composite after a change', async () => {
+// look.js is gitignored and built with bun on first use: these tests need bun, wherever they run.
+const hasBun = spawnSync('bun', ['--version']).status === 0
+
+test.skipIf(!hasBun || !findChrome())('look renders a 768 px view, and a two-pane composite after a change', async () => {
   const view = join(dir, 'view.png')
   const r = await run(['look', file('two.scad', TWO), view, '--view', 'front', '--cut', 'z=5'])
   expect(r.code, r.out).toBe(0)
@@ -142,7 +157,7 @@ test('look rejects a bad view, cut or box before touching Chrome', async () => {
   expect((await run(['look', src, join(dir, 'x.png'), '--box', '1,2,3'])).out).toContain('--box is x0,y0,z0,x1,y1,z1')
 })
 
-test('look fails in one line when Chrome cannot be spawned', async () => {
+test.skipIf(!hasBun)('look fails in one line when Chrome cannot be spawned', async () => {
   const had = process.env.VIBE3D_CHROME
   process.env.VIBE3D_CHROME = '/nonexistent/chrome'
   try {
@@ -157,7 +172,6 @@ test('look fails in one line when Chrome cannot be spawned', async () => {
 }, 20_000)
 
 const repo = join(import.meta.dirname, '..', '..')
-const hasBun = spawnSync('bun', ['--version']).status === 0
 
 test.skipIf(!hasBun)('the built skill runs from a directory outside the repo', () => {
   const build = spawnSync('node', ['scripts/build-skill.mjs'], { cwd: repo, encoding: 'utf8' })
@@ -167,6 +181,7 @@ test.skipIf(!hasBun)('the built skill runs from a directory outside the repo', (
   for (const name of ['SKILL.md', 'vibe3d', 'cli.js', 'look.js', 'vendor/openscad.wasm', 'vendor/BOSL2.zip', 'vendor/fonts/LiberationSans-Regular.ttf']) {
     expect(existsSync(join(copy, name)), name).toBe(true)
   }
+  for (const name of ['cli.js', 'look.js']) expect(readFileSync(join(copy, name), 'utf8'), name).not.toContain(repo)
   const r = spawnSync(join(copy, 'vibe3d'), ['check', file('two.scad', TWO)], { cwd: dir, encoding: 'utf8' })
   expect(r.status, r.stderr).toBe(0)
   expect(r.stdout).toContain('- solids: 2 for 2 PART sections: ok')

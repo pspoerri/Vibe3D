@@ -141,7 +141,8 @@ exported `run(argv)` from the source tree (real kernel, ~0.5 s a compile):
 - `check` on a source with a syntax error exits 1 and prints the kernel's line.
 - `export` to 3MF yields two `<object` entries; `--part 2` yields one.
 - `look` writes a PNG of 768 × 768 (the IHDR says so), and 1536 × 768 for a `--before` render
-  that has a close-up; skipped with a message when no Chrome is found.
+  that has a close-up; skipped with a message when no Chrome is found, and skipped when `bun`
+  is absent, since the source-tree render path builds `look.js` with it.
 - `pnpm build:skill` then `bun dist/skill/cli.js check` from a directory outside the repo
   prints the same checks: the bundle is self-contained.
 

@@ -103,7 +103,8 @@ The same loop for a model that runs on your machine — Claude Code, or anything
 sandbox) and it needs only `bun`, plus Chrome or Chromium for renders. `vibe3d check` prints the
 measured report and the app's checks, `vibe3d look` a named view, cut or before/after composite,
 `vibe3d export` a 3MF, STL or OBJ, and `vibe3d prompt` the modelling rules the app gives its own
-model. The skill's `SKILL.md` is the loop.
+model. The skill's `SKILL.md` is the loop. Its tests in `pnpm test` skip their render cases unless
+`bun` is on PATH, and unless Chrome is found.
 
 ## Partial updates
 
