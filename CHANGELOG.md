@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.5.2 — 2026-09-06
+
+- **The site deploys over FTP.** CI uploads `dist/` to the web host with
+  `pspoerri/ftp-upload-action` instead of GitHub Pages, in three jobs: build, test (vitest and
+  the Playwright smoke test, browsers cached between runs) and deploy.
+
 ## v0.5.1 — 2026-09-05
 
 - **The model list is alphabetical, with the rolling aliases on top.** A "Latest" group holds
