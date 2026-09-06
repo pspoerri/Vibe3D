@@ -13,7 +13,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with: { version: 11 }
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - uses: actions/upload-artifact@v7
+        with: { name: dist, path: dist }
+
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -23,11 +36,27 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
-      - run: pnpm exec playwright install --with-deps chromium
-      # Builds dist/ and smoke-tests the real artifact — the only check that
-      # catches base-path, worker-bundling and wasm-URL regressions. The dist/
-      # it built is what deploys.
+      - uses: actions/cache@v6
+        id: playwright
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - if: steps.playwright.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+      - if: steps.playwright.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+      # Rebuilds dist/ (playwright's webServer runs `pnpm build`) and smoke-tests
+      # it — the only check that catches base-path, worker-bundling and wasm-URL
+      # regressions. Same commit + frozen lockfile as the build job, so it
+      # tests what the build job's artifact deploys.
       - run: pnpm e2e
+
+  deploy:
+    needs: [build, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with: { name: dist, path: dist }
       - uses: pspoerri/ftp-upload-action@v1
         with:
           server: ${{ secrets.FTP_SERVER }}
