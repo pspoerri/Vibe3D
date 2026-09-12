@@ -458,7 +458,11 @@ test('reasoning is shown while the model is still thinking', async ({ page }) =>
   // Still mid-turn: the document is untouched and Stop is live.
   await expect(page.locator('.cm-content')).toContainText('plate_x = 60')
   await page.getByRole('button', { name: 'Stop' }).click()
-  await expect(page.locator('.chat-reasoning')).toHaveCount(0)
+  // The live box is gone; the thought stays in the transcript, collapsed.
+  await expect(page.locator('.chat-thinking')).toHaveCount(1)
+  await expect(page.locator('.chat-thinking')).not.toHaveAttribute('open')
+  await page.locator('.chat-thinking summary').click()
+  await expect(page.locator('.chat-thinking .chat-reasoning')).toHaveText('Sizing the plate')
 })
 
 test('the reply text appears in the transcript before the turn settles', async ({ page }) => {
