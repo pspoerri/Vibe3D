@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Network errors retry with backoff, and a failed turn can be continued.** A rate limit, a
+  5xx or a dropped connection before the stream opens is retried up to five times, waiting
+  1.5, 3, 6, 12 and 24 s (or the host's `Retry-After`), with the wait on the status line. When
+  the stream still fails, the error shows a **Continue** button that re-enters the turn where
+  it stopped — the looks, repairs and compiled versions so far are kept.
+- **Thinking stays in the transcript.** A reasoning model's chain of thought is kept on its
+  reply, collapsed under a "thinking" chip, and on the partial a failed stream left behind. It
+  is never sent back to the model.
+
 ## v0.5.2 — 2026-09-06
 
 - **The site deploys over FTP.** CI uploads `dist/` to the web host with

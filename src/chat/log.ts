@@ -36,7 +36,16 @@ export type ChatEvent =
        */
       images?: readonly string[]
     }
-  | { id: string; ts: number; turn: number; kind: 'assistant'; text: string; stopped?: true }
+  | {
+      id: string
+      ts: number
+      turn: number
+      kind: 'assistant'
+      text: string
+      stopped?: true
+      /** The model's chain of thought, kept for the reader. Never put on the wire. */
+      reasoning?: string
+    }
   | {
       id: string
       ts: number
@@ -197,6 +206,10 @@ export function buildWindow({
         // on an empty content block, so one early Stop would poison every
         // later request of the session.
         if (event.text === '') break
+        // A live turn resumed after a failed stream: the partial that arrived
+        // is for the reader, and two assistant messages in a row is a 400 on
+        // Anthropic and Google.
+        if (event.stopped && event.turn === turn) break
         // design.md §12: only the live turn needs its code. Every earlier
         // block is superseded by `source`, and sending it again is a second
         // copy of the part for the model to confuse with the real one.
@@ -339,7 +352,13 @@ function reviveEvent(raw: unknown): ChatEvent | null {
     case 'assistant':
       return text === null
         ? null
-        : { ...base, kind: 'assistant', text, ...(e.stopped === true ? { stopped: true as const } : {}) }
+        : {
+            ...base,
+            kind: 'assistant',
+            text,
+            ...(e.stopped === true ? { stopped: true as const } : {}),
+            ...(typeof e.reasoning === 'string' && e.reasoning !== '' ? { reasoning: e.reasoning } : {}),
+          }
     case 'note':
       return text === null
         ? null

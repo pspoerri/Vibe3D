@@ -17,7 +17,7 @@ import { renderView } from '../viewer/capture'
 import { boxOf, formatReport, hostOf, idealView, inspect, meshChecks, type Closeup } from '../viewer/inspect'
 import { referenceLine, type Selection } from '../viewer/select'
 import { COMMANDS, parseCommand, type Command } from './commands'
-import { COMPACT_AT, runCompact, runTurn } from './controller'
+import { COMPACT_AT, runCompact, runTurn, type TurnOutcome } from './controller'
 import { addUsage, formatTokens, formatUsd, ZERO_SPEND, type Spend } from './cost'
 import { parseMarkdown, type Inline } from './markdown'
 import { nextTurn, type ChatEvent } from './log'
@@ -134,6 +134,8 @@ export function Chat({
   const usageRef = useRef<Usage | null>(null)
   const compactedRef = useRef(0)
   const abortRef = useRef<AbortController | null>(null)
+  /** Re-enters the turn a failed stream paused, with the outcome handling of the send that started it. */
+  const resumeRef = useRef<((signal: AbortSignal) => Promise<void>) | null>(null)
   const logBoxRef = useRef<HTMLDivElement>(null)
   // Follows the newest message only while the reader is at the bottom: someone
   // scrolling up to re-read an earlier turn must not be dragged back by every
@@ -426,6 +428,8 @@ export function Chat({
     const text = input.trim()
     if (!text && attachments.length === 0) return
 
+    // A new message, or a command, ends the paused turn.
+    resumeRef.current = null
     const command = parseCommand(text)
     if (command) {
       setInput('')
@@ -461,23 +465,50 @@ export function Chat({
     const images = attachments.map((a) => a.url)
     const thinking = thinkingOf(settings)
     const looks = thinking !== 'off'
-    const controller = new AbortController()
-    abortRef.current = controller
-    busyRef.current = true
-    setBusy(true)
-    setThinking(true)
-    setTurnStart(spend.usd)
-    onBusyChange(true)
-    // The catalogue decides whether this model gets a render and how long it
-    // may answer; a first send right after boot must not outrun the fetch.
-    const catalogue = models.length > 0 ? models : await fetchModels(settings.baseUrl).catch(() => [])
-    if (catalogue !== models) setModels(catalogue)
-    const info = catalogue.find((m) => m.id === settings.model)
-    const vision = info?.vision ?? false
-
+    // Resolved inside the busy state below, so a second send cannot slip in
+    // while the catalogue loads. Read by handle() only after that.
+    let catalogue = models
+    let info: ModelInfo | undefined
     // The latest inspection's changed pieces: what a {"closeup": N} request names.
     let closeups: Closeup[] = []
-    try {
+
+    const handle = async (outcome: TurnOutcome): Promise<void> => {
+      // Bumped before the outcome is handled, so nothing between here and the
+      // next message can skip it: a throw out of onApply would leave the next
+      // user event carrying this same turn number, and buildWindow would then
+      // read BOTH as live — re-sending this turn's images and its verbatim
+      // assistant source on a turn that does not own them.
+      const finished = turn
+      setTurn(finished + 1)
+
+      // Commit on final failure too: the user has to see the code to fix it,
+      // and CodeMirror's history makes the whole-document replace undoable.
+      if (outcome.status === 'committed' || outcome.status === 'failed') {
+        onApply(outcome.source, outcome.result, text)
+      }
+      if (outcome.status === 'error') setChatError(outcome.message)
+      // A paused turn: Continue re-enters it and lands back here.
+      const resume = outcome.status === 'error' || outcome.status === 'committed' ? outcome.resume : undefined
+      resumeRef.current = resume ? (signal) => resume(signal).then(handle) : null
+
+      const limit = contextLimit(catalogue, settings.model)
+      const used = usageRef.current?.total_tokens ?? 0
+      // limit === 0 means the catalogue has not resolved or the id is unknown;
+      // without this guard the ratio is Infinity and compaction fires forever.
+      if (limit > 0 && used / limit > COMPACT_AT && compactedRef.current !== finished) {
+        compactedRef.current = finished
+        note('Context is filling up — compacting.')
+        await compact(false, finished + 1)
+      }
+    }
+
+    await running(async (signal) => {
+      // The catalogue decides whether this model gets a render and how long it
+      // may answer; a first send right after boot must not outrun the fetch.
+      catalogue = models.length > 0 ? models : await fetchModels(settings.baseUrl).catch(() => [])
+      if (catalogue !== models) setModels(catalogue)
+      info = catalogue.find((m) => m.id === settings.model)
+      const vision = info?.vision ?? false
       const outcome = await runTurn(
         {
           userText,
@@ -514,7 +545,7 @@ export function Chat({
             const result = await compiler.compile(candidate, 'off', { files })
             // Shown at once, so the user orbits what the model is looking at
             // instead of waiting for the commit to see any of it.
-            if (result.ok && !controller.signal.aborted) {
+            if (result.ok && !signal.aborted) {
               try {
                 onCandidate(parseOff(new TextDecoder().decode(result.data)))
               } catch {
@@ -528,7 +559,7 @@ export function Chat({
               before: prior ?? before,
               after: off,
               vision,
-              signal: controller.signal,
+              signal,
             })
             closeups = insp.closeups
             return {
@@ -572,35 +603,24 @@ export function Chat({
           },
           now: () => performance.now(),
           newId: () => crypto.randomUUID(),
-          signal: controller.signal,
+          signal,
         },
       )
+      await handle(outcome)
+    })
+  }
 
-      // Bumped before the outcome is handled, so nothing between here and the
-      // next message can skip it: a throw out of onApply would leave the next
-      // user event carrying this same turn number, and buildWindow would then
-      // read BOTH as live — re-sending this turn's images and its verbatim
-      // assistant source on a turn that does not own them.
-      const finished = turn
-      setTurn(finished + 1)
-
-      // Commit on final failure too: the user has to see the code to fix it,
-      // and CodeMirror's history makes the whole-document replace undoable.
-      if (outcome.status === 'committed' || outcome.status === 'failed') {
-        onApply(outcome.source, outcome.result, text)
-      } else if (outcome.status === 'error') {
-        setChatError(outcome.message)
-      }
-
-      const limit = contextLimit(catalogue, settings.model)
-      const used = usageRef.current?.total_tokens ?? 0
-      // limit === 0 means the catalogue has not resolved or the id is unknown;
-      // without this guard the ratio is Infinity and compaction fires forever.
-      if (limit > 0 && used / limit > COMPACT_AT && compactedRef.current !== finished) {
-        compactedRef.current = finished
-        note('Context is filling up — compacting.')
-        await compact(false, finished + 1)
-      }
+  /** The busy state around a turn, or a continuation of one. */
+  const running = async (task: (signal: AbortSignal) => Promise<void>): Promise<void> => {
+    const controller = new AbortController()
+    abortRef.current = controller
+    busyRef.current = true
+    setBusy(true)
+    setThinking(true)
+    setTurnStart(spend.usd)
+    onBusyChange(true)
+    try {
+      await task(controller.signal)
     } finally {
       onStreamSource(null)
       onCandidate(null)
@@ -614,6 +634,14 @@ export function Chat({
       onBusyChange(false)
       abortRef.current = null
     }
+  }
+
+  const continueTurn = async () => {
+    const resume = resumeRef.current
+    if (!resume || busyRef.current) return
+    resumeRef.current = null
+    setChatError(null)
+    await running(resume)
   }
 
   return (
@@ -686,7 +714,16 @@ export function Chat({
         )}
       </div>
 
-      {chatError && <div className="chat-error">{chatError}</div>}
+      {chatError && (
+        <div className="chat-error">
+          {chatError}
+          {resumeRef.current && !busy && (
+            <button type="button" onClick={continueTurn}>
+              Continue
+            </button>
+          )}
+        </div>
+      )}
 
       {!canPrompt && (
         <div className="chat-nokey">
@@ -1004,6 +1041,14 @@ function ChatEventView({ event }: { event: ChatEvent }) {
     case 'assistant':
       return (
         <div className="msg msg-assistant">
+          {event.reasoning && (
+            <details className="chat-thinking">
+              <summary className="chip">thinking</summary>
+              <div className="chat-reasoning">
+                <Markdown text={event.reasoning} />
+              </div>
+            </details>
+          )}
           <Markdown text={event.text} />
           {event.stopped && <span className="chat-note">stopped</span>}
         </div>
