@@ -46,6 +46,8 @@ export type StreamEvent =
   | { type: 'reasoning'; text: string }
   | { type: 'usage'; usage: Usage }
   | { type: 'finish'; reason: string }
+  /** A transient failure before the stream opened, and the wait before the next try. For the status line. */
+  | { type: 'retry'; message: string }
 
 export class ChatError extends Error {
   constructor(
@@ -74,13 +76,28 @@ export interface ChatOptions {
   readonly reasoning?: Effort
   /** `max_tokens`. Absent keeps the body byte-identical; present, the provider's default cannot cut a long part short. */
   readonly maxTokens?: number
-  /** Wait before the one retry of a transient failure. Injected so a test need not. */
+  /** Base wait before the first retry of a transient failure; doubles each time. Injected so a test need not. */
   readonly retryMs?: number
 }
 
-/** One retry, after this, on a 429, a 5xx or a network error before the stream opened. */
+/** Base wait for a 429, a 5xx or a network error before the stream opened: 1.5, 3, 6, 12, 24 s. */
 export const RETRY_MS = 1500
+export const MAX_RETRIES = 5
 const transient = (status: number): boolean => status === 429 || status >= 500
+
+/** Resolves early on abort; the fetch that follows is what throws the AbortError. */
+const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
+  new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        resolve()
+      },
+      { once: true },
+    )
+  })
 
 /**
  * Anthropic caches nothing without an explicit breakpoint, and a long turn
@@ -211,20 +228,31 @@ export async function* streamChat(
       }),
     })
 
-  // One retry for what a second try can fix — a rate limit, a provider
-  // hiccup, a dropped connection — and only before any token has been paid
-  // for. An abort is the caller's and propagates.
-  let response: Response
-  try {
-    response = await request()
-  } catch (error) {
-    if (signal.aborted) throw error
-    await new Promise((r) => setTimeout(r, options.retryMs ?? RETRY_MS))
-    response = await request()
-  }
-  if (!response.ok && transient(response.status) && !signal.aborted) {
-    await new Promise((r) => setTimeout(r, options.retryMs ?? RETRY_MS))
-    response = await request()
+  // Retries for what a later try can fix — a rate limit, a provider hiccup, a
+  // dropped connection — and only before any token has been paid for. Gemini
+  // rate-limits for tens of seconds at a time, so the wait doubles and a
+  // Retry-After header wins where the host sends one. An abort is the
+  // caller's and propagates.
+  let response!: Response
+  for (let retry = 0; ; retry++) {
+    let reason: string
+    let retryAfter = 0
+    try {
+      response = await request()
+      if (response.ok || !transient(response.status) || retry === MAX_RETRIES) break
+      reason = response.status === 429 ? 'rate limited' : `the host answered ${response.status}`
+      retryAfter = Number(response.headers.get('retry-after')) * 1000 || 0
+    } catch (error) {
+      if (signal.aborted || retry === MAX_RETRIES) throw error
+      reason = 'the connection failed'
+    }
+    // ponytail: Retry-After wins up to a minute; above that the backoff does.
+    const wait = retryAfter > 0 ? Math.min(retryAfter, 60_000) : (options.retryMs ?? RETRY_MS) * 2 ** retry
+    yield {
+      type: 'retry',
+      message: `${reason} · retry ${retry + 1} of ${MAX_RETRIES} in ${Math.ceil(wait / 1000)} s`,
+    }
+    await sleep(wait, signal)
   }
 
   // Checked before response.body is touched: a stream:true request that fails

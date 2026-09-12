@@ -12,7 +12,7 @@ import {
   type TurnDeps,
   type TurnInput,
 } from './controller'
-import type { ChatEvent } from './log'
+import { buildWindow, type ChatEvent } from './log'
 import { COMPACT_PROMPT } from './prompt'
 
 const SYS = 'You write OpenSCAD.'
@@ -351,7 +351,7 @@ test('a stream error records the partial and returns an error without compiling'
   })
   const outcome = await runTurn(turnInput(), h.deps)
 
-  expect(outcome).toEqual({ status: 'error', message: 'Rate limit exceeded' })
+  expect(outcome).toEqual({ status: 'error', message: 'Rate limit exceeded', resume: expect.any(Function) })
   expect(h.compiled).toEqual([])
   expect(h.appended[1]).toMatchObject({ kind: 'assistant', text: 'Here yo', stopped: true })
   expect(h.appended.at(-1)).toMatchObject({
@@ -545,7 +545,7 @@ test('a port that throws synchronously yields an error outcome, never a rejectio
       throw new TypeError('stream is not a function')
     },
   }
-  await expect(runTurn(turnInput(), deps)).resolves.toEqual({
+  await expect(runTurn(turnInput(), deps)).resolves.toMatchObject({
     status: 'error',
     message: 'stream is not a function',
   })
@@ -713,7 +713,38 @@ test('a stop that lands while the compile is in flight spends no attempt', async
   expect(h.windows).toHaveLength(1)
 })
 
-test('reasoning is streamed out but never logged and never compiled', async () => {
+test('a paused turn resumes on the same window, without the partial, and can be paused again', async () => {
+  const h = harness({
+    replies: [
+      {
+        events: [{ type: 'reasoning', text: 'Thinking…' }, { type: 'delta', text: 'Here yo' }],
+        error: new Error('Rate limit exceeded'),
+      },
+      { events: [{ type: 'delta', text: 'Here' }], error: new Error('Failed to fetch') },
+      says(fenced('cube(3);')),
+    ],
+    compiles: [okResult()],
+  })
+  const paused = await runTurn(turnInput(), h.deps)
+  expect(paused.status).toBe('error')
+  if (paused.status !== 'error' || !paused.resume) throw new Error('not resumable')
+  // The thinking that arrived is kept for the reader, on the partial.
+  expect(h.appended[1]).toMatchObject({ kind: 'assistant', text: 'Here yo', stopped: true, reasoning: 'Thinking…' })
+
+  const again = await paused.resume(new AbortController().signal)
+  expect(again).toMatchObject({ status: 'error', message: 'Failed to fetch', resume: expect.any(Function) })
+  if (again.status !== 'error' || !again.resume) throw new Error('not resumable')
+
+  const outcome = await again.resume(new AbortController().signal)
+  expect(outcome).toEqual({ status: 'committed', source: 'cube(3);', result: okResult() })
+  // One user event, every window the same, and neither partial ever on the wire.
+  expect(kinds(h.appended)).toEqual(['user', 'assistant', 'note', 'assistant', 'note', 'assistant', 'compile'])
+  expect(h.windows).toHaveLength(3)
+  expect(h.windows[2]).toEqual(h.windows[0])
+  expect(JSON.stringify(h.windows[2])).not.toContain('Here yo')
+})
+
+test('reasoning is streamed out, kept on the assistant event, and never on the wire', async () => {
   // A reasoning model can think for many seconds before its first content
   // token. Without a reasoning port the UI has nothing at all to show.
   const h = harness({
@@ -734,9 +765,11 @@ test('reasoning is streamed out but never logged and never compiled', async () =
 
   expect(outcome.status).toBe('committed')
   expect(h.reasonings.at(-1)).toBe('The user wants a cube. Three millimetres.')
-  // It is thinking, not an answer: it must not enter the append-only log, or
-  // buildWindow would ship it back to the model on every later turn.
-  expect(JSON.stringify(h.appended)).not.toContain('The user wants a cube')
+  // Kept for the reader on the event, but thinking is not an answer: it must
+  // never ship back to the model on a later turn.
+  expect(h.appended[1]).toMatchObject({ kind: 'assistant', reasoning: 'The user wants a cube. Three millimetres.' })
+  const later = buildWindow({ log: h.appended, turn: 2, systemPrompt: SYS, source: 'cube(3);' })
+  expect(JSON.stringify(later)).not.toContain('The user wants a cube')
   expect(h.compiled).toEqual(['cube(3);'])
 })
 

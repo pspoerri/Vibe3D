@@ -214,6 +214,13 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
   margin: 0 12px 8px; padding: 8px 10px; font-size: 12px;
   background: #fff0f4; border: 1px solid #a8256b; border-radius: 2px; color: #7a1a4e;
 }
+.chat-error button {
+  margin-left: 8px; padding: 1px 8px; font: inherit; cursor: pointer;
+  background: #fff; border: 1px solid #a8256b; border-radius: 2px; color: inherit;
+}
+.chat-thinking { margin-bottom: 6px; }
+.chat-thinking summary { cursor: pointer; }
+.chat-thinking .chat-reasoning { margin-top: 6px; }
 /* Guidance, not an error: no key is the expected first-run state. */
 .chat-nokey {
   margin: 0 12px 8px; padding: 8px 10px; font-size: 12px;

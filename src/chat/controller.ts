@@ -19,11 +19,14 @@ export const TIMEOUT_DIAGNOSTIC =
   'ERROR: the compile did not finish within 60 seconds. Make the source cheaper to render: $fn at 48 (never above 96), no minkowski() or hull() over many objects, no offset() on a large linear_extrude, and loops kept small.'
 export const COMPACT_AT = 0.6
 
+/** Re-enters the turn where a failed stream left it, with everything it had. A fresh signal, since Stop may have used the old one. */
+export type Resume = (signal: AbortSignal) => Promise<TurnOutcome>
+
 export type TurnOutcome =
-  | { status: 'committed'; source: string; result: Extract<CompileResult, { ok: true }> }
+  | { status: 'committed'; source: string; result: Extract<CompileResult, { ok: true }>; resume?: Resume }
   | { status: 'answered' }
   | { status: 'failed'; source: string; result: CompileResult }
-  | { status: 'error'; message: string }
+  | { status: 'error'; message: string; resume?: Resume }
   | { status: 'stopped' }
 
 export interface TurnDeps {
@@ -59,7 +62,7 @@ export interface TurnDeps {
   readonly onDraft: (source: string | null) => void
   /** The reply so far, for the transcript. Throttled with onDraft. */
   readonly onText: (text: string) => void
-  /** Reasoning so far, where the model emits it. Never logged, never re-sent. */
+  /** Reasoning so far, where the model emits it. Kept on the assistant event, never re-sent. */
   readonly onReasoning: (text: string) => void
   readonly onUsage: (usage: Usage) => void
   /** Injected so the draft throttle is an assertion rather than a timing hope. */
@@ -121,6 +124,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     deps.append(full)
   }
 
+  let signal = deps.signal
   let attempt = 0
   // Starts in the past so the first delta always drafts, whatever the clock's origin.
   let lastDraftAt = -Infinity
@@ -155,11 +159,16 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     if (outcome.status !== 'answered') {
       emit({ kind: 'note', tone: 'info', text: 'Kept the last version that compiled.' })
     }
-    return { status: 'committed', source: verified.source, result: verified.result }
+    return {
+      status: 'committed',
+      source: verified.source,
+      result: verified.result,
+      ...(outcome.status === 'error' && outcome.resume ? { resume: outcome.resume } : {}),
+    }
   }
 
-  const run = async (): Promise<TurnOutcome> => {
-    emit({ kind: 'user', text: input.userText, images: input.images })
+  const run = async (first: boolean): Promise<TurnOutcome> => {
+    if (first) emit({ kind: 'user', text: input.userText, images: input.images })
 
     for (;;) {
       const messages = buildWindow({
@@ -188,7 +197,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       }
 
       try {
-        for await (const event of deps.stream(messages, deps.signal)) {
+        for await (const event of deps.stream(messages, signal)) {
           if (event.type === 'delta') {
             if (text === '') phase('the model is writing')
             text += event.text
@@ -201,6 +210,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
             pushProgress()
           } else if (event.type === 'usage') {
             deps.onUsage(event.usage)
+          } else if (event.type === 'retry') {
+            phase(event.message)
           } else {
             // Recorded, not obeyed: OpenRouter repeats finish_reason on the
             // accounting frame that carries usage, and /compact needs that frame.
@@ -210,11 +221,12 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       } catch (error) {
         deps.onText(text)
         // Append-only, so what actually arrived is still recorded.
-        emit({ kind: 'assistant', text, stopped: true })
+        emit({ kind: 'assistant', text, stopped: true, ...(reasoning ? { reasoning } : {}) })
         if (isAbort(error)) return { status: 'stopped' }
         const message = messageOf(error)
         emit({ kind: 'note', tone: 'error', text: message })
-        return { status: 'error', message }
+        // The turn is paused, not over: the same window goes again on Continue.
+        return { status: 'error', message, resume }
       }
 
       const full = extractSource(text)
@@ -242,7 +254,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       }
       deps.onDraft(candidate)
       deps.onText(text)
-      emit({ kind: 'assistant', text })
+      emit({ kind: 'assistant', text, ...(reasoning ? { reasoning } : {}) })
       if (candidate !== null) phase('compiling')
 
       if (editError !== null) {
@@ -300,7 +312,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
             image = null
           }
         }
-        if (deps.signal.aborted) return { status: 'stopped' }
+        if (signal.aborted) return { status: 'stopped' }
         const caption = view.request ? describeView(view.request) : ''
         const evidence =
           view.error ??
@@ -349,7 +361,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       // stderrRaw is synthetic ('Compile cancelled.', 'Compile timed out after
       // 60s.', an often-empty DOM message), and buildWindow would replay it to
       // the model as a diagnostic to repair.
-      if (deps.signal.aborted) return { status: 'stopped' }
+      if (signal.aborted) return { status: 'stopped' }
       if (!result.ok) {
         if (result.cancelled) return { status: 'stopped' }
         // One timeout is a diagnostic the model can act on — a high $fn, a
@@ -398,7 +410,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         rounds++
         phase('measuring the part')
         const evidence = await deps.inspect(candidate, result.data, prior)
-        if (deps.signal.aborted) return { status: 'stopped' }
+        if (signal.aborted) return { status: 'stopped' }
         const checks = issues.length > 0 ? `\n\nSource checks:\n${issues.map((i) => `- ${i}`).join('\n')}` : ''
         emit({
           kind: 'inspect',
@@ -412,11 +424,18 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     }
   }
 
-  try {
-    return settle(await run())
-  } catch (error) {
-    return settle({ status: 'error', message: messageOf(error) })
+  const go = async (first: boolean): Promise<TurnOutcome> => {
+    try {
+      return settle(await run(first))
+    } catch (error) {
+      return settle({ status: 'error', message: messageOf(error) })
+    }
   }
+  const resume: Resume = (next) => {
+    signal = next
+    return go(false)
+  }
+  return go(true)
 }
 
 export interface CompactInput {

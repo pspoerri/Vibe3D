@@ -300,10 +300,11 @@ test('max_tokens rides only when asked for, and an Anthropic model gets a cache 
   expect(JSON.parse(String(calls[1]?.init?.body)).messages[1]).toEqual(MESSAGES[1])
 })
 
-test('a 429, a 5xx or a dropped connection before the stream opens is retried exactly once', async () => {
+test('a 429, a 5xx or a dropped connection before the stream opens is retried with backoff', async () => {
   let n = 0
   stubFetch(() => (n++ === 0 ? new Response('{"error":{"message":"Rate limited"}}', { status: 429 }) : new Response(STREAM, { status: 200 })))
   const events = await drain(streamChat(MESSAGES, signal(), { ...OPTIONS, retryMs: 1 }))
+  expect(events[0]).toEqual({ type: 'retry', message: 'rate limited · retry 1 of 5 in 1 s' })
   expect(events.some((e) => e.type === 'delta')).toBe(true)
   expect(calls).toHaveLength(2)
 
@@ -312,12 +313,29 @@ test('a 429, a 5xx or a dropped connection before the stream opens is retried ex
     throw new TypeError('Failed to fetch')
   })
   await expect(drain(streamChat(MESSAGES, signal(), { ...OPTIONS, retryMs: 1 }))).rejects.toThrow('Failed to fetch')
-  expect(calls).toHaveLength(2)
+  expect(calls).toHaveLength(6)
 
   calls = []
   stubFetch(() => new Response('{"error":{"message":"User not found."}}', { status: 401 }))
   await expect(drain(streamChat(MESSAGES, signal(), { ...OPTIONS, retryMs: 1 }))).rejects.toThrow('User not found.')
   expect(calls).toHaveLength(1)
+
+  // The last try's failure is the error.
+  calls = []
+  stubFetch(() => new Response('{"error":{"message":"Slow down"}}', { status: 429 }))
+  await expect(drain(streamChat(MESSAGES, signal(), { ...OPTIONS, retryMs: 1 }))).rejects.toThrow('Slow down')
+  expect(calls).toHaveLength(6)
+
+  // Retry-After wins over the backoff.
+  calls = []
+  n = 0
+  stubFetch(() =>
+    n++ === 0
+      ? new Response('{"error":{"message":"Slow down"}}', { status: 429, headers: { 'retry-after': '1' } })
+      : new Response(STREAM, { status: 200 }),
+  )
+  const slow = await drain(streamChat(MESSAGES, signal(), { ...OPTIONS, retryMs: 100_000 }))
+  expect(slow[0]).toEqual({ type: 'retry', message: 'rate limited · retry 1 of 5 in 1 s' })
 })
 
 test('degrades to an empty catalogue when data is not an array', async () => {
