@@ -14,7 +14,7 @@ Everything runs in the browser. There is no backend — the kernel is OpenSCAD c
 WebAssembly, the renderer is three.js, and the only thing that leaves your machine is the chat
 request to the model host you configured.
 
-**Live: <https://spoerri.dev/Vibe3D/>**
+**Live: <https://vibe3d.spoerri.dev/>**
 
 Design: [docs/design.md](docs/design.md) · Plans: [docs/superpowers/plans](docs/superpowers/plans)
 
