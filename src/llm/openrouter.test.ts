@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'vitest'
 import {
   ChatError,
   contextLimit,
+  defaultModel,
   errorMessage,
   fetchModels,
   latestModels,
@@ -425,6 +426,7 @@ test('OpenAI gets reasoning_effort only where it reasons, usage on request, and 
   const openAI = { ...OPTIONS, baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', reasoning: 'high' as const }
   await drain(streamChat(MESSAGES, signal(), { ...openAI, model: 'gpt-5' }))
   await drain(streamChat(MESSAGES, signal(), { ...openAI, model: 'gpt-4.1' }))
+  await drain(streamChat(MESSAGES, signal(), { ...openAI, model: 'gpt-6-sol' }))
 
   expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
     model: 'gpt-5',
@@ -434,17 +436,34 @@ test('OpenAI gets reasoning_effort only where it reasons, usage on request, and 
     stream_options: { include_usage: true },
   })
   expect(JSON.parse(String(calls[1]?.init?.body))).not.toHaveProperty('reasoning_effort')
+  expect(JSON.parse(String(calls[2]?.init?.body)).reasoning_effort).toBe('high')
   expect(calls[0]?.init?.headers).toEqual({ Authorization: 'Bearer sk-test', 'Content-Type': 'application/json' })
 })
 
-test("OpenAI's /models is keyed, bare, and mostly not chat", async () => {
-  const rows = ['gpt-5', 'text-embedding-3-small', 'gpt-4o-realtime-preview', 'o3', 'whisper-1']
-  stubFetch(() => new Response(JSON.stringify({ data: rows.map((id) => ({ id, object: 'model', owned_by: 'openai' })) })))
+test("OpenAI's /models is keyed, and only current chat models come back, newest first", async () => {
+  const day = 86_400
+  const rows: [string, number][] = [
+    ['gpt-6-sol', 720 * day],
+    ['gpt-6-mini', 730 * day],
+    ['gpt-5.1', 700 * day],
+    ['gpt-5', 600 * day],
+    ['gpt-5-mini', 650 * day],
+    ['gpt-5-2025-08-07', 600 * day], // snapshot
+    ['o3', 400 * day],
+    ['gpt-4.5-preview', 450 * day], // preview
+    ['gpt-3.5-turbo', 10 * day], // superseded
+    ['text-embedding-3-small', 300 * day],
+    ['gpt-4o-realtime-preview', 500 * day],
+    ['whisper-1', 100 * day],
+  ]
+  stubFetch(() =>
+    new Response(JSON.stringify({ data: rows.map(([id, created]) => ({ id, created, object: 'model', owned_by: 'openai' })) })),
+  )
   const models = await fetchModels('https://api.openai.com/v1', 'sk-test')
 
   expect(calls[0]?.init?.headers).toEqual({ Authorization: 'Bearer sk-test' })
-  expect(models).toEqual([
-    { id: 'gpt-5', name: 'gpt-5', context_length: 0, vision: true, maxOutput: null },
-    { id: 'o3', name: 'o3', context_length: 0, vision: true, maxOutput: null },
-  ])
+  expect(models.map(({ id }) => id)).toEqual(['gpt-6-mini', 'gpt-6-sol', 'gpt-5.1', 'gpt-5-mini', 'gpt-5', 'o3'])
+  expect(models[1]).toEqual({ id: 'gpt-6-sol', name: 'gpt-6-sol', context_length: 0, vision: true, maxOutput: null })
+  expect(defaultModel(models, 'openai')).toBe('gpt-6-sol')
+  expect(defaultModel(models, 'other')).toBeNull()
 })

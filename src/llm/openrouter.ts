@@ -10,8 +10,14 @@ export const OPENAI_BASE_URL = 'https://api.openai.com/v1'
 export const isOpenAI = (baseUrl: string): boolean => /^https:\/\/api\.openai\.com\//.test(baseUrl)
 const isOpenRouter = (baseUrl: string): boolean => /^https:\/\/openrouter\.ai\//.test(baseUrl)
 
+/** Which connect button a base URL belongs to. Anything not OpenRouter or OpenAI is some other OpenAI-compatible server. */
+export type Host = 'openrouter' | 'openai' | 'other'
+export const llmHostOf = (baseUrl: string): Host =>
+  isOpenRouter(baseUrl) ? 'openrouter' : isOpenAI(baseUrl) ? 'openai' : 'other'
+
 /** ponytail: id heuristic for which OpenAI models take reasoning_effort; the rest answer it with a 400. */
-const openAIReasons = (model: string): boolean => /^(o\d|gpt-5)/.test(model) && !model.includes('-chat')
+const openAIReasons = (model: string): boolean =>
+  (/^o\d/.test(model) || Number(/^gpt-(\d+)/.exec(model)?.[1]) >= 5) && !model.includes('-chat')
 
 /**
  * One part of a multimodal message. `image_url.url` takes a `data:` URL exactly
@@ -368,11 +374,38 @@ interface RawModel {
   pricing?: { prompt: string; completion: string }
   architecture?: { input_modalities?: string[] }
   top_provider?: { max_completion_tokens?: number | null }
+  /** Unix seconds. OpenAI's only hint at age. */
+  created?: number
 }
 
 /** OpenAI's list is mostly embeddings, speech and images; codex models are Responses-API only. */
 const OPENAI_CHAT = /^(gpt-|o\d|chatgpt-)/
-const OPENAI_NOT_CHAT = /audio|realtime|tts|transcribe|image|search|instruct|codex/
+const OPENAI_NOT_CHAT = /audio|realtime|tts|transcribe|image|search|instruct|codex|preview/
+/** Dated snapshots — gpt-4o-2024-08-06, gpt-4-0613 — duplicate the alias beside them. */
+const SNAPSHOT = /-\d{4}(-\d{2}-\d{2})?$/
+/** ponytail: OpenAI flags nothing as deprecated; a model this much older than the newest counts as superseded. */
+const OPENAI_MAX_AGE_S = 18 * 30 * 86_400
+
+/** OpenAI's chat models, newest first, without snapshots, previews or superseded generations. */
+function openAIChat(models: readonly RawModel[]): RawModel[] {
+  const chat = models.filter(({ id }) => OPENAI_CHAT.test(id) && !OPENAI_NOT_CHAT.test(id) && !SNAPSHOT.test(id))
+  const newest = Math.max(0, ...chat.map(({ created }) => created ?? 0))
+  return chat
+    .filter(({ created }) => newest - (created ?? 0) <= OPENAI_MAX_AGE_S)
+    .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+}
+
+/**
+ * The model to switch to when the chosen one is not on this host: OpenRouter's
+ * rolling default, or OpenAI's newest flagship (`gpt-6-sol`, not a `-mini`); null
+ * for another host, whose ids only its user knows.
+ */
+export function defaultModel(models: readonly ModelInfo[], host: Host): string | null {
+  if (host === 'openrouter') return DEFAULT_MODEL
+  // The list is newest first, so the first full-size gpt is the flagship.
+  if (host === 'openai') return (models.find(({ id }) => /^gpt-/.test(id) && !/mini|nano|chat/.test(id)) ?? models[0])?.id ?? null
+  return null
+}
 
 async function loadModels(baseUrl: string, apiKey: string): Promise<readonly ModelInfo[]> {
   const response = await fetch(`${baseUrl}/models`, apiKey ? { headers: { Authorization: `Bearer ${apiKey}` } } : {})
@@ -380,10 +413,9 @@ async function loadModels(baseUrl: string, apiKey: string): Promise<readonly Mod
   if (!response.ok) throw new Error(`/models answered ${response.status}`)
   const data = ((await response.json()) as { data?: unknown } | null)?.data
   const openAI = isOpenAI(baseUrl)
-  const models: readonly RawModel[] = (Array.isArray(data) ? (data as RawModel[]) : []).filter(
-    ({ id }) => !openAI || (OPENAI_CHAT.test(id) && !OPENAI_NOT_CHAT.test(id)),
-  )
-  return (
+  const raw: readonly RawModel[] = Array.isArray(data) ? data : []
+  const models = openAI ? openAIChat(raw) : raw
+  const listed = (
     models
       // `openrouter/*` prices itself with the -1 variable-pricing sentinel,
       // which corrupts any sort; `:batch` ids are async duplicates. `:free`
@@ -408,8 +440,9 @@ async function loadModels(baseUrl: string, apiKey: string): Promise<readonly Mod
               : null,
         }
       })
-      .sort((a, b) => a.name.localeCompare(b.name))
   )
+  // OpenAI's names are bare ids, so newest first reads better than alphabetical.
+  return openAI ? listed : listed.sort((a, b) => a.name.localeCompare(b.name))
 }
 
 /** The vendors pinned first in the Latest group, in this order (Kimi is `moonshotai/`; Alibaba has no alias). */
