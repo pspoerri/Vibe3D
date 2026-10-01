@@ -358,6 +358,32 @@ test('dragging a slider previews without editing the document, then commits on r
   await expect(page.locator('.cm-content')).toContainText('// [20:120]')
 })
 
+test('each host keeps its own key, and OpenAI links to where keys are made', async ({ page }) => {
+  await page.route('https://api.openai.com/**', (route) => route.fulfill({ status: 401, body: '{}' }))
+  await page.goto('/')
+  await waitForStarter(page)
+
+  await page.getByRole('button', { name: 'Connect OpenAI' }).click()
+  await expect(page.getByRole('link', { name: 'platform.openai.com/api-keys' })).toBeVisible()
+  const key = page.getByLabel('API key', { exact: true })
+  await key.fill('sk-openai-test')
+
+  await page.getByRole('button', { name: 'Other host' }).click()
+  await expect(page.getByLabel('Base URL')).toHaveValue('http://localhost:11434/v1')
+  await expect(page.getByLabel('API key (optional)')).toHaveValue('')
+
+  await page.getByRole('button', { name: 'Connect OpenAI' }).click()
+  await expect(key).toHaveValue('sk-openai-test')
+})
+
+test('a shared OpenRouter key can be pasted instead of signing in', async ({ page }) => {
+  await page.goto('/')
+  await waitForStarter(page)
+  await page.getByRole('button', { name: 'OpenRouter + API key' }).click()
+  await page.getByLabel('API key', { exact: true }).fill('sk-or-v1-shared')
+  expect(await page.evaluate(() => localStorage.getItem('vibe3d.key'))).toBe('sk-or-v1-shared')
+})
+
 test('the PKCE start carries exactly the three documented params', async ({ page }) => {
   await page.goto('/')
   await waitForStarter(page)
@@ -384,6 +410,28 @@ test('the PKCE start carries exactly the three documented params', async ({ page
     'code_challenge',
     'code_challenge_method',
   ])
+})
+
+test('sign-in returns to the document it started from', async ({ page }) => {
+  await page.route('https://openrouter.ai/auth**', (route) => route.abort())
+  await page.route('https://openrouter.ai/api/v1/auth/keys', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"key":"sk-or-v1-minted"}' }),
+  )
+  await page.goto('/')
+  await waitForStarter(page)
+  const hash = await page.evaluate(() => location.hash)
+  expect(hash).toMatch(/^#.+/)
+
+  const leaving = page.waitForRequest(/openrouter\.ai\/auth/)
+  await page.getByRole('button', { name: 'Connect OpenRouter' }).click()
+  await leaving
+  // OpenRouter's redirect: the callback URL, no hash, with ?code.
+  await page.goto('/?code=test-code')
+
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('vibe3d.key'))).toBe('sk-or-v1-minted')
+  await expect.poll(() => page.evaluate(() => location.hash)).toBe(hash)
+  expect(await page.evaluate(() => location.search)).toBe('')
+  await expect(page.locator('.start')).toHaveCount(0)
 })
 
 test('a callback code with no stored verifier fails without firing an exchange', async ({

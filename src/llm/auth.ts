@@ -2,6 +2,8 @@ import { DEFAULT_BASE_URL, errorMessage } from './openrouter'
 
 /** Dies with the tab, and survives the cross-origin round trip. See startPkce. */
 const VERIFIER_KEY = 'vibe3d.pkce'
+/** The `#<doc>` sign-in left from: kept out of callback_url, where OpenRouter's `?code=` would land inside it. */
+const HASH_KEY = 'vibe3d.pkce.hash'
 
 function base64url(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes))
@@ -59,7 +61,24 @@ export async function startPkce(): Promise<void> {
   const verifier = newVerifier()
   const url = authUrl(callbackUrl(), await challengeFor(verifier))
   sessionStorage.setItem(VERIFIER_KEY, verifier)
+  sessionStorage.setItem(HASH_KEY, location.hash)
   location.assign(url)
+}
+
+/**
+ * Puts back the hash sign-in left from, so the return lands on the document it
+ * started on. Call before the app reads location.hash, i.e. before the first render.
+ */
+export function restoreHash(): void {
+  try {
+    const hash = sessionStorage.getItem(HASH_KEY)
+    sessionStorage.removeItem(HASH_KEY)
+    if (hash && new URLSearchParams(location.search).has('code') && !location.hash) {
+      history.replaceState(null, '', location.pathname + location.search + hash)
+    }
+  } catch {
+    // Blocked site data: the return lands on the start window, as before.
+  }
 }
 
 let pending: Promise<string | null> | null = null
@@ -85,7 +104,7 @@ async function exchange(): Promise<string | null> {
     // case. If an ?error ever does appear, it is worth saying out loud.
     const denied = params.get('error')
     if (!denied) return null
-    history.replaceState(null, '', callbackUrl())
+    history.replaceState(null, '', callbackUrl() + location.hash)
     throw new Error(`Sign-in was refused: ${denied}`)
   }
 
@@ -101,7 +120,7 @@ async function exchange(): Promise<string | null> {
   } catch {
     // A blocked store reads as an absent verifier, and says so below.
   }
-  history.replaceState(null, '', callbackUrl())
+  history.replaceState(null, '', callbackUrl() + location.hash)
   if (!verifier) throw new Error('This sign-in was started in another tab. Connect again.')
 
   const response = await fetch(`${DEFAULT_BASE_URL}/auth/keys`, {

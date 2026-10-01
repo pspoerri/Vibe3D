@@ -2,8 +2,12 @@
 
 ## Unreleased
 
+- **One button per host.** The settings panel's key and base-URL fields became **Connect
+  OpenRouter**, **OpenRouter + API key** (for a key you already have), **Connect OpenAI**
+  (with a link to where keys are made) and **Other host** (base URL and an optional key). Each host keeps its own key, so switching never loses one.
 - **OpenAI as a host.** Base URL `https://api.openai.com/v1` with an OpenAI key: the model list
-  is read from the account (chat models only), thinking is sent as `reasoning_effort` to the
+  is read from the account (current chat models only, newest first, and switching picks the
+  newest flagship), thinking is sent as `reasoning_effort` to the
   models that take it, usage is requested so `/compact` still fires, and the CSP allows it.
 - **Network errors retry with backoff, and a failed turn can be continued.** A rate limit, a
   5xx or a dropped connection before the stream opens is retried up to five times, waiting
