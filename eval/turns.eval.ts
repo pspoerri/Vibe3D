@@ -157,7 +157,7 @@ describe.skipIf(!KEY)(`${MODEL} · thinking ${THINKING}`, () => {
   const chosen = PROMPTS.filter((p) => p.name.includes(ONLY))
 
   test.each(chosen)('$name', async ({ name, prompt }) => {
-    if (models.length === 0) models = await fetchModels(BASE)
+    if (models.length === 0) models = await fetchModels(BASE, KEY)
     results.push(await oneTurn(name, prompt, models))
   })
 

@@ -418,7 +418,7 @@ test('the built page carries a CSP that the kernel still compiles under', async 
     .locator('meta[http-equiv="Content-Security-Policy"]')
     .getAttribute('content')
   expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'")
-  expect(csp).toContain("connect-src 'self' https://openrouter.ai")
+  expect(csp).toContain("connect-src 'self' https://openrouter.ai https://api.openai.com")
 
   // The kernel is a WebAssembly.compile in a worker: if the policy were wrong
   // this never resolves.

@@ -4,6 +4,14 @@ export const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1'
 /** One named constant: the catalogue moves and this is the only line to change. */
 /** OpenRouter's rolling alias: whatever Google's newest Flash is, without a release here. */
 export const DEFAULT_MODEL = '~google/gemini-flash-latest'
+export const OPENAI_BASE_URL = 'https://api.openai.com/v1'
+
+/** OpenAI proper: strict about unknown body fields, keyed /models, no usage unless asked. */
+export const isOpenAI = (baseUrl: string): boolean => /^https:\/\/api\.openai\.com\//.test(baseUrl)
+const isOpenRouter = (baseUrl: string): boolean => /^https:\/\/openrouter\.ai\//.test(baseUrl)
+
+/** ponytail: id heuristic for which OpenAI models take reasoning_effort; the rest answer it with a 400. */
+const openAIReasons = (model: string): boolean => /^(o\d|gpt-5)/.test(model) && !model.includes('-chat')
 
 /**
  * One part of a multimodal message. `image_url.url` takes a `data:` URL exactly
@@ -206,6 +214,13 @@ export async function* streamChat(
   signal: AbortSignal,
   options: ChatOptions,
 ): AsyncGenerator<StreamEvent, void, undefined> {
+  const openAI = isOpenAI(options.baseUrl)
+  // OpenAI 400s on OpenRouter's `reasoning` object; it has its own flat field.
+  const reasoning = !options.reasoning
+    ? {}
+    : openAI
+      ? openAIReasons(options.model) ? { reasoning_effort: options.reasoning } : {}
+      : { reasoning: { effort: options.reasoning } }
   const request = (): Promise<Response> =>
     fetch(`${options.baseUrl}/chat/completions`, {
       method: 'POST',
@@ -215,16 +230,24 @@ export async function* streamChat(
         // nothing behind it is what such servers reject.
         ...(options.apiKey ? { Authorization: `Bearer ${options.apiKey}` } : {}),
         'Content-Type': 'application/json',
-        // Absent under Node, where the eval runner calls this.
-        ...(typeof location === 'undefined' ? {} : { 'HTTP-Referer': location.origin + location.pathname }),
-        'X-OpenRouter-Title': 'Vibe3D',
+        // OpenRouter's attribution headers, to OpenRouter only: anywhere else
+        // they are custom headers a CORS preflight may refuse.
+        ...(isOpenRouter(options.baseUrl)
+          ? {
+              // Absent under Node, where the eval runner calls this.
+              ...(typeof location === 'undefined' ? {} : { 'HTTP-Referer': location.origin + location.pathname }),
+              'X-OpenRouter-Title': 'Vibe3D',
+            }
+          : {}),
       },
       body: JSON.stringify({
         model: options.model,
         messages: withCacheBreakpoint(messages, options.model),
         stream: true,
-        ...(options.reasoning ? { reasoning: { effort: options.reasoning } } : {}),
+        ...reasoning,
         ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
+        // OpenAI streams no usage without it, and cost and /compact need usage.
+        ...(openAI ? { stream_options: { include_usage: true } } : {}),
       }),
     })
 
@@ -300,8 +323,8 @@ export interface ModelInfo {
    * handful of models and lower than the truth on dozens more.
    */
   context_length: number
-  /** USD per TOKEN, as decimal strings. Multiply by 1e6 to display $/M. */
-  pricing: { prompt: string; completion: string }
+  /** USD per TOKEN, as decimal strings. Multiply by 1e6 to display $/M. Absent where the host does not say (OpenAI). */
+  pricing?: { prompt: string; completion: string }
   /**
    * True only where the catalogue explicitly lists image input. False means
    * "not flagged", NEVER "cannot" — vision support is per-provider while
@@ -321,12 +344,13 @@ export interface ModelInfo {
  */
 const catalogue = new Map<string, Promise<readonly ModelInfo[]>>()
 
-export function fetchModels(baseUrl: string): Promise<readonly ModelInfo[]> {
+/** `apiKey` matters only to hosts whose /models is keyed, like OpenAI; OpenRouter's is public. */
+export function fetchModels(baseUrl: string, apiKey = ''): Promise<readonly ModelInfo[]> {
   let pending = catalogue.get(baseUrl)
   if (!pending) {
     // A failure is not memoised: one blip would otherwise leave the model list
     // empty until the page is reloaded.
-    pending = loadModels(baseUrl).catch(() => {
+    pending = loadModels(baseUrl, apiKey).catch(() => {
       catalogue.delete(baseUrl)
       return []
     })
@@ -338,17 +362,27 @@ export function fetchModels(baseUrl: string): Promise<readonly ModelInfo[]> {
 /** What the catalogue actually sends. Every field is a claim, not a fact. */
 interface RawModel {
   id: string
-  name: string
-  context_length: number
-  pricing: { prompt: string; completion: string }
+  /** OpenAI sends neither name, context_length nor pricing. */
+  name?: string
+  context_length?: number
+  pricing?: { prompt: string; completion: string }
   architecture?: { input_modalities?: string[] }
   top_provider?: { max_completion_tokens?: number | null }
 }
 
-async function loadModels(baseUrl: string): Promise<readonly ModelInfo[]> {
-  const response = await fetch(`${baseUrl}/models`)
+/** OpenAI's list is mostly embeddings, speech and images; codex models are Responses-API only. */
+const OPENAI_CHAT = /^(gpt-|o\d|chatgpt-)/
+const OPENAI_NOT_CHAT = /audio|realtime|tts|transcribe|image|search|instruct|codex/
+
+async function loadModels(baseUrl: string, apiKey: string): Promise<readonly ModelInfo[]> {
+  const response = await fetch(`${baseUrl}/models`, apiKey ? { headers: { Authorization: `Bearer ${apiKey}` } } : {})
+  // Thrown, so not memoised: a keyless 401 must not pin an empty list once a key is pasted.
+  if (!response.ok) throw new Error(`/models answered ${response.status}`)
   const data = ((await response.json()) as { data?: unknown } | null)?.data
-  const models: readonly RawModel[] = Array.isArray(data) ? data : []
+  const openAI = isOpenAI(baseUrl)
+  const models: readonly RawModel[] = (Array.isArray(data) ? (data as RawModel[]) : []).filter(
+    ({ id }) => !openAI || (OPENAI_CHAT.test(id) && !OPENAI_NOT_CHAT.test(id)),
+  )
   return (
     models
       // `openrouter/*` prices itself with the -1 variable-pricing sentinel,
@@ -363,10 +397,11 @@ async function loadModels(baseUrl: string): Promise<readonly ModelInfo[]> {
         const modalities = architecture?.input_modalities
         return {
           id,
-          name,
-          context_length,
-          pricing,
-          vision: Array.isArray(modalities) && modalities.includes('image'),
+          name: name ?? id,
+          context_length: context_length ?? 0,
+          ...(pricing ? { pricing } : {}),
+          // ponytail: OpenAI's catalogue flags nothing and its current chat models all read images.
+          vision: openAI || (Array.isArray(modalities) && modalities.includes('image')),
           maxOutput:
             typeof top_provider?.max_completion_tokens === 'number' && top_provider.max_completion_tokens > 0
               ? top_provider.max_completion_tokens

@@ -263,7 +263,7 @@ test('keeps aliases and :free, drops :batch and openrouter/*, sorts by name, and
     'maxOutput',
   ])
   expect(models[1]?.context_length).toBe(1048576)
-  expect(models[1]?.pricing.prompt).toBe('0.00000075')
+  expect(models[1]?.pricing?.prompt).toBe('0.00000075')
 
   await fetchModels('https://catalogue.example/v1')
   expect(calls).toHaveLength(1)
@@ -417,5 +417,34 @@ test('latestModels is the -latest aliases: the named vendors in order, then the 
     '~moonshotai/kimi-latest',
     '~x-ai/grok-latest',
     '~z-ai/glm-latest',
+  ])
+})
+
+test('OpenAI gets reasoning_effort only where it reasons, usage on request, and no OpenRouter headers', async () => {
+  stubFetch(() => new Response(STREAM, { status: 200 }))
+  const openAI = { ...OPTIONS, baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-test', reasoning: 'high' as const }
+  await drain(streamChat(MESSAGES, signal(), { ...openAI, model: 'gpt-5' }))
+  await drain(streamChat(MESSAGES, signal(), { ...openAI, model: 'gpt-4.1' }))
+
+  expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+    model: 'gpt-5',
+    messages: MESSAGES,
+    stream: true,
+    reasoning_effort: 'high',
+    stream_options: { include_usage: true },
+  })
+  expect(JSON.parse(String(calls[1]?.init?.body))).not.toHaveProperty('reasoning_effort')
+  expect(calls[0]?.init?.headers).toEqual({ Authorization: 'Bearer sk-test', 'Content-Type': 'application/json' })
+})
+
+test("OpenAI's /models is keyed, bare, and mostly not chat", async () => {
+  const rows = ['gpt-5', 'text-embedding-3-small', 'gpt-4o-realtime-preview', 'o3', 'whisper-1']
+  stubFetch(() => new Response(JSON.stringify({ data: rows.map((id) => ({ id, object: 'model', owned_by: 'openai' })) })))
+  const models = await fetchModels('https://api.openai.com/v1', 'sk-test')
+
+  expect(calls[0]?.init?.headers).toEqual({ Authorization: 'Bearer sk-test' })
+  expect(models).toEqual([
+    { id: 'gpt-5', name: 'gpt-5', context_length: 0, vision: true, maxOutput: null },
+    { id: 'o3', name: 'o3', context_length: 0, vision: true, maxOutput: null },
   ])
 })

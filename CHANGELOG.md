@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **OpenAI as a host.** Base URL `https://api.openai.com/v1` with an OpenAI key: the model list
+  is read from the account (chat models only), thinking is sent as `reasoning_effort` to the
+  models that take it, usage is requested so `/compact` still fires, and the CSP allows it.
 - **Network errors retry with backoff, and a failed turn can be continued.** A rate limit, a
   5xx or a dropped connection before the stream opens is retried up to five times, waiting
   1.5, 3, 6, 12 and 24 s (or the host's `Retry-After`), with the wait on the status line. When

@@ -37,7 +37,7 @@ const CSP = [
   "script-src 'self' 'wasm-unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
-  "connect-src 'self' https://openrouter.ai",
+  "connect-src 'self' https://openrouter.ai https://api.openai.com",
   "worker-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'none'",
