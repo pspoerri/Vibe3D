@@ -34,8 +34,12 @@ shows what the session has cost so far, at the model's list price.
 
 Any script running on the page could read the key; that is inherent to browser storage, not a
 choice this app made. The mitigation is a strict Content-Security-Policy whose `connect-src`
-allows only OpenRouter, plus keeping the dependency list short. That allowlist is also why only
-OpenRouter works as a host in the deployed build.
+allows only OpenRouter and OpenAI, plus keeping the dependency list short. That allowlist is also
+why only those two work as hosts in the deployed build.
+
+**OpenAI directly:** set Base URL to `https://api.openai.com/v1` (it is in the field's suggestions)
+and paste an OpenAI key. The model list comes from your account; OpenAI publishes no prices, so
+the cost footer stays blank there.
 
 One honest note about **Stop**: aborting the request stops billing on OpenAI, Anthropic, DeepSeek
 and xAI, but not on Google, Groq or Mistral, which bill the whole completion once it starts.

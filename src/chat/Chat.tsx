@@ -3,7 +3,7 @@ import { Compiler, type CompileResult } from '../kernel/compile'
 import { completePkce, pkceAvailable, revokeUrl, startPkce } from '../llm/auth'
 import { toDataUrl } from '../llm/images'
 import {
-  contextLimit, DEFAULT_BASE_URL, fetchModels, latestModels, streamChat, type ModelInfo, type Usage,
+  contextLimit, DEFAULT_BASE_URL, fetchModels, isOpenAI, OPENAI_BASE_URL, latestModels, streamChat, type ModelInfo, type Usage,
 } from '../llm/openrouter'
 import { loadKey, saveKey } from '../state/key'
 import {
@@ -244,19 +244,20 @@ export function Chat({
   // time a turn could need contextLimit for auto-compact.
   useEffect(() => {
     if (!showSettings && !canPrompt) return
-    fetchModels(settings.baseUrl)
+    fetchModels(settings.baseUrl, apiKey)
       .then(setModels)
       .catch(() => setModels([]))
-  }, [showSettings, canPrompt, settings.baseUrl])
+  }, [showSettings, canPrompt, settings.baseUrl, apiKey])
 
   useEffect(() => {
+    if (isOpenAI(settings.baseUrl)) return setRevoke('https://platform.openai.com/api-keys')
     if (!apiKey) return setRevoke(REVOKE_HOME)
     let live = true
     revokeUrl(apiKey).then((url) => live && setRevoke(url)).catch(() => {})
     return () => {
       live = false
     }
-  }, [apiKey])
+  }, [apiKey, settings.baseUrl])
 
   const stop = () => {
     // An AbortSignal does not reach a Worker, so the compile needs its own kill.
@@ -505,7 +506,7 @@ export function Chat({
     await running(async (signal) => {
       // The catalogue decides whether this model gets a render and how long it
       // may answer; a first send right after boot must not outrun the fetch.
-      catalogue = models.length > 0 ? models : await fetchModels(settings.baseUrl).catch(() => [])
+      catalogue = models.length > 0 ? models : await fetchModels(settings.baseUrl, apiKey).catch(() => [])
       if (catalogue !== models) setModels(catalogue)
       info = catalogue.find((m) => m.id === settings.model)
       const vision = info?.vision ?? false
@@ -872,7 +873,7 @@ export function Chat({
               <input
                 type="password"
                 value={apiKey}
-                placeholder="sk-or-…"
+                placeholder={isOpenAI(settings.baseUrl) ? 'sk-…' : 'sk-or-…'}
                 onChange={(e) => {
                   const next = e.target.value.trim()
                   setApiKey(next)
@@ -887,6 +888,10 @@ export function Chat({
                   value={settings.model}
                   onChange={(e) => persistSettings({ ...settings, model: e.target.value })}
                 >
+                  {/* A model id from another host would otherwise show as the first option while the stale id is sent. */}
+                  {!models.some((model) => model.id === settings.model) && (
+                    <option value={settings.model}>{settings.model} · not on this host</option>
+                  )}
                   <optgroup label="Latest">
                     {latestModels(models).map((model) => (
                       <option key={model.id} value={model.id}>
@@ -915,8 +920,13 @@ export function Chat({
               Base URL
               <input
                 value={settings.baseUrl}
+                list="base-urls"
                 onChange={(e) => persistSettings({ ...settings, baseUrl: e.target.value })}
               />
+              <datalist id="base-urls">
+                <option value={DEFAULT_BASE_URL}>OpenRouter</option>
+                <option value={OPENAI_BASE_URL}>OpenAI</option>
+              </datalist>
             </label>
             <label>
               Thinking
