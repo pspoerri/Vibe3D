@@ -20,30 +20,24 @@ Design: [docs/design.md](docs/design.md) · Plans: [docs/superpowers/plans](docs
 
 ## Bring your own tokens
 
-The model runs on your key. The settings panel has one button per host:
+The model runs on your key. The settings panel has two tabs:
 
-- **Connect OpenRouter** runs an OAuth PKCE flow and mints a key scoped to this app, which you
-  can revoke without touching the rest of your account.
-- **OpenRouter + API key** takes a key you already have, your own or a shared one.
-- **Connect OpenAI** points the chat at `https://api.openai.com/v1` and links to
-  <https://platform.openai.com/api-keys>; paste the key you make there.
+- **OpenRouter**: **Connect OpenRouter** runs an OAuth PKCE flow and mints a key scoped to this
+  app, which you can revoke without touching the rest of your account. Or paste a key you
+  already have, your own or a shared one. **Disconnect** forgets the key in this browser.
 - **Other host** takes the base URL of any OpenAI-compatible server (Ollama, LM Studio, vLLM)
   and an optional key.
 
 Each host's key is stored in this browser's `localStorage` on its own (`vibe3d.key` for
-OpenRouter, `vibe3d.key.openai`, `vibe3d.key.other`), and it is sent to exactly one place: that
-host. Revoke an OpenRouter key any time at <https://openrouter.ai/settings/keys>; the settings
-panel links to the specific key. **This app
-cannot set a spend cap** — that is a manual step in your OpenRouter settings. The chat footer
-shows what the session has cost so far, at the model's list price.
+OpenRouter, `vibe3d.key.other`), and it is sent to exactly one place: that host. Revoke an
+OpenRouter key any time at <https://openrouter.ai/settings/keys>; the settings panel links to the
+specific key. **This app cannot set a spend cap** — that is a manual step in your OpenRouter
+settings. The chat footer shows what the session has cost so far, at the model's list price.
 
 Any script running on the page could read the key; that is inherent to browser storage, not a
 choice this app made. The mitigation is a strict Content-Security-Policy whose `connect-src`
-allows only OpenRouter and OpenAI, plus keeping the dependency list short. That allowlist is also
-why only those two work as hosts in the deployed build.
-
-On OpenAI the model list comes from your account; OpenAI publishes no prices, so the cost footer
-stays blank there.
+allows only OpenRouter, plus keeping the dependency list short. That allowlist is also why only
+OpenRouter works as a host in the deployed build; run it locally for anything else.
 
 One honest note about **Stop**: aborting the request stops billing on OpenAI, Anthropic, DeepSeek
 and xAI, but not on Google, Groq or Mistral, which bill the whole completion once it starts.

@@ -358,30 +358,31 @@ test('dragging a slider previews without editing the document, then commits on r
   await expect(page.locator('.cm-content')).toContainText('// [20:120]')
 })
 
-test('each host keeps its own key, and OpenAI links to where keys are made', async ({ page }) => {
-  await page.route('https://api.openai.com/**', (route) => route.fulfill({ status: 401, body: '{}' }))
+test('each host keeps its own key, and a pasted OpenRouter key can be disconnected', async ({ page }) => {
   await page.goto('/')
   await waitForStarter(page)
 
-  await page.getByRole('button', { name: 'Connect OpenAI' }).click()
-  await expect(page.getByRole('link', { name: 'platform.openai.com/api-keys' })).toBeVisible()
-  const key = page.getByLabel('API key', { exact: true })
-  await key.fill('sk-openai-test')
+  // Typed, not filled: the first character connects, and the field must stay under the cursor.
+  const key = page.getByLabel('Or paste a key')
+  await key.pressSequentially('sk-or-v1-shared')
+  await expect(page.getByLabel('API key', { exact: true })).toBeFocused()
+  expect(await page.evaluate(() => localStorage.getItem('vibe3d.key'))).toBe('sk-or-v1-shared')
+  await expect(page.getByText('Connected.')).toBeVisible()
 
   await page.getByRole('button', { name: 'Other host' }).click()
   await expect(page.getByLabel('Base URL')).toHaveValue('http://localhost:11434/v1')
   await expect(page.getByLabel('API key (optional)')).toHaveValue('')
+  await page.getByLabel('Base URL').fill('http://localhost:1234/v1')
 
-  await page.getByRole('button', { name: 'Connect OpenAI' }).click()
-  await expect(key).toHaveValue('sk-openai-test')
-})
+  await page.getByRole('button', { name: 'OpenRouter', exact: true }).click()
+  await expect(page.getByText('Connected.')).toBeVisible()
+  await page.getByRole('button', { name: 'Other host' }).click()
+  await expect(page.getByLabel('Base URL')).toHaveValue('http://localhost:1234/v1')
 
-test('a shared OpenRouter key can be pasted instead of signing in', async ({ page }) => {
-  await page.goto('/')
-  await waitForStarter(page)
-  await page.getByRole('button', { name: 'OpenRouter + API key' }).click()
-  await page.getByLabel('API key', { exact: true }).fill('sk-or-v1-shared')
-  expect(await page.evaluate(() => localStorage.getItem('vibe3d.key'))).toBe('sk-or-v1-shared')
+  await page.getByRole('button', { name: 'OpenRouter', exact: true }).click()
+  await page.getByRole('button', { name: 'Disconnect' }).click()
+  await expect(page.getByLabel('Or paste a key')).toHaveValue('')
+  expect(await page.evaluate(() => localStorage.getItem('vibe3d.key'))).toBe('')
 })
 
 test('the PKCE start carries exactly the three documented params', async ({ page }) => {
@@ -466,7 +467,7 @@ test('the built page carries a CSP that the kernel still compiles under', async 
     .locator('meta[http-equiv="Content-Security-Policy"]')
     .getAttribute('content')
   expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'")
-  expect(csp).toContain("connect-src 'self' https://openrouter.ai https://api.openai.com")
+  expect(csp).toContain("connect-src 'self' https://openrouter.ai")
 
   // The kernel is a WebAssembly.compile in a worker: if the policy were wrong
   // this never resolves.

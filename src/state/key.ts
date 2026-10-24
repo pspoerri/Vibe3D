@@ -14,6 +14,8 @@ const recordOf = (host: Host): string => (host === 'openrouter' ? RECORD : `${RE
 /** '' when absent or unreadable — see loadSettings for why this cannot throw. */
 export function loadKey(host: Host = 'openrouter'): string {
   try {
+    // ponytail: v0.5.4's OpenAI key, which nothing reads any more. Delete with LEGACY.
+    localStorage.removeItem(`${RECORD}.openai`)
     return localStorage.getItem(recordOf(host)) ?? (host === 'openrouter' ? localStorage.getItem(LEGACY) : null) ?? ''
   } catch {
     return ''

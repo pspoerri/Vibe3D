@@ -79,8 +79,11 @@ export function loadSettings(): PortableSettings {
       ? Object.fromEntries(Object.entries(raw).filter(([, v]) => isLevel(v)) as [string, Thinking][])
       : {}
   const bed = stored?.bed
+  let baseUrl = typeof stored?.baseUrl === 'string' ? stored.baseUrl : DEFAULT_SETTINGS.baseUrl
+  // ponytail: v0.5.4 had OpenAI as a host; the CSP no longer lets the page reach it.
+  if (baseUrl.startsWith('https://api.openai.com/')) baseUrl = DEFAULT_SETTINGS.baseUrl
   return {
-    baseUrl: typeof stored?.baseUrl === 'string' ? stored.baseUrl : DEFAULT_SETTINGS.baseUrl,
+    baseUrl,
     model,
     thinking,
     bed: Array.isArray(bed) && bed.length === 3 && bed.every((n) => typeof n === 'number' && n > 0)
