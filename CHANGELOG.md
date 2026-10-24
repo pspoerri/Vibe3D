@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.5.5 — 2026-10-24
 
 - **OpenAI is no longer a host.** v0.5.4's direct OpenAI support is gone again, with its CSP
   entry; OpenAI's models are still on OpenRouter. A stored `api.openai.com` base URL falls back
