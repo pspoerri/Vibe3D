@@ -3,7 +3,7 @@ import { Compiler, type CompileResult } from '../kernel/compile'
 import { completePkce, pkceAvailable, revokeUrl, startPkce } from '../llm/auth'
 import { toDataUrl } from '../llm/images'
 import {
-  contextLimit, DEFAULT_BASE_URL, defaultModel, fetchModels, llmHostOf, OPENAI_BASE_URL, latestModels, streamChat, type ModelInfo, type Usage,
+  contextLimit, DEFAULT_BASE_URL, defaultModel, fetchModels, llmHostOf, latestModels, streamChat, type ModelInfo, type Usage,
 } from '../llm/openrouter'
 import { loadKey, saveKey } from '../state/key'
 import {
@@ -27,7 +27,6 @@ import { renderSkill } from './skills'
 import { usesText } from '../kernel/fonts'
 
 const REVOKE_HOME = 'https://openrouter.ai/settings/keys'
-const OPENAI_KEYS = 'https://platform.openai.com/api-keys'
 /** What Other host starts at: Ollama's OpenAI-compatible endpoint, the commonest local server. */
 const OTHER_BASE_URL = 'http://localhost:11434/v1'
 /** A plain cap, chosen over reasoning about 413 payload_too_large: OpenRouter
@@ -119,8 +118,8 @@ export function Chat({
   const [settings, setSettings] = useState(loadSettings)
   const host = llmHostOf(settings.baseUrl)
   const [apiKey, setApiKey] = useState(() => loadKey(host))
-  /** OpenRouter with a pasted key (a shared one, say) rather than signing in. Same host, same key slot. */
-  const [pasteKey, setPasteKey] = useState(() => !pkceAvailable())
+  /** The Other host URL last typed, so a trip to the OpenRouter tab and back keeps it. */
+  const otherUrl = useRef(host === 'other' ? settings.baseUrl : OTHER_BASE_URL)
   const [models, setModels] = useState<readonly ModelInfo[]>([])
   const [showSettings, setShowSettings] = useState(() => apiKey === '')
   const [revoke, setRevoke] = useState(REVOKE_HOME)
@@ -129,7 +128,7 @@ export function Chat({
   const [turnStart, setTurnStart] = useState<number | null>(null)
   const [bedText, setBedText] = useState(() => loadSettings().bed.join(' × '))
   // Another host may be a keyless local server (Ollama, LM Studio), so an
-  // empty key only blocks prompting against OpenRouter and OpenAI.
+  // empty key only blocks prompting against OpenRouter.
   const canPrompt = apiKey !== '' || host === 'other'
 
   // Refs, not state, wherever a value is read inside an async turn: the turn
@@ -291,6 +290,11 @@ export function Chat({
     setModels([])
   }
 
+  const changeKey = (next: string) => {
+    setApiKey(next)
+    saveKey(next, host)
+  }
+
   const keyField = (label: string, placeholder: string) => (
     <label>
       {label}
@@ -298,11 +302,8 @@ export function Chat({
         type="password"
         value={apiKey}
         placeholder={placeholder}
-        onChange={(e) => {
-          const next = e.target.value.trim()
-          setApiKey(next)
-          saveKey(next, host)
-        }}
+        autoComplete="off"
+        onChange={(e) => changeKey(e.target.value.trim())}
       />
     </label>
   )
@@ -896,72 +897,55 @@ export function Chat({
       {showSettings && (
         <div className="chat-settings">
           <>
-            <div className="row" role="group" aria-label="Model host">
-              {/* Sign-in needs crypto.subtle, which a plain-http LAN address lacks. */}
-              {pkceAvailable() && (
-                <button
-                  type="button"
-                  aria-pressed={host === 'openrouter' && !pasteKey}
-                  onClick={() => {
-                    connectTo(DEFAULT_BASE_URL)
-                    setPasteKey(false)
-                    void startPkce()
-                  }}
-                >
-                  Connect OpenRouter
-                </button>
-              )}
+            <div className="chat-tabs" role="group" aria-label="Model host">
               <button
                 type="button"
-                aria-pressed={host === 'openrouter' && pasteKey}
-                onClick={() => {
-                  if (host !== 'openrouter') connectTo(DEFAULT_BASE_URL)
-                  setPasteKey(true)
-                }}
+                aria-pressed={host === 'openrouter'}
+                onClick={() => host !== 'openrouter' && connectTo(DEFAULT_BASE_URL)}
               >
-                OpenRouter + API key
-              </button>
-              <button type="button" aria-pressed={host === 'openai'} onClick={() => connectTo(OPENAI_BASE_URL)}>
-                Connect OpenAI
+                OpenRouter
               </button>
               <button
                 type="button"
                 aria-pressed={host === 'other'}
-                onClick={() => host !== 'other' && connectTo(OTHER_BASE_URL)}
+                onClick={() => host !== 'other' && connectTo(otherUrl.current)}
               >
                 Other host
               </button>
             </div>
             {host === 'openrouter' && (
               <>
-                <p className="chat-hint">
-                  {apiKey ? (
+                {apiKey ? (
+                  <div className="row chat-connected">
+                    <p className="chat-hint">
+                      <b>Connected.</b> Revoke the key or set a spend cap at{' '}
+                      <a href={revoke} target="_blank" rel="noreferrer">openrouter.ai</a> — this app cannot set one.
+                    </p>
+                    <button type="button" onClick={() => changeKey('')}>
+                      Disconnect
+                    </button>
+                  </div>
+                ) : (
+                  // Sign-in needs crypto.subtle, which a plain-http LAN address lacks.
+                  pkceAvailable() && (
                     <>
-                      Connected. Revoke the key at <a href={revoke} target="_blank" rel="noreferrer">openrouter.ai</a>;
-                      a spend cap is set there too — this app cannot set one.
+                      <button type="button" className="chat-primary" onClick={() => void startPkce()}>
+                        Connect OpenRouter
+                      </button>
+                      <p className="chat-hint">
+                        Signs you in at openrouter.ai and mints a key for this app alone, revocable any time.
+                      </p>
                     </>
-                  ) : pasteKey ? (
-                    <>
-                      Paste an OpenRouter key — your own or a shared one — from{' '}
-                      <a href={REVOKE_HOME} target="_blank" rel="noreferrer">openrouter.ai/settings/keys</a>.
-                    </>
-                  ) : (
-                    'Signs you in at openrouter.ai and mints a key for this app alone, revocable any time.'
-                  )}
-                </p>
-                {pasteKey && keyField('API key', 'sk-or-…')}
-              </>
-            )}
-            {host === 'openai' && (
-              <>
-                <p className="chat-hint">
-                  Create a key at{' '}
-                  <a href={OPENAI_KEYS} target="_blank" rel="noreferrer">
-                    platform.openai.com/api-keys
-                  </a>{' '}
-                  and paste it here. Spend limits are set there too.
-                </p>
-                {keyField('API key', 'sk-…')}
+                  )
+                )}
+                {/* Same slot in both states, so typing a key does not unmount the field under the cursor. */}
+                {keyField(apiKey || !pkceAvailable() ? 'API key' : 'Or paste a key', 'sk-or-…')}
+                {!apiKey && (
+                  <p className="chat-hint">
+                    Your own or a shared one, from{' '}
+                    <a href={REVOKE_HOME} target="_blank" rel="noreferrer">openrouter.ai/settings/keys</a>.
+                  </p>
+                )}
               </>
             )}
             {host === 'other' && (
@@ -971,13 +955,16 @@ export function Chat({
                   <input
                     value={settings.baseUrl}
                     placeholder={OTHER_BASE_URL}
-                    onChange={(e) => connectTo(e.target.value)}
+                    onChange={(e) => {
+                      otherUrl.current = e.target.value
+                      connectTo(e.target.value)
+                    }}
                   />
                 </label>
                 {keyField('API key (optional)', 'none for a local server')}
                 <p className="chat-hint">
                   Any OpenAI-compatible server — Ollama, LM Studio, vLLM. The hosted site can only reach
-                  OpenRouter and OpenAI; run Vibe3D locally for anything else.
+                  OpenRouter; run Vibe3D locally for anything else.
                 </p>
               </>
             )}
@@ -992,7 +979,7 @@ export function Chat({
                   {!models.some((model) => model.id === settings.model) && (
                     <option value={settings.model}>{settings.model} · not on this host</option>
                   )}
-                  {host !== 'openai' && (
+                  {host === 'openrouter' && (
                     <optgroup label="Latest">
                       {latestModels(models).map((model) => (
                         <option key={model.id} value={model.id}>
@@ -1002,7 +989,7 @@ export function Chat({
                       ))}
                     </optgroup>
                   )}
-                  <optgroup label={host === 'openai' ? 'Newest first' : 'All models'}>
+                  <optgroup label="All models">
                     {models.map((model) => (
                       <option key={model.id} value={model.id}>
                         {model.name}

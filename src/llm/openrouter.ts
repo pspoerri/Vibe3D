@@ -4,20 +4,12 @@ export const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1'
 /** One named constant: the catalogue moves and this is the only line to change. */
 /** OpenRouter's rolling alias: whatever Google's newest Flash is, without a release here. */
 export const DEFAULT_MODEL = '~google/gemini-flash-latest'
-export const OPENAI_BASE_URL = 'https://api.openai.com/v1'
 
-/** OpenAI proper: strict about unknown body fields, keyed /models, no usage unless asked. */
-export const isOpenAI = (baseUrl: string): boolean => /^https:\/\/api\.openai\.com\//.test(baseUrl)
 const isOpenRouter = (baseUrl: string): boolean => /^https:\/\/openrouter\.ai\//.test(baseUrl)
 
-/** Which connect button a base URL belongs to. Anything not OpenRouter or OpenAI is some other OpenAI-compatible server. */
-export type Host = 'openrouter' | 'openai' | 'other'
-export const llmHostOf = (baseUrl: string): Host =>
-  isOpenRouter(baseUrl) ? 'openrouter' : isOpenAI(baseUrl) ? 'openai' : 'other'
-
-/** ponytail: id heuristic for which OpenAI models take reasoning_effort; the rest answer it with a 400. */
-const openAIReasons = (model: string): boolean =>
-  (/^o\d/.test(model) || Number(/^gpt-(\d+)/.exec(model)?.[1]) >= 5) && !model.includes('-chat')
+/** Which settings tab a base URL belongs to. Anything not OpenRouter is some other OpenAI-compatible server. */
+export type Host = 'openrouter' | 'other'
+export const llmHostOf = (baseUrl: string): Host => (isOpenRouter(baseUrl) ? 'openrouter' : 'other')
 
 /**
  * One part of a multimodal message. `image_url.url` takes a `data:` URL exactly
@@ -220,13 +212,6 @@ export async function* streamChat(
   signal: AbortSignal,
   options: ChatOptions,
 ): AsyncGenerator<StreamEvent, void, undefined> {
-  const openAI = isOpenAI(options.baseUrl)
-  // OpenAI 400s on OpenRouter's `reasoning` object; it has its own flat field.
-  const reasoning = !options.reasoning
-    ? {}
-    : openAI
-      ? openAIReasons(options.model) ? { reasoning_effort: options.reasoning } : {}
-      : { reasoning: { effort: options.reasoning } }
   const request = (): Promise<Response> =>
     fetch(`${options.baseUrl}/chat/completions`, {
       method: 'POST',
@@ -250,10 +235,8 @@ export async function* streamChat(
         model: options.model,
         messages: withCacheBreakpoint(messages, options.model),
         stream: true,
-        ...reasoning,
+        ...(options.reasoning ? { reasoning: { effort: options.reasoning } } : {}),
         ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
-        // OpenAI streams no usage without it, and cost and /compact need usage.
-        ...(openAI ? { stream_options: { include_usage: true } } : {}),
       }),
     })
 
@@ -329,7 +312,7 @@ export interface ModelInfo {
    * handful of models and lower than the truth on dozens more.
    */
   context_length: number
-  /** USD per TOKEN, as decimal strings. Multiply by 1e6 to display $/M. Absent where the host does not say (OpenAI). */
+  /** USD per TOKEN, as decimal strings. Multiply by 1e6 to display $/M. Absent where the host does not say (a local server). */
   pricing?: { prompt: string; completion: string }
   /**
    * True only where the catalogue explicitly lists image input. False means
@@ -350,7 +333,7 @@ export interface ModelInfo {
  */
 const catalogue = new Map<string, Promise<readonly ModelInfo[]>>()
 
-/** `apiKey` matters only to hosts whose /models is keyed, like OpenAI; OpenRouter's is public. */
+/** `apiKey` matters only to hosts whose /models is keyed, such as a self-hosted server behind a key; OpenRouter's is public. */
 export function fetchModels(baseUrl: string, apiKey = ''): Promise<readonly ModelInfo[]> {
   let pending = catalogue.get(baseUrl)
   if (!pending) {
@@ -368,43 +351,20 @@ export function fetchModels(baseUrl: string, apiKey = ''): Promise<readonly Mode
 /** What the catalogue actually sends. Every field is a claim, not a fact. */
 interface RawModel {
   id: string
-  /** OpenAI sends neither name, context_length nor pricing. */
+  /** A local server (Ollama, LM Studio) sends neither name, context_length nor pricing. */
   name?: string
   context_length?: number
   pricing?: { prompt: string; completion: string }
   architecture?: { input_modalities?: string[] }
   top_provider?: { max_completion_tokens?: number | null }
-  /** Unix seconds. OpenAI's only hint at age. */
-  created?: number
-}
-
-/** OpenAI's list is mostly embeddings, speech and images; codex models are Responses-API only. */
-const OPENAI_CHAT = /^(gpt-|o\d|chatgpt-)/
-const OPENAI_NOT_CHAT = /audio|realtime|tts|transcribe|image|search|instruct|codex|preview/
-/** Dated snapshots — gpt-4o-2024-08-06, gpt-4-0613 — duplicate the alias beside them. */
-const SNAPSHOT = /-\d{4}(-\d{2}-\d{2})?$/
-/** ponytail: OpenAI flags nothing as deprecated; a model this much older than the newest counts as superseded. */
-const OPENAI_MAX_AGE_S = 18 * 30 * 86_400
-
-/** OpenAI's chat models, newest first, without snapshots, previews or superseded generations. */
-function openAIChat(models: readonly RawModel[]): RawModel[] {
-  const chat = models.filter(({ id }) => OPENAI_CHAT.test(id) && !OPENAI_NOT_CHAT.test(id) && !SNAPSHOT.test(id))
-  const newest = Math.max(0, ...chat.map(({ created }) => created ?? 0))
-  return chat
-    .filter(({ created }) => newest - (created ?? 0) <= OPENAI_MAX_AGE_S)
-    .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
 }
 
 /**
  * The model to switch to when the chosen one is not on this host: OpenRouter's
- * rolling default, or OpenAI's newest flagship (`gpt-6-sol`, not a `-mini`); null
- * for another host, whose ids only its user knows.
+ * rolling default, or the first model another host lists.
  */
 export function defaultModel(models: readonly ModelInfo[], host: Host): string | null {
-  if (host === 'openrouter') return DEFAULT_MODEL
-  // The list is newest first, so the first full-size gpt is the flagship.
-  if (host === 'openai') return (models.find(({ id }) => /^gpt-/.test(id) && !/mini|nano|chat/.test(id)) ?? models[0])?.id ?? null
-  return null
+  return host === 'openrouter' ? DEFAULT_MODEL : (models[0]?.id ?? null)
 }
 
 async function loadModels(baseUrl: string, apiKey: string): Promise<readonly ModelInfo[]> {
@@ -412,10 +372,8 @@ async function loadModels(baseUrl: string, apiKey: string): Promise<readonly Mod
   // Thrown, so not memoised: a keyless 401 must not pin an empty list once a key is pasted.
   if (!response.ok) throw new Error(`/models answered ${response.status}`)
   const data = ((await response.json()) as { data?: unknown } | null)?.data
-  const openAI = isOpenAI(baseUrl)
-  const raw: readonly RawModel[] = Array.isArray(data) ? data : []
-  const models = openAI ? openAIChat(raw) : raw
-  const listed = (
+  const models: readonly RawModel[] = Array.isArray(data) ? data : []
+  return (
     models
       // `openrouter/*` prices itself with the -1 variable-pricing sentinel,
       // which corrupts any sort; `:batch` ids are async duplicates. `:free`
@@ -432,17 +390,15 @@ async function loadModels(baseUrl: string, apiKey: string): Promise<readonly Mod
           name: name ?? id,
           context_length: context_length ?? 0,
           ...(pricing ? { pricing } : {}),
-          // ponytail: OpenAI's catalogue flags nothing and its current chat models all read images.
-          vision: openAI || (Array.isArray(modalities) && modalities.includes('image')),
+          vision: Array.isArray(modalities) && modalities.includes('image'),
           maxOutput:
             typeof top_provider?.max_completion_tokens === 'number' && top_provider.max_completion_tokens > 0
               ? top_provider.max_completion_tokens
               : null,
         }
       })
+      .sort((a, b) => a.name.localeCompare(b.name))
   )
-  // OpenAI's names are bare ids, so newest first reads better than alphabetical.
-  return openAI ? listed : listed.sort((a, b) => a.name.localeCompare(b.name))
 }
 
 /** The vendors pinned first in the Latest group, in this order (Kimi is `moonshotai/`; Alibaba has no alias). */

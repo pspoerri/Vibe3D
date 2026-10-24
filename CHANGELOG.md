@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **OpenAI is no longer a host.** v0.5.4's direct OpenAI support is gone again, with its CSP
+  entry; OpenAI's models are still on OpenRouter. A stored `api.openai.com` base URL falls back
+  to OpenRouter, and a stored OpenAI key is deleted from the browser.
+- **Settings: two tabs, OpenRouter and Other host.** The four host buttons are gone. Connect
+  OpenRouter is one clear button, a key can be pasted under it without a mode switch, and
+  once connected the panel says so and offers **Disconnect** — a signed-in key could not be
+  removed before. Other host remembers its URL across tab switches and, when the server lists
+  models, picks one instead of keeping an OpenRouter id it cannot serve.
+
+## v0.5.4 — 2026-10-01
+
 - **One button per host.** The settings panel's key and base-URL fields became **Connect
   OpenRouter**, **OpenRouter + API key** (for a key you already have), **Connect OpenAI**
   (with a link to where keys are made) and **Other host** (base URL and an optional key). Each host keeps its own key, so switching never loses one.
@@ -9,6 +20,9 @@
   is read from the account (current chat models only, newest first, and switching picks the
   newest flagship), thinking is sent as `reasoning_effort` to the
   models that take it, usage is requested so `/compact` still fires, and the CSP allows it.
+
+## v0.5.3 — 2026-09-12
+
 - **Network errors retry with backoff, and a failed turn can be continued.** A rate limit, a
   5xx or a dropped connection before the stream opens is retried up to five times, waiting
   1.5, 3, 6, 12 and 24 s (or the host's `Retry-After`), with the wait on the status line. When

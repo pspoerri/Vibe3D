@@ -337,9 +337,19 @@ body { font: 14px/1.5 system-ui, sans-serif; color: #16181c; background: #eceeea
   background: #fff; border: 1px solid #c8ccc4; border-radius: 2px; color: #16181c;
 }
 .chat-settings button:hover:not(:disabled) { border-color: #b8860b; color: #b8860b; }
-.chat-settings button[aria-pressed="true"] { border-color: #b8860b; color: #b8860b; background: #fbf6e9; }
-.chat-settings .row[role="group"] { flex-wrap: wrap; }
-.chat-settings .row[role="group"] button { flex: 1 1 auto; }
+/* Host tabs: one joined control, so they read as a choice, not as actions. */
+.chat-tabs { display: flex; }
+.chat-settings .chat-tabs button { flex: 1; border-radius: 0; }
+.chat-settings .chat-tabs button + button { margin-left: -1px; }
+.chat-settings .chat-tabs button:first-child { border-radius: 2px 0 0 2px; }
+.chat-settings .chat-tabs button:last-child { border-radius: 0 2px 2px 0; }
+.chat-settings .chat-tabs button[aria-pressed="true"] {
+  position: relative; border-color: #b8860b; color: #6b5200; background: #fbf6e9;
+}
+.chat-settings .chat-primary { background: #b8860b; border-color: #b8860b; color: #fff; padding: 9px 11px; }
+.chat-settings .chat-primary:hover:not(:disabled) { background: #9a7009; color: #fff; }
+.chat-connected { justify-content: space-between; }
+.chat-connected button { flex: none; }
 .chat-settings a { color: #b8860b; }
 .chat-hint { font: 11px/1.45 system-ui, sans-serif; color: #7c827c; margin: 0; }
 
