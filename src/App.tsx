@@ -440,6 +440,9 @@ export function App() {
         onChange={(next) => {
           setSession(next)
           setFitToken((n) => n + 1)
+          // At the start window only New and Import are enabled, and both mean
+          // "open this". Delete goes back to the start window right after.
+          setOpen(true)
         }}
         onOpen={() => setOpen(false)}
         onHelp={() => setHelp((h) => !h)}

@@ -763,7 +763,8 @@ export function Chat({
         </div>
       )}
 
-      {!canPrompt && (
+      {/* Only while the settings are closed: open, the link would do nothing. */}
+      {!canPrompt && !showSettings && (
         <div className="chat-nokey">
           No API access yet — connect OpenRouter or paste an API key in{' '}
           <button type="button" onClick={() => setShowSettings(true)}>
