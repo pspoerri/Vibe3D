@@ -2,6 +2,24 @@ import { readFile } from 'node:fs/promises'
 import { expect, test, type Page } from '@playwright/test'
 import { strFromU8, unzipSync } from 'three/examples/jsm/libs/fflate.module.js'
 
+// Every context is a first visit, which opens documents with the editor closed:
+// these tests type source, so they start where a returning user left it.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('vibe3d.editPane', 'open')
+    localStorage.setItem('vibe3d.editTab', 'code')
+  })
+})
+
+/** The Export dialog, end to end: the format, optionally the selected part alone, Download. */
+async function exportAs(page: Page, format: '3MF' | 'STL' | 'OBJ', part = false): Promise<void> {
+  await page.getByRole('button', { name: 'Export', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Export for printing' })
+  if (part) await dialog.getByRole('button', { name: /^Part \d+ only$/ }).click()
+  await dialog.getByRole('radio', { name: new RegExp(`^${format}`) }).check()
+  await dialog.getByRole('button', { name: /^Download / }).click()
+}
+
 test('compiles the starter model and reports its size', async ({ page }) => {
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(e.message))
@@ -21,8 +39,8 @@ test('opens the potted plant example and compiles it', async ({ page }) => {
   page.on('pageerror', (e) => errors.push(e.message))
 
   await page.goto('/')
-  await page.getByRole('button', { name: 'A potted plant' }).click({ timeout: 90_000 })
-  await expect(page.locator('.menubar-doc')).toHaveText('A potted plant')
+  await page.getByRole('button', { name: 'Potted plant' }).click({ timeout: 90_000 })
+  await expect(page.locator('.doc-name')).toHaveText('A potted plant')
   // Hulls of spheres at $fn = 48: the slowest example by far, so the long wait.
   await expect(page.locator('.tag', { hasText: 'mm' })).toBeVisible({ timeout: 180_000 })
   await expect(page.locator('.error')).toBeHidden()
@@ -41,8 +59,8 @@ test('opens the Biergarten sign example: lettering in the bundled font, coloured
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(e.message))
   await page.goto('/')
-  await page.getByRole('button', { name: 'A Biergarten sign' }).click({ timeout: 90_000 })
-  await expect(page.locator('.menubar-doc')).toHaveText('A Biergarten sign')
+  await page.getByRole('button', { name: 'Biergarten sign' }).click({ timeout: 90_000 })
+  await expect(page.locator('.doc-name')).toHaveText('A Biergarten sign')
   await expect(page.locator('.tag', { hasText: '198.1 × 110.7 × 12.9 mm' })).toBeVisible({ timeout: 120_000 })
   await expect(page.locator('.error')).toBeHidden()
   expect(errors).toEqual([])
@@ -74,7 +92,7 @@ test('exports a 3MF', async ({ page }) => {
   await expect(page.locator('.tag', { hasText: 'mm' })).toBeVisible({ timeout: 90_000 })
 
   const download = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Export 3MF' }).click()
+  await exportAs(page, '3MF')
   const file = await (await download).path()
   // Named after the document, which the starter takes from its title comment.
   expect((await download).suggestedFilename()).toBe('A mounting plate.3mf')
@@ -112,15 +130,15 @@ test.describe('on a retina display', () => {
 test('the code pane slides away and back', async ({ page }) => {
   await openStarter(page)
   const pane = page.locator('.pane.side').first()
-  await page.getByRole('button', { name: 'Hide the code' }).click()
+  await page.getByRole('button', { name: 'Hide the editor' }).click()
   await expect.poll(async () => (await pane.boundingBox())?.width).toBe(0)
-  await page.getByRole('button', { name: 'Show the code' }).click()
+  await page.getByRole('button', { name: 'Show the editor' }).click()
   await expect.poll(async () => (await pane.boundingBox())?.width).toBeGreaterThan(200)
   await expect(page.locator('.cm-content')).toBeVisible()
 })
 
-// The mobile view (index.css): no editor pane, the model above the chat,
-// export still one tap away.
+// The mobile view (index.css): one pane at a time behind a tab bar, the
+// composer over the model, export one tap away.
 test.describe('on a phone', () => {
   test.use({ viewport: { width: 390, height: 844 } })
 
@@ -133,9 +151,23 @@ test.describe('on a phone', () => {
     await expect(page.locator('.pane.side:not(.right)')).toBeHidden()
     await expect(page.locator('.chat-input textarea')).toBeVisible()
     const download = page.waitForEvent('download')
-    await page.getByRole('button', { name: 'Export 3MF' }).click()
+    await exportAs(page, '3MF')
     expect((await download).suggestedFilename()).toBe('A mounting plate.3mf')
     // Nothing lays out wider than the phone.
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
+  })
+
+  test('the Edit tab brings the parameters and the code to a phone', async ({ page }) => {
+    await page.goto('/')
+    await page.locator('.start-open').first().click({ timeout: 90_000 })
+    await page.getByRole('button', { name: 'Edit', exact: true }).click()
+    await expect(page.locator('.cm-content')).toBeVisible()
+    await expect(page.locator('.viewport-canvas canvas')).toBeVisible()
+    await page.getByRole('tab', { name: 'Parameters' }).click()
+    await expect(page.locator('#param-plate_x')).toBeVisible()
+    await page.getByRole('button', { name: 'Chat', exact: true }).click()
+    await expect(page.locator('#param-plate_x')).toBeHidden()
+    await expect(page.locator('.chat-head')).toBeVisible()
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390)
   })
 })
@@ -159,7 +191,7 @@ test('exports an OBJ', async ({ page }) => {
   await typeSource(page, 'cube(10);')
   await expect(page.locator('.tag', { hasText: '10.0 × 10.0 × 10.0 mm' })).toBeVisible({ timeout: 60_000 })
   const download = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Export OBJ' }).click()
+  await exportAs(page, 'OBJ')
   expect((await download).suggestedFilename()).toBe('A mounting plate.obj')
   const text = await readFile(await (await download).path(), 'utf8')
   expect(text.startsWith('# Vibe3D OBJ export')).toBe(true)
@@ -174,7 +206,7 @@ test('a coloured OBJ export brings its MTL along', async ({ page }) => {
   await expect(page.locator('.tag', { hasText: '10.0 × 10.0 × 10.0 mm' })).toBeVisible({ timeout: 60_000 })
   const first = page.waitForEvent('download')
   const second = page.waitForEvent('download', { predicate: (d) => d.suggestedFilename().endsWith('.mtl') })
-  await page.getByRole('button', { name: 'Export OBJ' }).click()
+  await exportAs(page, 'OBJ')
   const obj = await readFile(await (await first).path(), 'utf8')
   expect((await first).suggestedFilename()).toBe('A mounting plate.obj')
   expect(obj).toContain('mtllib A mounting plate.mtl')
@@ -189,7 +221,7 @@ test('two top-level statements are two parts on screen and two objects in the 3M
   await expect(page.locator('.tag', { hasText: '2 parts' })).toBeVisible({ timeout: 60_000 })
 
   const download = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Export 3MF' }).click()
+  await exportAs(page, '3MF')
   const zip = await readFile(await (await download).path())
   const model = strFromU8(unzipSync(new Uint8Array(zip))['3D/3dmodel.model']!)
   expect(model.match(/<object /g)).toHaveLength(2)
@@ -229,6 +261,7 @@ test('an imported mesh is measured, placed by import(), and survives a reload', 
   // The bytes live in IndexedDB with the document, so the source still compiles after a reload.
   await page.waitForTimeout(1000)
   await page.reload()
+  await page.getByRole('tab', { name: 'Parameters' }).click({ timeout: 90_000 })
   await expect(page.locator('.component', { hasText: 'box.stl' })).toBeVisible({ timeout: 90_000 })
   await expect(page.locator('.tag', { hasText: '10.0 × 20.0 × 30.0 mm' })).toBeVisible({
     timeout: 90_000,
@@ -261,8 +294,8 @@ test('clicking the part selects it for the chat, and empty space clears it', asy
   const canvas = page.locator('.viewport-canvas canvas')
   await canvas.click()
   const selection = page.locator('.chat-selection')
-  await expect(selection).toContainText('part 1 of 1')
-  await expect(selection).toContainText('60 × 40 × 3 mm')
+  await expect(selection).toContainText('About part 1')
+  await expect(selection).toContainText('60.0 × 40.0 × 3.0 mm')
   await canvas.click({ position: { x: 4, y: 4 } })
   await expect(selection).toBeHidden()
 })
@@ -281,7 +314,7 @@ test('Help lists the commands on hover and opens the manual on click', async ({ 
   await help.click()
   const manual = page.locator('.help-card')
   await expect(manual).toBeVisible()
-  await expect(manual).toContainText('Import mesh')
+  await expect(manual).toContainText('Imported meshes')
   await expect(manual.locator('table')).toContainText('/compact')
   await page.keyboard.press('Escape')
   await expect(manual).toBeHidden()
@@ -292,7 +325,8 @@ test('deleting the open document goes back to the start window', async ({ page }
   await page.locator('.start-open').first().click({ timeout: 90_000 })
   await expect(page.locator('.start-card')).toBeHidden()
   page.once('dialog', (dialog) => void dialog.accept())
-  await page.getByRole('button', { name: 'Delete', exact: true }).click()
+  await page.locator('.doc-menu').click()
+  await page.getByRole('menuitem', { name: 'Delete…' }).click()
   await expect(page.locator('.start-card')).toBeVisible()
   // The document row is gone; the example of the same name is not a document.
   await expect(page.locator('.start-open', { hasText: 'A mounting plate' })).toHaveCount(0)
@@ -312,7 +346,7 @@ test('exports a coloured STL written from the mesh', async ({ page }) => {
   await typeSource(page, 'color("red") cube(10);')
   await expect(page.locator('.tag', { hasText: '10.0 × 10.0 × 10.0 mm' })).toBeVisible({ timeout: 60_000 })
   const download = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Export STL' }).click()
+  await exportAs(page, 'STL')
   expect((await download).suggestedFilename()).toBe('A mounting plate.stl')
   const bytes = await readFile(await (await download).path())
   expect(bytes.subarray(0, 6).toString()).toBe('Vibe3D')
@@ -327,7 +361,7 @@ test('a coloured 3MF export carries its colours as materials, per triangle', asy
   await typeSource(page, 'union() { color("saddlebrown") cube([40, 20, 3]); color("gold") translate([5, 5, 3]) cube([30, 10, 2]); }')
   await expect(page.locator('.tag', { hasText: '40.0 × 20.0 × 5.0 mm' })).toBeVisible({ timeout: 60_000 })
   const download = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Export 3MF' }).click()
+  await exportAs(page, '3MF')
   const model = strFromU8(unzipSync(await readFile(await (await download).path()))['3D/3dmodel.model']!)
   expect(model).toContain('<basematerials id="1">')
   expect(model).toContain('displaycolor="#8B4513FF"')
@@ -359,31 +393,32 @@ test('a compile error marks its line in the editor, and a warning shows in amber
   await expect(page.locator('.error')).toBeHidden()
 })
 
-test('CUT and MEASURE are viewport modes, and a selected part exports alone', async ({ page }) => {
+test('Section and Measure are viewport tools, and a selected part exports alone', async ({ page }) => {
   await openStarter(page)
   // The box's centre sits inside the first cube, so a click at the screen's centre selects it.
   await typeSource(page, 'cube(10); translate([12, 0, 0]) cube([5, 5, 5]);')
   await expect(page.locator('.tag', { hasText: '2 parts' })).toBeVisible({ timeout: 90_000 })
-  await page.getByRole('button', { name: 'CUT' }).click()
+  await page.getByRole('button', { name: 'Section' }).click()
   await expect(page.locator('.viewport-cut')).toBeVisible()
-  await expect(page.locator('.viewport-cut .tag')).toContainText('z = 5 mm')
+  await expect(page.locator('.viewport-cut .tool-value')).toContainText('z = 5 mm')
   await page.locator('.viewport-cut').getByRole('button', { name: 'X' }).click()
-  await expect(page.locator('.viewport-cut .tag')).toContainText('x = 8.5 mm')
-  await page.getByRole('button', { name: 'CUT' }).click()
+  await expect(page.locator('.viewport-cut .tool-value')).toContainText('x = 8.5 mm')
+  await page.getByRole('button', { name: 'Section' }).click()
   await expect(page.locator('.viewport-cut')).toBeHidden()
-  await page.getByRole('button', { name: 'MEASURE' }).click()
-  await expect(page.locator('.viewport-measure')).toContainText('click two points')
-  await page.getByRole('button', { name: 'MEASURE' }).click()
+  await page.getByRole('button', { name: 'Measure' }).click()
+  await expect(page.locator('.viewport-measure')).toContainText('Click two points')
+  await page.getByRole('button', { name: 'Done' }).click()
+  await expect(page.locator('.viewport-measure')).toBeHidden()
 
   // Select the big cube, then export STL: the file carries that part alone. FIT first: the
   // camera still frames the starter plate, and the box's centre has to be under the crosshair.
-  await page.getByRole('button', { name: 'FIT' }).click()
+  await page.getByRole('button', { name: 'Fit view' }).click()
   const canvas = page.locator('.viewport-canvas canvas')
   const box = (await canvas.boundingBox())!
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
   await expect(page.locator('.chat-selection')).toBeVisible()
   const download = page.waitForEvent('download')
-  await page.getByRole('button', { name: /Export STL · part \d/ }).click()
+  await exportAs(page, 'STL', true)
   const file = await download
   expect(file.suggestedFilename()).toMatch(/ part \d\.stl$/)
   const path = await file.path()
@@ -401,14 +436,14 @@ test('the start window shows a thumbnail once a document has compiled', async ({
 test('a share link opens as a new document with that source', async ({ page }) => {
   // encodeShare('// Shared cube\n\ncube(10);\n'): deflate-raw, base64url.
   await page.goto('/#s=09dXCM5ILEpNUUguTUrl4gKRGoYGmtZcAA')
-  await expect(page.locator('.menubar-doc')).toHaveText('Shared cube', { timeout: 90_000 })
+  await expect(page.locator('.doc-name')).toHaveText('Shared cube', { timeout: 90_000 })
   await expect(page.locator('.cm-content')).toContainText('cube(10);', { timeout: 30_000 })
   expect(page.url()).not.toContain('#s=')
 })
 
 test('an example link opens that example as a new document', async ({ page }) => {
   await page.goto('/#example=potted-plant')
-  await expect(page.locator('.menubar-doc')).toHaveText('A potted plant', { timeout: 90_000 })
+  await expect(page.locator('.doc-name')).toHaveText('A potted plant', { timeout: 90_000 })
   expect(page.url()).not.toContain('#example=')
 })
 
@@ -431,7 +466,7 @@ test('the open document is the URL hash and the tab title; Back and Forward move
   await page.goto('/')
   await expect(page).toHaveTitle('Vibe3D')
   await page.locator('.start-open').first().click({ timeout: 90_000 })
-  const name = await page.locator('.menubar-doc').textContent()
+  const name = await page.locator('.doc-name').textContent()
   await expect(page).toHaveTitle(`${name} · Vibe3D`)
   expect(page.url()).toMatch(/#[0-9a-f-]{36}$/)
 
@@ -439,7 +474,7 @@ test('the open document is the URL hash and the tab title; Back and Forward move
   // the save debounce write the session the hash points into.
   await page.waitForTimeout(1000)
   await page.reload()
-  await expect(page.locator('.menubar-doc')).toHaveText(name ?? '', { timeout: 90_000 })
+  await expect(page.locator('.doc-name')).toHaveText(name ?? '', { timeout: 90_000 })
   await expect(page.locator('.start-card')).toBeHidden()
 
   await page.goBack()
@@ -447,14 +482,14 @@ test('the open document is the URL hash and the tab title; Back and Forward move
   await expect(page).toHaveTitle('Vibe3D')
   await page.goForward()
   await expect(page.locator('.start-card')).toBeHidden()
-  await expect(page.locator('.menubar-doc')).toHaveText(name ?? '')
+  await expect(page.locator('.doc-name')).toHaveText(name ?? '')
 })
 
 test('drags the code pane edge to resize it', async ({ page }) => {
   await page.goto('/')
   await page.locator('.start-open').first().click({ timeout: 90_000 })
   const pane = page.locator('.pane.side').first()
-  const grip = page.getByRole('separator', { name: 'Resize the code pane' })
+  const grip = page.getByRole('separator', { name: 'Resize the editor' })
   const box = (await grip.boundingBox())!
   const before = (await pane.boundingBox())!.width
   // Well above the code toggle, which sits on the strip's vertical middle.
@@ -464,6 +499,6 @@ test('drags the code pane edge to resize it', async ({ page }) => {
   await page.mouse.up()
   expect((await pane.boundingBox())!.width).toBeGreaterThan(before + 30)
   // Hiding the code pane keeps the dragged width for when it comes back.
-  await page.getByRole('button', { name: 'Hide the code' }).click()
+  await page.getByRole('button', { name: 'Hide the editor' }).click()
   await expect(grip).toBeHidden()
 })

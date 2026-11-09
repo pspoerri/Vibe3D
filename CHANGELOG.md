@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+- **Claude Sonnet is the default model**, through OpenRouter's rolling `~anthropic/claude-sonnet-latest`
+  alias (was Gemini Flash Latest). A browser that already saved settings keeps its model.
+- **Redesign: warmer, fewer controls, the same instrument.** Warm paper and one amber, set in
+  Instrument Sans and IBM Plex Mono, bundled with the app.
+- **Start window: the prompt comes first.** "What do you want to print?" — typing creates the
+  document and sends the message, with an optional reference image. Documents show their
+  thumbnail and a ⋯ menu (Rename, Export project, Delete); the examples show renders.
+- **First run asks for a model when it is needed.** Sending without a key opens a Connect dialog
+  (OpenRouter or a local server) instead of a banner, and the message goes once connected.
+- **Top bar.** New, Rename, Delete and the project file live in the menu under the document's
+  name; the version picker, Save version and Diff become one **History** pill and panel, with each
+  version's changes inline and Restore; **Export** is one button that opens a dialog with the
+  format, whole model or the clicked part, and whether it fits your printer.
+- **Edit pane: Parameters and Code as tabs**, closed for a new user and remembered after.
+- **Viewport: one tool dock** — Select, Measure, Section, Sketch — with the active tool's options
+  above it; the status and size read as sentences, with "Fits your printer".
+- **Chat: result cards.** A turn ends in a card with its version, size, parts and lines changed,
+  and **Changes** opens it in History; inspection rounds fold into one "Checked its work" card;
+  the clicked part rides on a message as a chip. **Settings** is a dialog: model, **Thinking**
+  (also under the composer), printer presets, units, and the connection with Disconnect and
+  the session's spend.
+- **Mobile: Model, Chat and Edit tabs**, each full height. Parameters and code are no longer
+  desktop-only, the composer floats over the model, and controls are 44 px targets.
+
 ## v0.5.5 — 2026-10-24
 
 - **OpenAI is no longer a host.** v0.5.4's direct OpenAI support is gone again, with its CSP

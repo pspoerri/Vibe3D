@@ -20,19 +20,20 @@ Design: [docs/design.md](docs/design.md) · Plans: [docs/superpowers/plans](docs
 
 ## Bring your own tokens
 
-The model runs on your key. The settings panel has two tabs:
+The model runs on your key. The first message you send without one asks for it; **Settings**, at
+the top of the chat, has the same two tabs:
 
 - **OpenRouter**: **Connect OpenRouter** runs an OAuth PKCE flow and mints a key scoped to this
   app, which you can revoke without touching the rest of your account. Or paste a key you
   already have, your own or a shared one. **Disconnect** forgets the key in this browser.
-- **Other host** takes the base URL of any OpenAI-compatible server (Ollama, LM Studio, vLLM)
+- **Local server** takes the base URL of any OpenAI-compatible server (Ollama, LM Studio, vLLM)
   and an optional key.
 
 Each host's key is stored in this browser's `localStorage` on its own (`vibe3d.key` for
 OpenRouter, `vibe3d.key.other`), and it is sent to exactly one place: that host. Revoke an
 OpenRouter key any time at <https://openrouter.ai/settings/keys>; the settings panel links to the
 specific key. **This app cannot set a spend cap** — that is a manual step in your OpenRouter
-settings. The chat footer shows what the session has cost so far, at the model's list price.
+settings. The chat's header shows what the session has cost so far, at the model's list price.
 
 Any script running on the page could read the key; that is inherent to browser storage, not a
 choice this app made. The mitigation is a strict Content-Security-Policy whose `connect-src`
@@ -45,7 +46,7 @@ and xAI, but not on Google, Groq or Mistral, which bill the whole completion onc
 ## Units
 
 The source, the kernel and the exported file are always millimetres — that is what OpenSCAD
-speaks. The metric/imperial toggle changes the readout, and it tells the model how to read *you*:
+speaks. The mm/in toggle in the viewport (and **Units** in Settings) changes the readout, and it tells the model how to read *you*:
 in imperial, "a two inch knob" means 50.8 mm in the source it writes.
 
 ## Examples, colour and names
@@ -83,7 +84,7 @@ number, bounding box and colour, so "make this 2 mm taller" means the one you cl
 shows as a translucent blue ghost in the viewport and in the model's own looks, and is never in
 the tags, the exports or a print; the chat notes a construction statement that forgot its `%`.
 
-**DRAW** turns the viewport into a sketchpad: drag to draw in red, then **ATTACH** to put the
+**Sketch** turns the viewport into a sketchpad: drag to draw in red, then **Attach to message** to put the
 marked-up view into your next message — the model reads the strokes as "here", and your words say
 what.
 
@@ -128,11 +129,11 @@ one of a turn rides along. The images are not saved — the conversation is, wit
 
 ## Thinking, and checking its work
 
-With thinking **off** — the default, and `/think off` — a message is one model call: the reply is
+**Thinking** sits under the composer and in Settings. At **Off** — `/think off` — a message is one model call: the reply is
 compiled, repaired if it has to be, and committed.
 
-Valid code of the wrong shape is the failure that actually happens, so with thinking on (`low`,
-`medium` or `high`, which is also the reasoning effort the model is asked for) every source that
+Valid code of the wrong shape is the failure that actually happens, so at **Low**, **Medium** or
+**High** (also the reasoning effort the model is asked for; a model starts at High) every source that
 compiles gets a look before the turn commits: a measured report (bounding box, volume, part
 count, genus, overhang share, whether it fits the bed, and what was added and removed compared
 with the part that was on screen) and —
@@ -140,36 +141,44 @@ for models that can read an image — a before/after render, green over magenta.
 a few yes/no questions about your request from those numbers and may correct itself, ask for
 another angle or a cut through the part, and look again, until it says the part is right. A
 status line under the transcript says what it is doing — `look 2 · rendering front view, cut at
-z = 12 mm` — and the reports and pictures sit in the transcript behind the **inspected** chips.
+z = 12 mm` — and the reports and pictures fold into one **Checked its work** card per turn. Each turn ends in
+a card naming the version it made, its size, and **Changes**, which opens it in History.
 Nothing interrupts it but **Stop**, which keeps the last version that compiled.
 
 ## Viewport tools
 
-**CUT** opens the part along X, Y or Z with a slider, so a pocket or a wall thickness can be seen.
-**MEASURE** takes two clicks on the part and shows the distance with its axis deltas. With a part
-selected, the export buttons write that part alone. The printer's build volume is a setting
-under the chat (the plate outline follows it), and the model is told when the part does not fit.
+The dock at the foot of the viewport holds **Select**, **Measure**, **Section** and **Sketch**; the
+active tool's options sit above it. **Section** opens the part along X, Y or Z with a slider, so a
+pocket or a wall thickness can be seen. **Measure** takes two clicks on the part and shows the
+distance with its axis deltas. **Export** offers 3MF, STL or OBJ, the whole model or the part
+you clicked, and says whether it fits your printer. The printer is **Printer** in Settings, a
+preset or your own build volume (the plate outline follows it), and the model is told when the
+part does not fit.
 
 ## Versions
 
 Every LLM turn, every **Save version** and every successful compile of your own edits is a version
-of the document, and nothing is ever deleted: the picker in the menu bar steps to any of them,
-`/undo` steps back one, **Diff** shows what the current one changed, and a change made from an
-older version simply becomes the next one. **Share** copies a link with the source in it; opening
+of the document, and nothing is ever deleted: **History**, the version pill beside the document's
+name, lists them with what each changed, **Restore** and **Full diff**; `/undo` steps back one,
+and a change made from an older version simply becomes the next one. New, Rename, Delete and the
+project file are in the menu under the document's name. **Share** copies a link with the source in it; opening
 the link makes a new document.
 Documents, their versions and their conversations live in this browser's IndexedDB. **Export
 project** writes one `.json` you can keep or import anywhere; it never contains the key.
 
 ## Layout and help
 
-The editor pane resizes by dragging its edge; the chat pane from the grip at its bottom corner
-(the browser's own); the viewport takes what is left. **Help** in the menu bar lists the chat commands on hover and opens
+The edit pane holds **Parameters** and **Code** as two tabs; it starts closed for a new user,
+resizes by dragging its edge, and stays as you left it. The chat pane resizes from the grip at its
+bottom corner (the browser's own); the viewport takes what is left. On a phone the three are tabs
+— Model, Chat and Edit — each full height. **Help** in the top bar lists the chat commands on hover and opens
 the manual on click; `/help` prints the same list in the transcript.
 
 ## Licensing
 
 GPL-3.0-or-later. This project bundles the OpenSCAD WebAssembly build, which is
-GPL-2.0-or-later and links Manifold (Apache-2.0), and the Liberation fonts (SIL OFL 1.1); the
+GPL-2.0-or-later and links Manifold (Apache-2.0), the Liberation fonts for `text()`, and Instrument Sans and IBM Plex
+Mono for the interface (all SIL OFL 1.1, licences in `src/fonts`); the
 build fetches the BOSL2 library (BSD-2-Clause). GPL-3.0 is the compatible combination. OpenSCAD is © the OpenSCAD developers — https://openscad.org/
 
 ## Development

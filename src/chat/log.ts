@@ -81,6 +81,22 @@ export type ChatEvent =
     }
   | { id: string; ts: number; turn: number; kind: 'clear' }
   | { id: string; ts: number; turn: number; kind: 'summary'; text: string; coversThrough: string }
+  | {
+      id: string
+      ts: number
+      turn: number
+      /** What a turn left behind, for the reader only: never on the wire. */
+      kind: 'result'
+      /** The version the turn became. */
+      version: string
+      ok: boolean
+      /** The mesh's size in mm and its part count, when it compiled. */
+      size?: readonly [number, number, number]
+      parts?: number
+      /** Lines added and removed against the source the turn started from. */
+      added: number
+      removed: number
+    }
 
 export interface WindowInput {
   /** The full log INCLUDING the in-flight turn's events so far. */
@@ -387,6 +403,23 @@ function reviveEvent(raw: unknown): ChatEvent | null {
           }
     case 'clear':
       return { ...base, kind: 'clear' }
+    case 'result': {
+      const size = Array.isArray(e.size) && e.size.length === 3 && e.size.every((n) => typeof n === 'number')
+        ? (e.size as [number, number, number])
+        : undefined
+      return typeof e.version !== 'string'
+        ? null
+        : {
+            ...base,
+            kind: 'result',
+            version: e.version,
+            ok: e.ok === true,
+            ...(size ? { size } : {}),
+            ...(typeof e.parts === 'number' ? { parts: e.parts } : {}),
+            added: typeof e.added === 'number' ? e.added : 0,
+            removed: typeof e.removed === 'number' ? e.removed : 0,
+          }
+    }
     default:
       return null
   }

@@ -5,10 +5,10 @@ import {
 import type { StandardView } from './camera'
 
 const SIZE_PX = 84
-const FACE_FILL = '#ffffff'
-const LABEL_COLOR = '#414741'
-const HOVER_TINT = 0xb8860b
-const EDGE_COLOR = 0xb0b6aa
+const FACE_FILL = '#fffdf8'
+const LABEL_COLOR = '#4a453d'
+const HOVER_TINT = 0xb07a12
+const EDGE_COLOR = 0xcfc8b9
 
 /**
  * BoxGeometry orders its material groups +X, −X, +Y, −Y, +Z, −Z. The cube is
@@ -98,7 +98,7 @@ export function createViewCube(host: HTMLElement, onPick: (view: StandardView) =
 
   const setHover = (index: number) => {
     if (index === hovered) return
-    materials[hovered]?.color.set(0xffffff)
+    materials[hovered]?.color.set(FACE_FILL)
     materials[index]?.color.set(HOVER_TINT)
     hovered = index
     renderer.domElement.style.cursor = index === -1 ? 'default' : 'pointer'

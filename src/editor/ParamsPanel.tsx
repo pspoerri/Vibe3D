@@ -23,7 +23,13 @@ export function ParamsPanel({
   const params = useMemo(() => scanParams(source), [source])
   const [draft, setDraft] = useState<{ name: string; value: number } | null>(null)
 
-  if (params.length === 0) return <></>
+  if (params.length === 0)
+    return (
+      <p className="params-empty">
+        No parameters yet. A variable with a range comment, like <code>width = 40; // [10:100]</code>, shows up here as
+        a slider.
+      </p>
+    )
 
   const preview = (param: Param, value: number) => {
     setDraft({ name: param.name, value })

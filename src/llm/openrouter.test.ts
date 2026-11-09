@@ -436,5 +436,5 @@ test('another host gets no OpenRouter headers, and its bare /models still lists,
     { id: 'qwen3', name: 'qwen3', context_length: 0, vision: false, maxOutput: null },
   ])
   expect(defaultModel(models, 'other')).toBe('llama4')
-  expect(defaultModel(models, 'openrouter')).toBe('~google/gemini-flash-latest')
+  expect(defaultModel(models, 'openrouter')).toBe('~anthropic/claude-sonnet-latest')
 })

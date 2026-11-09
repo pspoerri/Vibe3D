@@ -2,8 +2,8 @@ import { sseData } from './sse'
 
 export const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1'
 /** One named constant: the catalogue moves and this is the only line to change. */
-/** OpenRouter's rolling alias: whatever Google's newest Flash is, without a release here. */
-export const DEFAULT_MODEL = '~google/gemini-flash-latest'
+/** OpenRouter's rolling alias: whatever Anthropic's newest Sonnet is, without a release here. */
+export const DEFAULT_MODEL = '~anthropic/claude-sonnet-latest'
 
 const isOpenRouter = (baseUrl: string): boolean => /^https:\/\/openrouter\.ai\//.test(baseUrl)
 

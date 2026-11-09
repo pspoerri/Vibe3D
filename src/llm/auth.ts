@@ -2,6 +2,31 @@ import { DEFAULT_BASE_URL, errorMessage } from './openrouter'
 
 /** Dies with the tab, and survives the cross-origin round trip. See startPkce. */
 const VERIFIER_KEY = 'vibe3d.pkce'
+const PROMPT_KEY = 'vibe3d.pkce.prompt'
+
+/**
+ * The message waiting in the composer when sign-in leaves the page: kept for
+ * the round trip so it can go once the key is minted. Text only — images are
+ * too big for sessionStorage and are dropped. A blocked store just loses it.
+ */
+export function stashPrompt(text: string): void {
+  try {
+    if (text.trim()) sessionStorage.setItem(PROMPT_KEY, text)
+  } catch {
+    // Nothing to keep it in.
+  }
+}
+
+/** The stashed message, once: read and removed. */
+export function takePrompt(): string | null {
+  try {
+    const text = sessionStorage.getItem(PROMPT_KEY)
+    sessionStorage.removeItem(PROMPT_KEY)
+    return text
+  } catch {
+    return null
+  }
+}
 /** The `#<doc>` sign-in left from: kept out of callback_url, where OpenRouter's `?code=` would land inside it. */
 const HASH_KEY = 'vibe3d.pkce.hash'
 
