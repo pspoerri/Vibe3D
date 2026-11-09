@@ -61,6 +61,7 @@ export function ComponentsPanel({
 
   return (
     <div className="components" data-disabled={disabled}>
+      <h3 className="params-group">Imported meshes</h3>
       {components.map((c) => (
         <span className="component" key={c.name} title={`import("${c.name}")`}>
           <span className="component-name">{c.name}</span>
@@ -78,7 +79,7 @@ export function ComponentsPanel({
         </span>
       ))}
       <label className="component-add">
-        {reading ? `Reading ${reading}…` : 'Import mesh…'}
+        {reading ? `Reading ${reading}…` : '+ Import STL, OBJ, 3MF or OFF'}
         <input
           type="file"
           aria-label="Import mesh"

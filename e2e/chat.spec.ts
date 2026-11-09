@@ -21,8 +21,28 @@ function sseBody(text: string, opts: { finish?: string } = {}): string {
   return frames.join('')
 }
 
+/**
+ * A message's words, whichever shape it went out in: a string, or content
+ * parts — an Anthropic model's system prompt goes as parts, for prompt caching.
+ */
+const textOf = (content: unknown): string =>
+  typeof content === 'string'
+    ? content
+    : Array.isArray(content)
+      ? content.map((p: { text?: string }) => p.text ?? '').join('\n')
+      : ''
+
 const fenced = (source: string, prose = 'Here is the part.') =>
   `${prose}\n\n\`\`\`openscad\n${source}\n\`\`\`\n`
+
+// Every context is a first visit, which opens documents with the editor closed:
+// these tests read and type source, so they start where a returning user left it.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('vibe3d.editPane', 'open')
+    localStorage.setItem('vibe3d.editTab', 'code')
+  })
+})
 
 async function seedKey(page: Page): Promise<void> {
   await page.addInitScript((key) => {
@@ -37,8 +57,8 @@ async function seedKey(page: Page): Promise<void> {
       body: JSON.stringify({
         data: [
           {
-            id: '~google/gemini-flash-latest',
-            name: 'Gemini Flash Latest',
+            id: '~anthropic/claude-sonnet-latest',
+            name: 'Claude Sonnet Latest',
             context_length: 1048576,
             architecture: { input_modalities: ['text', 'image'] },
             pricing: { prompt: '0.00000075', completion: '0.00000375' },
@@ -66,6 +86,12 @@ async function waitForStarter(page: Page): Promise<void> {
   await expect(page.locator('.tag', { hasText: '60.0 × 40.0 × 3.0 mm' })).toBeVisible({
     timeout: 90_000,
   })
+}
+
+/** Settings is a dialog, opened from the chat's header. */
+async function openSettings(page: Page) {
+  await page.locator('.chat-head').getByRole('button', { name: 'Settings' }).click()
+  return page.getByRole('dialog', { name: 'Settings' })
 }
 
 async function send(page: Page, text: string): Promise<void> {
@@ -278,19 +304,21 @@ test('/undo steps the document back to the version a turn replaced', async ({ pa
   await expect(page.locator('.tag', { hasText: '15.0 × 5.0 × 5.0 mm' })).toBeVisible({
     timeout: 60_000,
   })
-  const picker = page.getByRole('combobox', { name: 'Version' })
-  await expect(picker).toHaveValue('2')
-  await expect(picker.locator('option[value="2"]')).toHaveText(/a bar/)
+  const pill = page.locator('.history-pill')
+  await expect(pill).toContainText('v2')
+  await expect(pill).toContainText('a bar')
 
   await send(page, '/undo')
   await expect(page.locator('.chat-note', { hasText: 'Restored v1' })).toBeVisible()
-  await expect(picker).toHaveValue('1')
+  await expect(pill).toContainText('v1')
   await expect(page.locator('.cm-content')).toContainText('plate_x = 60')
   await expect(page.locator('.tag', { hasText: '60.0 × 40.0 × 3.0 mm' })).toBeVisible({
     timeout: 60_000,
   })
   // Nothing was thrown away: the turn's version is still there to go forward to.
-  await expect(picker.locator('option')).toHaveCount(2)
+  await pill.click()
+  await expect(page.getByRole('dialog', { name: 'History' }).locator('.history-row')).toHaveCount(2)
+  await page.keyboard.press('Escape')
 
   await send(page, '/undo')
   await expect(page.locator('.chat-note.bad', { hasText: 'Nothing to undo' })).toBeVisible()
@@ -328,7 +356,7 @@ test('an auth failure does not mark the geometry stale or block export', async (
   // both exports stay enabled.
   await expect(page.locator('.error')).toBeHidden()
   await expect(page.locator('.stats.stale')).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Export 3MF' })).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Export', exact: true })).toBeEnabled()
 })
 
 test('dragging a slider previews without editing the document, then commits on release', async ({
@@ -337,6 +365,7 @@ test('dragging a slider previews without editing the document, then commits on r
   await page.goto('/')
   await waitForStarter(page)
 
+  await page.getByRole('tab', { name: 'Parameters' }).click()
   const slider = page.locator('#param-plate_x')
   await expect(slider).toBeVisible()
   const box = await slider.boundingBox()
@@ -362,26 +391,29 @@ test('each host keeps its own key, and a pasted OpenRouter key can be disconnect
   await page.goto('/')
   await waitForStarter(page)
 
-  // Typed, not filled: the first character connects, and the field must stay under the cursor.
-  const key = page.getByLabel('Or paste a key')
-  await key.pressSequentially('sk-or-v1-shared')
-  await expect(page.getByLabel('API key', { exact: true })).toBeFocused()
+  // A pasted key is saved on Save, which closes the panel it was typed in.
+  let settings = await openSettings(page)
+  await settings.getByLabel('API key', { exact: true }).fill('sk-or-v1-shared')
+  await settings.getByRole('button', { name: 'Save' }).click()
+  await expect(settings).toBeHidden()
   expect(await page.evaluate(() => localStorage.getItem('vibe3d.key'))).toBe('sk-or-v1-shared')
-  await expect(page.getByText('Connected.')).toBeVisible()
+  await expect(page.locator('.chat-input textarea')).toBeVisible()
 
-  await page.getByRole('button', { name: 'Other host' }).click()
-  await expect(page.getByLabel('Base URL')).toHaveValue('http://localhost:11434/v1')
-  await expect(page.getByLabel('API key (optional)')).toHaveValue('')
-  await page.getByLabel('Base URL').fill('http://localhost:1234/v1')
+  settings = await openSettings(page)
+  await expect(settings.getByText('key …ared')).toBeVisible()
+  await settings.getByRole('button', { name: 'Use a local server instead' }).click()
+  await expect(settings.getByLabel('Base URL')).toHaveValue('http://localhost:11434/v1')
+  await expect(settings.getByLabel('API key (optional)')).toHaveValue('')
+  await settings.getByLabel('Base URL').fill('http://localhost:1234/v1')
 
-  await page.getByRole('button', { name: 'OpenRouter', exact: true }).click()
-  await expect(page.getByText('Connected.')).toBeVisible()
-  await page.getByRole('button', { name: 'Other host' }).click()
-  await expect(page.getByLabel('Base URL')).toHaveValue('http://localhost:1234/v1')
+  await settings.getByRole('button', { name: 'OpenRouter', exact: true }).click()
+  await expect(settings.getByText('key …ared')).toBeVisible()
+  await settings.getByRole('button', { name: 'Use a local server instead' }).click()
+  await expect(settings.getByLabel('Base URL')).toHaveValue('http://localhost:1234/v1')
 
-  await page.getByRole('button', { name: 'OpenRouter', exact: true }).click()
-  await page.getByRole('button', { name: 'Disconnect' }).click()
-  await expect(page.getByLabel('Or paste a key')).toHaveValue('')
+  await settings.getByRole('button', { name: 'OpenRouter', exact: true }).click()
+  await settings.getByRole('button', { name: 'Disconnect' }).click()
+  await expect(settings.getByLabel('API key', { exact: true })).toHaveValue('')
   expect(await page.evaluate(() => localStorage.getItem('vibe3d.key'))).toBe('')
 })
 
@@ -395,6 +427,7 @@ test('the PKCE start carries exactly the three documented params', async ({ page
     return route.abort()
   })
 
+  await openSettings(page)
   await page.getByRole('button', { name: 'Connect OpenRouter' }).click()
   await expect.poll(() => authUrl, { timeout: 15_000 }).toContain('openrouter.ai/auth')
 
@@ -424,6 +457,7 @@ test('sign-in returns to the document it started from', async ({ page }) => {
   expect(hash).toMatch(/^#.+/)
 
   const leaving = page.waitForRequest(/openrouter\.ai\/auth/)
+  await openSettings(page)
   await page.getByRole('button', { name: 'Connect OpenRouter' }).click()
   await leaving
   // OpenRouter's redirect: the callback URL, no hash, with ?code.
@@ -542,7 +576,7 @@ test('the session meter reports tokens and what they cost', async ({ page }) => 
 
   await page.goto('/')
   await waitForStarter(page)
-  await expect(page.locator('.chat-meter')).toContainText('0 tok')
+  await expect(page.locator('.chat-spend')).toHaveAttribute('title', /^0 tokens/)
 
   await send(page, 'a cube')
   await expect(page.locator('.tag', { hasText: '5.0 × 5.0 × 5.0 mm' })).toBeVisible({
@@ -552,8 +586,8 @@ test('the session meter reports tokens and what they cost', async ({ page }) => 
   // sseBody bills 10 prompt + 20 completion at the stubbed catalogue's prices:
   // 10 * 7.5e-7 + 20 * 3.75e-6 = 0.0000825 per call. A compiled turn makes two
   // calls — the reply and its verification round — so the meter shows both.
-  await expect(page.locator('.chat-meter')).toContainText('60 tok')
-  await expect(page.locator('.chat-meter')).toContainText('$0.0002')
+  await expect(page.locator('.chat-spend')).toHaveAttribute('title', /^60 tokens/)
+  await expect(page.locator('.chat-spend')).toContainText('$0.0002')
 })
 
 test('the composer grows with a long prompt instead of clipping it', async ({ page }) => {
@@ -613,7 +647,7 @@ test('a picked image reaches the model as a data URL, after the text, exactly on
   const body = JSON.parse(bodies[0] ?? '{}') as {
     messages: { role: string; content: unknown }[]
   }
-  const parts = body.messages.find((m) => Array.isArray(m.content))?.content as
+  const parts = body.messages.find((m) => m.role === 'user' && Array.isArray(m.content))?.content as
     | { type: string; text?: string; image_url?: { url: string } }[]
     | undefined
   if (!parts) throw new Error('expected one message to carry content parts')
@@ -672,8 +706,9 @@ test('the model dropdown flags which models can read an image', async ({ page })
   await page.goto('/')
   await waitForStarter(page)
 
-  await page.locator('.chat-meter button').first().click()
-  await expect(page.locator('.chat-settings option').first()).toHaveText(/· vision/)
+  const settings = await openSettings(page)
+  await expect(settings.locator('option', { hasText: '· reads images' }).first()).toBeAttached()
+  await expect(settings.locator('.badge', { hasText: 'Reads images' })).toBeVisible()
 })
 
 test('an image with no words is a message on its own', async ({ page }) => {
@@ -709,8 +744,8 @@ test('an image with no words is a message on its own', async ({ page }) => {
   await expect(page.locator('.tag', { hasText: '13.0 × 13.0 × 13.0 mm' })).toBeVisible({
     timeout: 60_000,
   })
-  const body = JSON.parse(posted) as { messages: { content: unknown }[] }
-  const parts = body.messages.find((m) => Array.isArray(m.content))?.content as
+  const body = JSON.parse(posted) as { messages: { role: string; content: unknown }[] }
+  const parts = body.messages.find((m) => m.role === 'user' && Array.isArray(m.content))?.content as
     | { type: string }[]
     | undefined
   // The image travels alone: no empty text part padding it out.
@@ -790,7 +825,7 @@ test('display units switch without touching the model or the source', async ({ p
   await page.goto('/')
   await waitForStarter(page)
 
-  await page.getByRole('button', { name: /metric/i }).click()
+  await page.getByRole('group', { name: 'Display units' }).getByRole('button', { name: 'in' }).click()
   await expect(page.locator('.tag', { hasText: '2.362 × 1.575 × 0.118 in' })).toBeVisible()
   // The source stays metric: it is what the kernel and the 3MF are written in.
   await expect(page.locator('.cm-content')).toContainText('plate_x = 60')
@@ -817,7 +852,7 @@ test('a document survives a reload, and its name comes from the prompt', async (
     timeout: 60_000,
   })
   // The prompt titles the document; the asking is stripped off the front.
-  await expect(page.locator('.menubar-doc')).toContainText('Knurled knob')
+  await expect(page.locator('.doc-name')).toContainText('Knurled knob')
 
   // Assert the guarantee itself before reloading, rather than racing the save
   // debounce: the source must actually be in IndexedDB.
@@ -843,7 +878,7 @@ test('a document survives a reload, and its name comes from the prompt', async (
   // The whole point: reopen and the latest code is still there.
   await page.reload()
   // The hash reopens the document; the launcher behind it lists the work too.
-  await expect(page.locator('.menubar-doc')).toHaveText('Knurled knob', { timeout: 90_000 })
+  await expect(page.locator('.doc-name')).toHaveText('Knurled knob', { timeout: 90_000 })
   await page.getByRole('button', { name: 'Vibe3D' }).click()
   await expect(page.locator('.start-name').first()).toHaveText('Knurled knob')
   await page.locator('.start-open').first().click()
@@ -852,7 +887,7 @@ test('a document survives a reload, and its name comes from the prompt', async (
   })
   // And so is the conversation that produced it (design.md §7).
   await expect(page.locator('.msg-user', { hasText: 'make me a knurled knob' })).toBeVisible()
-  await expect(page.getByRole('combobox', { name: 'Version' })).toHaveValue('2')
+  await expect(page.locator('.history-pill')).toContainText('v2')
 })
 
 test('save, edit, and step back through the version picker without losing either state', async ({
@@ -860,8 +895,8 @@ test('save, edit, and step back through the version picker without losing either
 }) => {
   await page.goto('/')
   await waitForStarter(page)
-  const picker = page.getByRole('combobox', { name: 'Version' })
-  await expect(picker).toHaveValue('1')
+  const pill = page.locator('.history-pill')
+  await expect(pill).toContainText('v1')
 
   await page.locator('.cm-content').click()
   await page.keyboard.press('ControlOrMeta+a')
@@ -870,19 +905,24 @@ test('save, edit, and step back through the version picker without losing either
     timeout: 60_000,
   })
   // A successful compile of an edit is a version.
-  await expect(picker).toHaveValue('2')
-  await expect(picker.locator('option[value="2"]')).toHaveText(/edit/)
+  await expect(pill).toContainText('v2')
+  await expect(pill).toContainText('Edited by hand')
 
-  await page.getByRole('button', { name: 'Save version' }).click()
-  await expect(picker.locator('option[value="2"]')).toHaveText(/saved/)
+  await pill.click()
+  const history = page.getByRole('dialog', { name: 'History' })
+  await history.getByRole('button', { name: 'Save version' }).click()
+  await expect(history.locator('.history-row', { hasText: 'v2' })).toContainText('Saved version')
 
   // Back to v1: the list keeps v2, and the source is exactly the starter again.
-  await picker.selectOption('1')
+  await history.locator('.history-row', { hasText: 'v1' }).click()
+  await history.getByRole('button', { name: 'Restore' }).click()
+  await expect(history.locator('.history-row')).toHaveCount(2)
+  await page.keyboard.press('Escape')
+  await expect(pill).toContainText('v1')
   await expect(page.locator('.cm-content')).toContainText('plate_x = 60')
   await expect(page.locator('.tag', { hasText: '60.0 × 40.0 × 3.0 mm' })).toBeVisible({
     timeout: 60_000,
   })
-  await expect(picker.locator('option')).toHaveCount(2)
 })
 
 test('a project exports as one JSON file that imports back as a new document', async ({ page }) => {
@@ -890,7 +930,8 @@ test('a project exports as one JSON file that imports back as a new document', a
   await waitForStarter(page)
 
   const download = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Export project' }).click()
+  await page.locator('.doc-menu').click()
+  await page.getByRole('menuitem', { name: 'Export project' }).click()
   const file = await download
   expect(file.suggestedFilename()).toBe('A mounting plate.json')
   const text = (await readFile((await file.path())!)).toString()
@@ -900,13 +941,13 @@ test('a project exports as one JSON file that imports back as a new document', a
   expect(project.versions).toHaveLength(1)
   expect(text).not.toContain('sk-or-')
 
-  await page.locator('.menubar input[type="file"]').setInputFiles({
+  await page.locator('.topbar input[type="file"]').setInputFiles({
     name: 'plate.json',
     mimeType: 'application/json',
     buffer: Buffer.from(text),
   })
-  await expect(page.locator('.menubar-doc')).toContainText('A mounting plate 2')
-  await page.getByRole('button', { name: 'Open', exact: true }).click()
+  await expect(page.locator('.doc-name')).toContainText('A mounting plate 2')
+  await page.getByRole('button', { name: 'Vibe3D' }).click()
   await expect(page.locator('.start-open')).toHaveCount(2)
 })
 
@@ -953,6 +994,8 @@ test('a compiled turn is verified against a report and a render before it commit
   await waitForStarter(page)
   await send(page, 'a 12 by 8 by 4 mm block')
 
+  // The rounds fold into one card; opening it shows what the model saw.
+  await page.locator('.card.checks summary').click({ timeout: 90_000 })
   await expect(page.locator('.chat-inspect img')).toBeVisible({ timeout: 90_000 })
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
   expect(call).toBe(2)
@@ -1034,7 +1077,8 @@ test("opening another document never shows the previous document's mesh", async 
   })
   // Wait the turn out: New would abort it and eat the next scripted reply.
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
-  await page.getByRole('button', { name: 'New', exact: true }).click()
+  await page.locator('.doc-menu').click()
+  await page.getByRole('menuitem', { name: 'New document' }).click()
   await send(page, 'a small cube')
   await expect(page.locator('.tag', { hasText: '9.0 × 9.0 × 9.0 mm' })).toBeVisible({
     timeout: 60_000,
@@ -1122,10 +1166,11 @@ test('a selected part heads the message the model gets', async ({ page }) => {
   await page.goto('/')
   await waitForStarter(page)
   await page.locator('.viewport-canvas canvas').click()
-  await expect(page.locator('.chat-selection')).toContainText('part 1 of 1')
+  await expect(page.locator('.chat-selection')).toContainText('About part 1')
   await send(page, 'how thick is this?')
 
-  await expect(page.locator('.msg-user')).toContainText('[Selected part 1 of 1')
+  // The transcript shows the head as a chip; the model gets it in words (below).
+  await expect(page.locator('.msg-user .part-chip')).toContainText('Part 1 · 60 × 40 × 3 mm')
   await expect.poll(() => bodies.length).toBe(1)
   expect(bodies[0]).toContain(
     '[Selected part 1 of 1: 60 × 40 × 3 mm, from [0, 0, 0] to [60, 40, 3]]\\n\\nhow thick is this?',
@@ -1152,18 +1197,18 @@ test('draw mode attaches the marked-up view to the next message', async ({ page 
 
   await page.goto('/')
   await waitForStarter(page)
-  await page.getByRole('button', { name: 'DRAW' }).click()
+  await page.getByRole('button', { name: 'Sketch' }).click()
   const box = await page.locator('.draw-overlay').boundingBox()
   if (!box) throw new Error('no overlay')
   await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.5)
   await page.mouse.down()
   await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.35, { steps: 10 })
   await page.mouse.up()
-  await page.getByRole('button', { name: 'ATTACH', exact: true }).click()
+  await page.getByRole('button', { name: 'Attach to message' }).click()
 
   await expect(page.locator('.chat-thumb.markup')).toBeVisible()
   // Attaching leaves the mode; the orbit is the user's again.
-  await expect(page.getByRole('button', { name: 'DRAW' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Sketch' })).toHaveAttribute('aria-pressed', 'false')
   await send(page, 'a bigger hole here')
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
 
@@ -1173,7 +1218,7 @@ test('draw mode attaches the marked-up view to the next message', async ({ page 
       content: string | { type: string; text?: string; image_url?: { url: string } }[]
     }[]
   }
-  expect(body.messages[0]?.content).toContain('the viewport with my markup')
+  expect(textOf(body.messages[0]?.content)).toContain('the viewport with my markup')
   const user = body.messages.find((m) => m.role === 'user' && Array.isArray(m.content))
   const parts = Array.isArray(user?.content) ? user.content : []
   expect(parts.map((p) => p.type)).toEqual(['text', 'image_url'])
@@ -1227,7 +1272,7 @@ test('with thinking on, the model can ask for a cut view and gets a render back'
   }
   const first = JSON.parse(bodies[0] ?? '{}') as Body
   expect(first.reasoning).toEqual({ effort: 'medium' })
-  expect(first.messages[0]?.content).toContain('Looking at the part')
+  expect(textOf(first.messages[0]?.content)).toContain('Looking at the part')
 
   // The render rides as an inspection, and the source follows it: the reply
   // that asked carried no source, so the next call needs it again.
@@ -1310,8 +1355,8 @@ test('switching the model applies to the meter and to the next request', async (
       body: JSON.stringify({
         data: [
           {
-            id: '~google/gemini-flash-latest',
-            name: 'Gemini Flash Latest',
+            id: '~anthropic/claude-sonnet-latest',
+            name: 'Claude Sonnet Latest',
             context_length: 1048576,
             architecture: { input_modalities: ['text', 'image'] },
             pricing: { prompt: '0.00000075', completion: '0.00000375' },
@@ -1335,17 +1380,19 @@ test('switching the model applies to the meter and to the next request', async (
 
   await page.goto('/')
   await waitForStarter(page)
-  await page.locator('.chat-meter button').first().click()
-  const modelSelect = page.locator('.chat-settings select').nth(0)
-  const thinkingSelect = page.locator('.chat-settings select').nth(1)
-  // Thinking is per model: low on Gemini must not follow us to Qwen, which
+  const settings = await openSettings(page)
+  const modelSelect = settings.getByLabel('Model', { exact: true })
+  const check = settings.getByRole('group', { name: 'Thinking' })
+  const composerCheck = page.locator('.chat-check select')
+  // Thinking is per model: low on Sonnet must not follow us to Qwen, which
   // has no stored level and so sits at the default, high.
-  await thinkingSelect.selectOption('low')
-  await expect(page.locator('.chat-meter')).toContainText('~google/gemini-flash-latest · low')
+  await check.getByRole('button', { name: 'Low' }).click()
+  await expect(composerCheck).toHaveValue('low')
   await modelSelect.selectOption('qwen/qwen3-coder')
-  await expect(page.locator('.chat-meter')).toContainText('qwen/qwen3-coder')
-  await expect(page.locator('.chat-meter')).not.toContainText('· low')
-  await expect(thinkingSelect).toHaveValue('high')
+  await expect(page.locator('.chat-model')).toHaveAttribute('title', /^qwen\/qwen3-coder/)
+  await expect(check.getByRole('button', { name: 'High' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(composerCheck).toHaveValue('high')
+  await page.keyboard.press('Escape')
 
   await send(page, 'hello')
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
@@ -1354,10 +1401,11 @@ test('switching the model applies to the meter and to the next request', async (
   expect(body.model).toBe('qwen/qwen3-coder')
   expect(body.reasoning).toEqual({ effort: 'high' })
 
-  // And Gemini still remembers its own level (the settings panel is still open).
-  await modelSelect.selectOption('~google/gemini-flash-latest')
-  await expect(thinkingSelect).toHaveValue('low')
-  await expect(page.locator('.chat-meter')).toContainText('~google/gemini-flash-latest · low')
+  // And Sonnet still remembers its own level.
+  await openSettings(page)
+  await modelSelect.selectOption('~anthropic/claude-sonnet-latest')
+  await expect(check.getByRole('button', { name: 'Low' })).toHaveAttribute('aria-pressed', 'true')
+  await expect(composerCheck).toHaveValue('low')
 })
 
 test('copy puts a debug report on the clipboard: settings, source, transcript — and no key', async ({
@@ -1378,11 +1426,12 @@ test('copy puts a debug report on the clipboard: settings, source, transcript �
   await expect(page.locator('.tag', { hasText: '3.0 × 3.0 × 3.0 mm' })).toBeVisible({ timeout: 60_000 })
   await expect(page.getByRole('button', { name: 'Send' })).toBeVisible({ timeout: 60_000 })
 
-  await page.getByRole('button', { name: 'copy', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'copied', exact: true })).toBeVisible()
+  const settings = await openSettings(page)
+  await settings.getByRole('button', { name: 'Copy debug report' }).click()
+  await expect(settings.getByRole('button', { name: 'Copied' })).toBeVisible()
   const text = await page.evaluate(() => navigator.clipboard.readText())
   expect(text).toContain('# Vibe3D debug report')
-  expect(text).toContain('model: ~google/gemini-flash-latest · thinking: off')
+  expect(text).toContain('model: ~anthropic/claude-sonnet-latest · thinking: off')
   expect(text).toContain('[1] user:\na tiny cube')
   expect(text).toContain('[1] assistant:')
   expect(text).toContain('cube([3, 3, 3]);')

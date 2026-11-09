@@ -96,11 +96,11 @@ export function Editor({
             // Tighter than CodeMirror's default: this pane is read as a whole
             // part, so lines per screen matters more than comfortable prose
             // leading, and the model writes 40-line documents.
-            '.cm-scroller': { fontFamily: 'ui-monospace, monospace', lineHeight: '1.38' },
+            '.cm-scroller': { fontFamily: "'IBM Plex Mono', ui-monospace, monospace", lineHeight: '1.45' },
             '.cm-content': { fontSize: '12.5px' },
-            '.cm-gutters': { fontSize: '11px', background: 'transparent', border: 'none', color: '#a8ada6' },
+            '.cm-gutters': { fontSize: '11px', background: 'transparent', border: 'none', color: '#9a9385' },
             '.cm-activeLine': { background: '#00000006' },
-            '.cm-activeLineGutter': { background: 'transparent', color: '#6a706a' },
+            '.cm-activeLineGutter': { background: 'transparent', color: '#7a7468' },
             '.cm-error-line': { background: '#a8256b18', boxShadow: 'inset 3px 0 0 #a8256b' },
           }),
           EditorView.updateListener.of((update) => {

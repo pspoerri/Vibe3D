@@ -20,9 +20,9 @@ const FOV = 50
 // Extent is spacing x cells. Generous, because the ground plane runs to the
 // horizon and the fog is what ends it — a small patch would read as a rug.
 const GRID_CELLS = 160
-const GRID_MAJOR = 0xa4ab9c
-const GRID_MINOR = 0xc8ccc4
-const PLATE_COLOR = 0x7f8578
+const GRID_MAJOR = 0xbfb7a6
+const GRID_MINOR = 0xddd6c8
+const PLATE_COLOR = 0x8a8170
 /** Matches DEFAULT_RGB in kernel/off.ts, so a partly coloured model keeps this for the rest. */
 const MODEL_COLOR = 0xf9d72c
 /** Over the selected part. Blue: distinct from the default yellow and from any color() a part wears. */
@@ -57,7 +57,7 @@ function vertexColors(rgb: Uint8Array): Float32Array {
   return out
 }
 /** Matches the .view pane behind it, so the fog fades the grid into the page. */
-const BACKGROUND = 0xf6f7f4
+const BACKGROUND = 0xf7f4ee
 const SNAP_MS = 260
 
 const disposeMaterial = (material: Material | Material[]) =>
@@ -109,9 +109,10 @@ export function Viewport({
   const apiRef = useRef<ViewportApi | null>(null)
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick
-  const [drawing, setDrawing] = useState(false)
+  const [tool, setTool] = useState<Tool>('select')
+  const drawing = tool === 'sketch'
+  const measuring = tool === 'measure'
   const [cut, setCut] = useState<Cut | null>(null)
-  const [measuring, setMeasuring] = useState(false)
   /** The two points measured, as the HUD reads them: distance and the axis deltas. */
   const [measure, setMeasure] = useState<{ d: number; dx: number; dy: number; dz: number } | null>(null)
   const measuringRef = useRef(false)
@@ -632,19 +633,32 @@ export function Viewport({
     if (fitToken > 0) apiRef.current?.fit()
   }, [fitToken])
 
-  const leaveDrawing = () => {
-    apiRef.current?.clearStrokes()
-    setDrawing(false)
+  /** One tool at a time; leaving one drops what it left on screen. Picking the active one again is Select. */
+  const choose = (next: Tool) => {
+    const to = next === tool ? 'select' : next
+    if (to === 'section') startCut(cut?.axis ?? 'z')
+    else setCut(null)
+    if (to !== 'sketch') apiRef.current?.clearStrokes()
+    setTool(to)
   }
   useEffect(() => {
     apiRef.current?.setDrawing(drawing)
-    if (!drawing) return
+    if (tool === 'select') return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') leaveDrawing()
+      if (e.key !== 'Escape') return
+      apiRef.current?.clearStrokes()
+      setCut(null)
+      setTool('select')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [drawing])
+  }, [tool])
+
+  const done = (
+    <button type="button" className="tool-done" onClick={() => choose('select')} title="Back to Select (Esc)">
+      Done
+    </button>
+  )
 
   return (
     <div className={drawing ? 'viewport drawing' : 'viewport'} data-ghost={ghost ? '1' : '0'}>
@@ -653,15 +667,55 @@ export function Viewport({
       <div className="view-cube">
         <div ref={cubeHostRef} />
         <button type="button" onClick={() => apiRef.current?.fit()} title="Frame the model">
-          FIT
+          Fit view
         </button>
-        {drawing ? (
-          <>
+      </div>
+      <div className="dock-wrap">
+        {tool === 'section' && cut && (
+          <div className="tool-options viewport-cut">
+            <b>Section</b>
+            <span className="seg" role="group" aria-label="Cut axis">
+              {(['x', 'y', 'z'] as const).map((axis) => (
+                <button key={axis} type="button" aria-pressed={cut.axis === axis} onClick={() => startCut(axis)}>
+                  {axis.toUpperCase()}
+                </button>
+              ))}
+            </span>
+            <input
+              type="range"
+              aria-label="Cut position"
+              min={cutRange(cut.axis)[0]}
+              max={cutRange(cut.axis)[1]}
+              step={(cutRange(cut.axis)[1] - cutRange(cut.axis)[0]) / 200 || 0.1}
+              value={cut.at}
+              onChange={(e) => setCut({ axis: cut.axis, at: Number(e.target.value) })}
+            />
+            <span className="tool-value">
+              {cut.axis} = {mm(cut.at)} mm
+            </span>
+            {done}
+          </div>
+        )}
+        {measuring && (
+          <div className="tool-options">
+            <b>Measure</b>
+            <span className="viewport-measure tool-value" aria-live="polite">
+              {measure
+                ? `${mm(measure.d)} mm · Δx ${mm(measure.dx)} · Δy ${mm(measure.dy)} · Δz ${mm(measure.dz)}`
+                : 'Click two points on the part'}
+            </span>
+            {done}
+          </div>
+        )}
+        {drawing && (
+          <div className="tool-options">
+            <b>Sketch</b>
+            <span className="tool-hint">Draw on the view to mark a change</span>
             <button type="button" onClick={() => apiRef.current?.undoStroke()} title="Remove the last stroke">
-              UNDO
+              Undo
             </button>
             <button type="button" onClick={() => apiRef.current?.clearStrokes()} title="Remove every stroke">
-              CLEAR
+              Clear
             </button>
             <button
               type="button"
@@ -670,75 +724,30 @@ export function Viewport({
               onClick={() => {
                 const url = apiRef.current?.capture()
                 if (url) onMarkup?.(url)
-                leaveDrawing()
+                choose('select')
               }}
             >
-              ATTACH
+              Attach to message
             </button>
-            <button type="button" onClick={leaveDrawing} title="Leave draw mode (Esc)" aria-label="Leave draw mode">
-              ✕
-            </button>
-          </>
-        ) : (
-          <>
-            <button type="button" onClick={() => setDrawing(true)} title="Draw on the view to mark up a change">
-              DRAW
-            </button>
-            <button
-              type="button"
-              className={cut ? 'active' : ''}
-              aria-pressed={cut !== null}
-              onClick={() => (cut ? setCut(null) : startCut('z'))}
-              title="Cut the part open along an axis"
-            >
-              CUT
-            </button>
-            <button
-              type="button"
-              className={measuring ? 'active' : ''}
-              aria-pressed={measuring}
-              onClick={() => setMeasuring((on) => !on)}
-              title="Click two points on the part to measure between them"
-            >
-              MEASURE
-            </button>
-          </>
+            {done}
+          </div>
         )}
-      </div>
-      {cut && (
-        <div className="viewport-cut">
-          {(['x', 'y', 'z'] as const).map((axis) => (
-            <button
-              key={axis}
-              type="button"
-              className={cut.axis === axis ? 'active' : ''}
-              aria-pressed={cut.axis === axis}
-              onClick={() => startCut(axis)}
-            >
-              {axis.toUpperCase()}
+        <div className="dock" role="toolbar" aria-label="Tools">
+          {TOOLS.map((t) => (
+            <button key={t.id} type="button" aria-pressed={tool === t.id} title={t.title} onClick={() => choose(t.id)}>
+              {t.label}
             </button>
           ))}
-          <input
-            type="range"
-            aria-label="Cut position"
-            min={cutRange(cut.axis)[0]}
-            max={cutRange(cut.axis)[1]}
-            step={(cutRange(cut.axis)[1] - cutRange(cut.axis)[0]) / 200 || 0.1}
-            value={cut.at}
-            onChange={(e) => setCut({ axis: cut.axis, at: Number(e.target.value) })}
-          />
-          <span className="tag">
-            {cut.axis} = {mm(cut.at)} mm
-          </span>
         </div>
-      )}
-      {measuring && (
-        <div className="viewport-measure tag" aria-live="polite">
-          {measure
-            ? `${mm(measure.d)} mm · Δx ${mm(measure.dx)} · Δy ${mm(measure.dy)} · Δz ${mm(measure.dz)}`
-            : 'click two points on the part'}
-        </div>
-      )}
+      </div>
     </div>
   )
 }
+
+type Tool = 'select' | 'measure' | 'section' | 'sketch'
+const TOOLS: readonly { id: Tool; label: string; title: string }[] = [
+  { id: 'select', label: 'Select', title: 'Click a part to talk about it' },
+  { id: 'measure', label: 'Measure', title: 'Click two points on the part to measure between them' },
+  { id: 'section', label: 'Section', title: 'Cut the part open along an axis' },
+  { id: 'sketch', label: 'Sketch', title: 'Draw on the view to mark up a change' },
+]

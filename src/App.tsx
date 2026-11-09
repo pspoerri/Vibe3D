@@ -13,32 +13,31 @@ import { ParamsPanel } from './editor/ParamsPanel'
 import { Viewport } from './viewer/Viewport'
 import { selectPart, type Selection } from './viewer/select'
 import { downloadBlob, EXTENSION, MIME, type DownloadFormat } from './export/download'
+import { ExportDialog, HistoryPanel, versionTitle, VersionDiff } from './dialogs'
+import { StartWindow, type EditTab, type Opening } from './Start'
+import { fitsBed } from './state/printers'
+import { takePrompt } from './llm/auth'
+import { fileName, Menu } from './ui'
 import { encodeObj } from './export/obj'
 import { encodeStl } from './export/stl'
 import { paint3mf } from './export/threemf'
 import { part3mf, partMesh } from './export/part'
 import { renderThumb } from './viewer/capture'
 import { boxOf } from './viewer/inspect'
-import { diffLines, hunks } from './state/diff'
 import { decodeShare, encodeShare } from './state/share'
 import {
-  formatLength, formatVolume, lengthLabel, loadUnits, saveUnits, volumeLabel,
+  formatLength, formatVolume, lengthLabel, loadUnits, saveUnits, volumeLabel, type Units,
 } from './state/units'
 import {
   addComponent, commitEdit, commitTurn, currentDoc, deleteDoc, headVersion, nameFromFirstPrompt,
   nameFromFirstTurn, newDoc, removeComponent,
   renameDoc, restoreVersion, reviveSession, saveVersion, selectDoc, setCache, setChat, setThumb, undoVersion,
-  suggestName, updateSource, UNTITLED, type Component, type Doc, type Session,
+  suggestName, updateSource, UNTITLED, type Component, type Session,
 } from './state/documents'
 import { exportProject, importProject } from './state/project'
 import { loadAll, persistRequested, saveSession } from './state/store'
 import { loadSettings } from './state/settings'
-import { EXAMPLES, exampleFromHash, STARTER } from './examples'
-
-/** Injected by vite.config.ts: `git describe`, and the short commit hash — empty on the clean release tag. */
-declare const __APP_VERSION__: string
-declare const __APP_COMMIT__: string
-const REPO_URL = 'https://github.com/pspoerri/Vibe3D'
+import { exampleFromHash, STARTER } from './examples'
 
 
 const DEBOUNCE_MS = 600
@@ -64,6 +63,18 @@ const compileKey = (
 
 /** Long enough to coalesce a burst of typing, short enough to survive a crash. */
 const SAVE_DEBOUNCE_MS = 400
+
+/** The edit pane stays as the user left it: open or not, and on which tab. */
+const PANE_KEY = 'vibe3d.editPane'
+const TAB_KEY = 'vibe3d.editTab'
+const storedPane = (): boolean | null => {
+  const v = localStorage.getItem(PANE_KEY)
+  return v === null ? null : v === 'open'
+}
+/** Mobile: one pane at a time, full height. */
+type MobileTab = 'model' | 'chat' | 'edit'
+/** A compile time as the status pill reads it. */
+const took = (ms: number): string => (ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`)
 
 export function App() {
   // null until IndexedDB answers. Nothing compiles before then, so the starter
@@ -107,14 +118,38 @@ export function App() {
   const [fitToken, setFitToken] = useState(0)
   /** In transit from the viewport's Draw mode to the chat's tray. */
   const [markup, setMarkup] = useState<string | null>(null)
-  const [units, setUnits] = useState(loadUnits)
+  const [units, setUnitsState] = useState(loadUnits)
+  const setUnits = (next: Units) => {
+    setUnitsState(next)
+    saveUnits(next)
+  }
   // The launcher is the entry point: nothing is open until a document is picked.
   const [open, setOpen] = useState(false)
-  const [codeOpen, setCodeOpen] = useState(true)
+  // Unset is a first visit: the pane starts closed for someone who has no
+  // documents yet, and open for everyone who had it before it was remembered.
+  const [editOpen, setEditOpen] = useState(() => storedPane() ?? false)
+  const [editTab, setEditTab] = useState<EditTab>(() => (localStorage.getItem(TAB_KEY) === 'code' ? 'code' : 'params'))
+  const showEditor = (tab: EditTab) => {
+    setEditTab(tab)
+    setEditOpen(true)
+    localStorage.setItem(TAB_KEY, tab)
+    localStorage.setItem(PANE_KEY, 'open')
+  }
+  const [tab, setTab] = useState<MobileTab>('model')
   const codeRef = useRef<HTMLElement>(null)
   const [help, setHelp] = useState(false)
-  /** The version picker's diff: head against the version it was made from. */
-  const [diff, setDiff] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  /** The History row to open with: a chat card's Changes names its version. */
+  const [historyFocus, setHistoryFocus] = useState<string | null>(null)
+  /** The version whose full diff is up, if any. */
+  const [diffOf, setDiffOf] = useState<string | null>(null)
+  const [exportOpen, setExportOpen] = useState(false)
+  /** A start-window prompt in transit to the new document's chat, which sends it on mount. */
+  const [prompt, setPrompt] = useState<{ text: string; images: readonly string[] } | null>(null)
+  /** What the chat is connected to, for the start window's top bar; null for nothing yet. */
+  const [connected, setConnected] = useState<string | null>(null)
+  /** Bumped to make the chat open its connect dialog. */
+  const [connectToken, setConnectToken] = useState(0)
   // design.md §7: what the browser actually granted, not what was asked for.
   const [durable, setDurable] = useState(true)
 
@@ -132,6 +167,12 @@ export function App() {
       if (!live) return
       // lastSource is the fallback, not the starter: if the session structure is
       // unreadable the user still gets the code they were last working on.
+      if (storedPane() === null) {
+        // Decided once: written, or the second visit would read a session and flip it open.
+        const first = raw === null || raw === undefined
+        setEditOpen(!first)
+        localStorage.setItem(PANE_KEY, first ? 'closed' : 'open')
+      }
       let revived = reviveSession(raw, lastSource ?? STARTER, crypto.randomUUID(), Date.now())
       // A share link or an `#example=` link: its source becomes a document of
       // its own, opened at once.
@@ -148,6 +189,9 @@ export function App() {
       if (revived.docs.some((d) => d.id === wanted)) {
         revived = selectDoc(revived, wanted)
         setOpen(true)
+        // Back from sign-in with a message that was waiting: the chat sends it once the key is in.
+        const stashed = takePrompt()
+        if (stashed) setPrompt({ text: stashed, images: [] })
       }
       if (!live) return
       setSession(revived)
@@ -388,11 +432,9 @@ export function App() {
   // Export runs its own compile so the exported bytes always match the current
   // source, and never reuses the viewport's OFF. The file is named after the
   // document, like the project file.
-  const exportAs = async (format: DownloadFormat) => {
+  const exportAs = async (format: DownloadFormat, part: number | null): Promise<boolean> => {
     setExporting(format)
     setExportError(null)
-    // A selected part exports alone: the viewport's part N, out of a fresh compile.
-    const part = selected?.part ?? null
     const name = fileName(session ? currentDoc(session).name : UNTITLED) + (part ? ` part ${part}` : '')
     const exporter = new Compiler()
     try {
@@ -414,9 +456,10 @@ export function App() {
             if (mtl) downloadBlob(mtl, `${name}.mtl`, 'model/mtl')
           }
         }
-      } else {
-        setExportError(result.stderr)
+        return true
       }
+      setExportError(result.stderr)
+      return false
     } finally {
       exporter.dispose()
       setExporting(null)
@@ -428,15 +471,32 @@ export function App() {
   const shownError = error ?? exportError
   // One place that answers "is anything happening", whichever pane started it.
   const working = busy || chatBusy || exporting !== null
+  const doc = session && open ? currentDoc(session) : null
+  const canExport = !!mesh && !error
+  const toggleEditor = (next: boolean) => {
+    setEditOpen(next)
+    localStorage.setItem(PANE_KEY, next ? 'open' : 'closed')
+  }
+  const status = busy
+    ? { tone: 'busy', text: 'Compiling…' }
+    : turnMesh
+      ? { tone: 'busy', text: 'Candidate · not saved yet' }
+      : error
+        ? { tone: 'bad', text: "Didn't compile" }
+        : ms !== null
+          ? { tone: 'ok', text: `Up to date · ${took(ms)}` }
+          : null
 
   return (
-    <div className="app" data-compiles={compiles} data-working={working}>
+    <div className="app" data-compiles={compiles} data-working={working} data-tab={tab} data-start={!open}>
       <div className="working" aria-hidden={!working} />
 
-      <MenuBar
+      <TopBar
         session={session}
         atStart={!open}
-        busy={chatBusy}
+        connected={connected}
+        canExport={canExport}
+        onConnect={() => setConnectToken((n) => n + 1)}
         onChange={(next) => {
           setSession(next)
           setFitToken((n) => n + 1)
@@ -444,584 +504,517 @@ export function App() {
           // "open this". Delete goes back to the start window right after.
           setOpen(true)
         }}
-        onOpen={() => setOpen(false)}
+        onStart={() => setOpen(false)}
         onHelp={() => setHelp((h) => !h)}
-        onDiff={() => setDiff((d) => !d)}
+        onHistory={() => {
+          setHistoryFocus(null)
+          setHistoryOpen(true)
+        }}
+        onExport={() => setExportOpen(true)}
       />
 
       {session && help && <Help onClose={() => setHelp(false)} />}
-      {session && open && diff && <VersionDiff doc={currentDoc(session)} onClose={() => setDiff(false)} />}
+      <HistoryPanel
+        open={historyOpen}
+        doc={doc}
+        focus={historyFocus}
+        busy={chatBusy}
+        onClose={() => setHistoryOpen(false)}
+        onSave={() => setSession((s) => (s ? saveVersion(s, Date.now()) : s))}
+        onRestore={(id) => {
+          setSession((s) => (s ? restoreVersion(s, id, Date.now()) : s))
+          setFitToken((n) => n + 1)
+        }}
+        onFullDiff={setDiffOf}
+      />
+      <VersionDiff doc={doc} versionId={diffOf} onClose={() => setDiffOf(null)} />
+      <ExportDialog
+        open={exportOpen && doc !== null}
+        doc={doc}
+        parts={stats?.parts ?? 1}
+        size={canExport && stats ? stats.size : null}
+        part={selected ? { n: selected.part, size: selected.max.map((hi, i) => hi - selected.min[i]!) } : null}
+        bed={bed}
+        exporting={exporting !== null}
+        error={exportError}
+        onClose={() => setExportOpen(false)}
+        onExport={exportAs}
+      />
 
       {session && !open && (
         <StartWindow
           session={session}
           durable={durable}
+          units={units}
+          onUnits={setUnits}
           onOpen={(id) => {
-            // Functional, because "New document" and the examples create the
-            // document and open it in the same click: the render's `session`
-            // does not have it yet, and selectDoc on that would drop it.
+            // Functional, because the examples create the document and open it
+            // in the same click: the render's `session` does not have it yet,
+            // and selectDoc on that would drop it.
             setSession((s) => (s ? selectDoc(s, id) : s))
             setFitToken((n) => n + 1)
             setOpen(true)
           }}
           onChange={setSession}
+          onCreate={(id, how: Opening) => {
+            setSession((s) => (s ? selectDoc(s, id) : s))
+            setFitToken((n) => n + 1)
+            setOpen(true)
+            if ('prompt' in how) {
+              setPrompt(how.prompt)
+              setTab('chat')
+            } else {
+              showEditor(how.edit)
+              setTab(how.edit === 'code' ? 'edit' : 'model')
+            }
+          }}
         />
       )}
 
       <div className="panes">
-      <section ref={codeRef} className={codeOpen ? 'pane side' : 'pane side collapsed'}>
-        <div className="editor-pane">
-          <div className="editor-host">
-            {/* Remounts on a document switch, like the chat pane: a fresh
-                CodeMirror state, so undo cannot replay the switch and put the
-                previous document's source — or the boot-time starter — into
-                this one. A turn's whole-document replace stays undoable. */}
-            <Editor
-              key={session?.currentId ?? 'boot'}
-              value={streamSource ?? source}
-              onChange={setSource}
-              editable={!chatBusy}
-              errorLine={streamSource === null ? errorLineOf(error) : null}
-            />
+        <section ref={codeRef} className={editOpen ? 'pane side edit' : 'pane side edit collapsed'}>
+          <div className="editor-pane">
+            <div className="edit-head">
+              <div className="seg wide" role="tablist" aria-label="Edit">
+                {(['params', 'code'] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    role="tab"
+                    aria-selected={editTab === t}
+                    onClick={() => showEditor(t)}
+                  >
+                    {t === 'params' ? 'Parameters' : 'Code'}
+                  </button>
+                ))}
+              </div>
+              <button type="button" className="edit-hide" aria-label="Hide the editor" title="Hide the editor" onClick={() => toggleEditor(false)}>
+                ‹
+              </button>
+            </div>
+            <div className="edit-params" hidden={editTab !== 'params'}>
+              <ParamsPanel source={source} disabled={chatBusy} onPreview={setPreviewDefines} onCommit={setSource} />
+              {session && (
+                <ComponentsPanel
+                  components={components}
+                  units={units}
+                  disabled={chatBusy}
+                  onAdd={(c) => setSession((s) => (s ? addComponent(s, c, Date.now()) : s))}
+                  onRemove={(name) => setSession((s) => (s ? removeComponent(s, name, Date.now()) : s))}
+                />
+              )}
+            </div>
+            <div className="editor-host" hidden={editTab !== 'code'}>
+              {/* Remounts on a document switch, like the chat pane: a fresh
+                  CodeMirror state, so undo cannot replay the switch and put the
+                  previous document's source — or the boot-time starter — into
+                  this one. A turn's whole-document replace stays undoable. */}
+              <Editor
+                key={session?.currentId ?? 'boot'}
+                value={streamSource ?? source}
+                onChange={setSource}
+                editable={!chatBusy}
+                errorLine={streamSource === null ? errorLineOf(error) : null}
+              />
+            </div>
           </div>
-          <ParamsPanel
-            source={source}
-            disabled={chatBusy}
-            onPreview={setPreviewDefines}
-            onCommit={setSource}
-          />
-          {session && (
-            <ComponentsPanel
-              components={components}
-              units={units}
-              disabled={chatBusy}
-              onAdd={(c) => setSession((s) => (s ? addComponent(s, c, Date.now()) : s))}
-              onRemove={(name) => setSession((s) => (s ? removeComponent(s, name, Date.now()) : s))}
-            />
-          )}
-        </div>
-      </section>
+        </section>
 
-      <section className="pane view">
-        {codeOpen && (
-          <div
-            className="splitter"
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="Resize the code pane"
-            tabIndex={0}
-            onPointerDown={(e) => {
-              e.preventDefault() // no text selection under the drag
-              e.currentTarget.setPointerCapture(e.pointerId)
-            }}
-            onPointerMove={(e) => {
-              const pane = codeRef.current
-              if (pane && e.currentTarget.hasPointerCapture(e.pointerId))
-                pane.style.width = `${e.clientX - pane.getBoundingClientRect().left}px`
-            }}
-            onKeyDown={(e) => {
-              const step = e.key === 'ArrowLeft' ? -24 : e.key === 'ArrowRight' ? 24 : 0
-              const pane = codeRef.current
-              if (pane && step) pane.style.width = `${pane.offsetWidth + step}px`
+        <section className="pane view">
+          {editOpen ? (
+            <div
+              className="splitter"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize the editor"
+              tabIndex={0}
+              onPointerDown={(e) => {
+                e.preventDefault() // no text selection under the drag
+                e.currentTarget.setPointerCapture(e.pointerId)
+              }}
+              onPointerMove={(e) => {
+                const pane = codeRef.current
+                if (pane && e.currentTarget.hasPointerCapture(e.pointerId))
+                  pane.style.width = `${e.clientX - pane.getBoundingClientRect().left}px`
+              }}
+              onKeyDown={(e) => {
+                const step = e.key === 'ArrowLeft' ? -24 : e.key === 'ArrowRight' ? 24 : 0
+                const pane = codeRef.current
+                if (pane && step) pane.style.width = `${pane.offsetWidth + step}px`
+              }}
+            />
+          ) : (
+            <button type="button" className="code-toggle" aria-label="Show the editor" title="Parameters and code" onClick={() => toggleEditor(true)}>
+              ›
+            </button>
+          )}
+          <Viewport
+            mesh={shown}
+            ghost={ghost}
+            plate={bed}
+            fitToken={fitToken}
+            highlight={selected?.triangles ?? null}
+            onPick={(triangle) => setSelected(triangle !== null && shown ? selectPart(shown, triangle) : null)}
+            onMarkup={(url) => {
+              setMarkup(url)
+              setTab('chat')
             }}
           />
-        )}
-        <button
-          type="button"
-          className="code-toggle"
-          aria-expanded={codeOpen}
-          title={codeOpen ? 'Hide the code' : 'Show the code'}
-          aria-label={codeOpen ? 'Hide the code' : 'Show the code'}
-          onClick={() => setCodeOpen((o) => !o)}
-        >
-          {codeOpen ? '‹' : '›'}
-        </button>
-        <Viewport
-          mesh={shown}
-          ghost={ghost}
-          plate={bed}
-          fitToken={fitToken}
-          highlight={selected?.triangles ?? null}
-          onPick={(triangle) => setSelected(triangle !== null && shown ? selectPart(shown, triangle) : null)}
-          onMarkup={setMarkup}
-        />
-        <div className="actions">
-          {(['3mf', 'binstl', 'obj'] as const).map((format) => (
+          <div className="hud">
+            {status && (
+              <span className={`tag status ${status.tone}`}>
+                {status.tone === 'busy' && <span className="spinner" aria-hidden="true" />}
+                {status.text}
+              </span>
+            )}
+            {stats && (
+              // Display only: the model, the source and the exported file stay metric.
+              <span className={error ? 'stats stale' : 'stats'} title={`${stats.triangles.toLocaleString()} triangles`}>
+                <span className="tag">
+                  {stats.size.map((n) => formatLength(n, units)).join(' × ')} {lengthLabel(units)}
+                </span>
+                {stats.parts > 1 && <span className="tag">{stats.parts} parts</span>}
+                <span className="tag">
+                  {stats.volume === null ? 'not watertight' : `${formatVolume(stats.volume, units)} ${volumeLabel(units)}`}
+                </span>
+                {fitsBed(stats.size, bed) ? (
+                  <span className="tag ok">Fits your printer</span>
+                ) : (
+                  <span className="tag bad">Bigger than your printer</span>
+                )}
+              </span>
+            )}
+          </div>
+          {selected && (
+            <span className="selected-pill">
+              Part {selected.part} selected
+            </span>
+          )}
+          <div className="seg units" role="group" aria-label="Display units" title="Display units. The model itself is always millimetres.">
+            {(['mm', 'in'] as const).map((u) => (
+              <button key={u} type="button" aria-pressed={units === u} onClick={() => setUnits(u)}>
+                {u}
+              </button>
+            ))}
+          </div>
+          {shownError && <pre className="error">{shownError}</pre>}
+          {!shownError && warnings && <pre className="warnings">{warnings}</pre>}
+        </section>
+
+        <section className="pane side right">
+          <Chat
+            // Remounts on a document switch: the conversation was about the part
+            // that just left the screen, and the new one brings its own.
+            key={session?.currentId ?? 'boot'}
+            source={source}
+            files={files}
+            components={components}
+            selection={selected}
+            onClearSelection={() => setSelected(null)}
+            markup={markup}
+            onClearMarkup={() => setMarkup(null)}
+            construction={ghost}
+            onCandidate={setTurnMesh}
+            before={before}
+            units={units}
+            onUnits={setUnits}
+            initialLog={session ? currentDoc(session).chat : []}
+            onLogChange={(log) => setSession((s) => (s ? setChat(s, log) : s))}
+            onPrompt={(text) => setSession((s) => (s ? nameFromFirstPrompt(s, text) : s))}
+            autoPrompt={open ? prompt : null}
+            onAutoPrompt={() => setPrompt(null)}
+            connectToken={connectToken}
+            onConnected={setConnected}
+            onStreamSource={setStreamSource}
+            onApply={(next, result, label) => {
+              // A preview compile still in flight would land on top of this and
+              // put a stale mesh under the new source.
+              compiler.cancel()
+              const commit = (s: Session) => nameFromFirstTurn(commitTurn(s, next, label, result.ok, Date.now()), next)
+              setSession((s) => (s ? commit(s) : s))
+              // With the components: the turn compiled with the files, and the
+              // preview effect's key carries them too.
+              const key = compileKey(next, NO_DEFINES, components)
+              applyCompiled(key, result)
+              if (result.ok) {
+                setBefore(result.data)
+                cacheMesh(key, result.data, currentId)
+                try {
+                  thumbnail(parseOff(new TextDecoder().decode(result.data)), currentId)
+                } catch {
+                  // As above.
+                }
+              }
+              setFitToken((n) => n + 1)
+              // The version this became, for the chat's result card: the same
+              // pure commit on the latest session, read without waiting for it.
+              const s = sessionRef.current
+              return s ? headVersion(currentDoc(commit(s))).id : null
+            }}
+            onUndo={() => {
+              const s = sessionRef.current
+              if (!s) return null
+              const next = undoVersion(s, Date.now())
+              if (next === s) return null
+              setSession(next)
+              setFitToken((n) => n + 1)
+              return `Restored v${headVersion(currentDoc(next)).id}.`
+            }}
+            onShowVersion={(id) => {
+              setHistoryFocus(id)
+              setHistoryOpen(true)
+            }}
+            onExport={(format) => void exportAs(format, selected?.part ?? null)}
+            onBusyChange={setChatBusy}
+            onBed={setBed}
+          />
+        </section>
+      </div>
+
+      {open && (
+        <nav className="tabbar" aria-label="Show">
+          {(['model', 'chat', 'edit'] as const).map((t) => (
             <button
-              key={format}
-              onClick={() => exportAs(format)}
-              disabled={!mesh || !!error || exporting !== null}
+              key={t}
+              type="button"
+              aria-pressed={tab === t}
+              onClick={() => {
+                setTab(t)
+                // The view changes size with the tab: frame the part for the new one.
+                setFitToken((n) => n + 1)
+                if (t === 'edit') showEditor(editTab)
+              }}
             >
-              {exporting === format
-                ? 'Exporting…'
-                : `Export ${EXTENSION[format].toUpperCase()}${selected ? ` · part ${selected.part}` : ''}`}
+              {t === 'model' ? 'Model' : t === 'chat' ? 'Chat' : 'Edit'}
+              {t === 'chat' && chatBusy && <span className="tab-dot" aria-label="working" />}
             </button>
           ))}
-        </div>
-        <div className="hud">
-          {/* Display only: the model, the source and the exported file stay
-              metric whatever this says. Deliberately not a .tag — a second
-              element whose text contains "mm" resolves the e2e locators to two. */}
-          <button
-            type="button"
-            className="unit-toggle"
-            title="Switch display units. The model itself is always millimetres."
-            onClick={() => {
-              const next = units === 'mm' ? 'in' : 'mm'
-              setUnits(next)
-              saveUnits(next)
-            }}
-          >
-            {units === 'mm' ? 'metric' : 'imperial'}
-          </button>
-          {busy && (
-            <span className="tag busy">
-              <span className="spinner" aria-hidden="true" />
-              compiling…
-            </span>
-          )}
-          {turnMesh && <span className="tag busy" title="The turn's latest version that compiled; not committed yet">candidate</span>}
-          {!busy && ms !== null && <span className="tag">{ms} ms</span>}
-          {stats && (
-            <span className={error ? 'stats stale' : 'stats'}>
-              <span className="tag">
-                {stats.size.map((n) => formatLength(n, units)).join(' × ')} {lengthLabel(units)}
-              </span>
-              <span className="tag">{stats.triangles.toLocaleString()} tris</span>
-              {stats.parts > 1 && <span className="tag">{stats.parts} parts</span>}
-              <span className="tag">
-                {stats.volume === null
-                  ? 'not watertight'
-                  : `${formatVolume(stats.volume, units)} ${volumeLabel(units)}`}
-              </span>
-            </span>
-          )}
-        </div>
-        {shownError && <pre className="error">{shownError}</pre>}
-        {!shownError && warnings && <pre className="warnings">{warnings}</pre>}
-      </section>
-
-      <section className="pane side right">
-        <Chat
-          // Remounts on a document switch: the conversation was about the part
-          // that just left the screen, and the new one brings its own.
-          key={session?.currentId ?? 'boot'}
-          source={source}
-          files={files}
-          components={components}
-          selection={selected}
-          onClearSelection={() => setSelected(null)}
-          markup={markup}
-          onClearMarkup={() => setMarkup(null)}
-          construction={ghost}
-          onCandidate={setTurnMesh}
-          before={before}
-          units={units}
-          initialLog={session ? currentDoc(session).chat : []}
-          onLogChange={(log) => setSession((s) => (s ? setChat(s, log) : s))}
-          onPrompt={(text) =>
-            setSession((s) => (s ? nameFromFirstPrompt(s, text) : s))
-          }
-          onStreamSource={setStreamSource}
-          onApply={(next, result, label) => {
-            // A preview compile still in flight would land on top of this and
-            // put a stale mesh under the new source.
-            compiler.cancel()
-            setSession((s) =>
-              s ? nameFromFirstTurn(commitTurn(s, next, label, result.ok, Date.now()), next) : s,
-            )
-            // With the components: the turn compiled with the files, and the
-            // preview effect's key carries them too.
-            const key = compileKey(next, NO_DEFINES, components)
-            applyCompiled(key, result)
-            if (result.ok) {
-              setBefore(result.data)
-              cacheMesh(key, result.data, currentId)
-              try {
-                thumbnail(parseOff(new TextDecoder().decode(result.data)), currentId)
-              } catch {
-                // As above.
-              }
-            }
-            setFitToken((n) => n + 1)
-          }}
-          onUndo={() => {
-            const s = sessionRef.current
-            if (!s) return null
-            const next = undoVersion(s, Date.now())
-            if (next === s) return null
-            setSession(next)
-            setFitToken((n) => n + 1)
-            return `Restored v${headVersion(currentDoc(next)).id}.`
-          }}
-          onExport={exportAs}
-          onBusyChange={setChatBusy}
-          onBed={setBed}
-        />
-      </section>
-      </div>
+        </nav>
+      )}
     </div>
   )
 }
 
-/** "5 minutes ago" from a timestamp, via the platform's own formatter. */
-const STEPS: [number, Intl.RelativeTimeFormatUnit][] = [
-  [60_000, 'minute'],
-  [3_600_000, 'hour'],
-  [86_400_000, 'day'],
-]
-const RELATIVE = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
-function whenEdited(ts: number): string {
-  const ago = Date.now() - ts
-  if (ago < 60_000) return 'just now'
-  for (const [size, unit] of STEPS) {
-    if (ago < size * 60 || unit === 'day') return RELATIVE.format(-Math.floor(ago / size), unit)
-  }
-  return RELATIVE.format(-Math.floor(ago / 86_400_000), 'day')
-}
-
-/** A document name as a file name. */
-const fileName = (name: string): string => name.replace(/[\\/:*?"<>|]+/g, '_')
-
 /**
- * New / Open / versions / Rename / Delete / project file, and the name of what
- * is open. Open returns to the start window, which is the document list — one
- * screen rather than a picker plus a launcher that would both list the same rows.
+ * The bar over everything. At the start window: the brand, Import project,
+ * Help and whether a model is connected. In a document: its name — the menu of
+ * everything done to documents — the History pill, Share, Help and Export.
  */
-function MenuBar({
+function TopBar({
   session,
   atStart,
-  busy,
+  connected,
+  canExport,
+  onConnect,
   onChange,
-  onOpen,
+  onStart,
   onHelp,
-  onDiff,
+  onHistory,
+  onExport,
 }: {
   session: Session | null
   /** The start window is up: no document is on screen, so no document controls. */
   atStart: boolean
-  /** A turn owns the document: nothing here may move its head under it. */
-  busy: boolean
+  connected: string | null
+  canExport: boolean
+  onConnect: () => void
   onChange: (next: Session) => void
-  onOpen: () => void
+  onStart: () => void
   onHelp: () => void
-  onDiff: () => void
+  onHistory: () => void
+  onExport: () => void
 }) {
   const doc = !atStart && session ? currentDoc(session) : null
   const fileRef = useRef<HTMLInputElement>(null)
   const [shared, setShared] = useState(false)
   const head = doc ? headVersion(doc) : null
 
-  return (
-    <div className="menubar">
-      <button type="button" className="brand" title="Back to the start window" onClick={onOpen} disabled={!session || atStart}>
-        Vibe3D
-      </button>
-      <button
-        type="button"
-        disabled={!session}
-        onClick={() => {
-          if (!session) return
-          const id = crypto.randomUUID()
-          onChange({
-            docs: [...session.docs, newDoc(UNTITLED, '', id, Date.now())],
-            currentId: id,
-          })
-        }}
-      >
-        New
-      </button>
-      <button type="button" onClick={onOpen} disabled={!session || atStart}>
-        Open
-      </button>
-      <button
-        type="button"
-        title="Keep what is in the editor as a version of its own"
-        disabled={!session || !doc || busy}
-        onClick={() => session && onChange(saveVersion(session, Date.now()))}
-      >
-        Save version
-      </button>
-      {session && doc && (
-        <select
-          className="menubar-versions"
-          aria-label="Version"
-          title="Every LLM turn, save and edit is a version. Pick one to go back to it."
-          value={doc.head}
-          disabled={busy}
-          onChange={(e) => onChange(restoreVersion(session, e.target.value, Date.now()))}
-        >
-          {doc.versions.map((v) => (
-            <option key={v.id} value={v.id}>
-              v{v.id} · {v.label}
-              {v.compileOk ? '' : ' ✗'}
-            </option>
-          ))}
-        </select>
-      )}
-      <button
-        type="button"
-        title="What this version changed against the one it was made from"
-        disabled={!doc || !head?.parentId}
-        onClick={onDiff}
-      >
-        Diff
-      </button>
-      <button
-        type="button"
-        disabled={!session || !doc}
-        onClick={() => {
-          if (!session || !doc) return
-          // ponytail: the platform's own dialog. A rename popover is UI to
-          // maintain for something done once per document.
-          const name = window.prompt('Name this document', doc.name)
-          if (name !== null) onChange(renameDoc(session, doc.id, name))
-        }}
-      >
-        Rename
-      </button>
-      <button
-        type="button"
-        disabled={!session || !doc}
-        onClick={() => {
-          if (!session || !doc) return
-          if (!window.confirm(`Delete "${doc.name}"? This cannot be undone.`)) return
-          onChange(deleteDoc(session, doc.id, crypto.randomUUID(), Date.now()))
-          // What was open is gone; whichever neighbour became current was not
-          // chosen by the user, so the start window is where to pick next.
-          onOpen()
-        }}
-      >
-        Delete
-      </button>
-      <button
-        type="button"
-        title="One .json with the source, every version and the conversation — never the key"
-        disabled={!doc}
-        onClick={() =>
-          doc &&
-          downloadBlob(
-            new TextEncoder().encode(exportProject(doc)),
-            `${fileName(doc.name)}.json`,
-            'application/json',
-          )
-        }
-      >
-        Export project
-      </button>
-      <button type="button" disabled={!session} onClick={() => fileRef.current?.click()}>
-        Import project
-      </button>
-      <button
-        type="button"
-        title="Copy a link that opens this source as a new document — the source only, no conversation"
-        disabled={!doc}
-        onClick={() => {
-          if (!doc) return
-          void encodeShare(doc.source)
-            .then((hash) => navigator.clipboard.writeText(`${location.origin}${location.pathname}#${hash}`))
-            .then(() => {
-              setShared(true)
-              setTimeout(() => setShared(false), 1500)
-            })
-            .catch(() => window.alert('Could not reach the clipboard.'))
-        }}
-      >
-        {shared ? 'Link copied' : 'Share'}
-      </button>
-      <input
-        ref={fileRef}
-        type="file"
-        accept=".json,application/json"
-        hidden
-        onChange={(e) => {
-          const file = e.target.files?.[0]
-          // So the same file can be picked twice in a row.
-          e.target.value = ''
-          if (!file || !session) return
-          void file.text().then((text) => {
-            try {
-              const imported = importProject(
-                text,
-                crypto.randomUUID(),
-                Date.now(),
-                session.docs.map((d) => d.name),
-              )
-              onChange({ docs: [...session.docs, imported], currentId: imported.id })
-            } catch (error) {
-              window.alert(error instanceof Error ? error.message : String(error))
-            }
-          })
-        }}
-      />
-      {/* Hover (or focus) lists the commands; a click opens the manual. Pure
-          CSS: the popover is in the DOM whenever the bar is, hidden by :hover. */}
-      <span className="menu-help">
-        <button type="button" onClick={onHelp} title="Open the manual">
-          Help
-        </button>
-        <div className="help-pop" role="tooltip">
-          <b>Commands</b> — type them in the chat
-          <dl>
-            {COMMANDS.map((c) => (
-              <div key={c.usage}>
-                <dt>{c.usage}</dt>
-                <dd>{c.what}</dd>
-              </div>
-            ))}
-          </dl>
-          <span className="help-pop-hint">
-            Enter sends, Shift+Enter breaks a line. Click a part in the viewport to talk about it.
-            Click Help for the manual.
-          </span>
-        </div>
-      </span>
-      {doc && <span className="menubar-doc">{doc.name}</span>}
-    </div>
+  const importInput = (
+    <input
+      ref={fileRef}
+      type="file"
+      accept=".json,application/json"
+      hidden
+      onChange={(e) => {
+        const file = e.target.files?.[0]
+        // So the same file can be picked twice in a row.
+        e.target.value = ''
+        if (!file || !session) return
+        void file.text().then((text) => {
+          try {
+            const imported = importProject(text, crypto.randomUUID(), Date.now(), session.docs.map((d) => d.name))
+            onChange({ docs: [...session.docs, imported], currentId: imported.id })
+          } catch (error) {
+            window.alert(error instanceof Error ? error.message : String(error))
+          }
+        })
+      }}
+    />
   )
-}
 
-/** Head against its parent, as a unified diff in the help overlay's frame. */
-function VersionDiff({ doc, onClose }: { doc: Doc; onClose: () => void }) {
-  const head = headVersion(doc)
-  const parent = doc.versions.find((v) => v.id === head.parentId)
-  const lines = useMemo(() => hunks(diffLines(parent?.source ?? '', head.source)), [parent, head])
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-  return (
-    <div className="help" role="dialog" aria-labelledby="diff-title">
-      <article className="help-card">
-        <div className="help-head">
-          <h1 id="diff-title">
-            v{head.id} · {head.label} — against v{parent?.id ?? '?'}
-          </h1>
-          <button type="button" className="help-close" onClick={onClose}>
-            Close <kbd>Esc</kbd>
+  if (!doc || !session || !head) {
+    return (
+      <header className="topbar">
+        <span className="logo" aria-hidden="true">V</span>
+        <span className="brand-name">Vibe3D</span>
+        <div className="topbar-end">
+          <button type="button" className="ghost" disabled={!session} onClick={() => fileRef.current?.click()}>
+            Import project
           </button>
+          <HelpButton onHelp={onHelp} />
+          {connected ? (
+            <span className="pill ok">
+              <span className="dot" aria-hidden="true" />
+              {connected}
+            </span>
+          ) : (
+            <button type="button" className="pill" onClick={onConnect}>
+              Connect a model
+            </button>
+          )}
         </div>
-        <pre className="diff">
-          {lines.length === 0
-            ? 'No difference.'
-            : lines.map((line, i) => (
-                <span key={i} className={line.kind === '+' ? 'add' : line.kind === '-' ? 'del' : ''}>
-                  {line.kind} {line.text}
-                  {'\n'}
-                </span>
-              ))}
-        </pre>
-      </article>
-    </div>
-  )
-}
+        {importInput}
+      </header>
+    )
+  }
 
-/** A document's thumbnail: an object URL for the Blob's lifetime on screen. */
-function Thumb({ blob }: { blob: Blob | undefined }) {
-  const url = useMemo(() => (blob ? URL.createObjectURL(blob) : null), [blob])
-  useEffect(() => () => {
-    if (url) URL.revokeObjectURL(url)
-  }, [url])
-  return <span className="start-thumb">{url && <img src={url} alt="" />}</span>
-}
-
-/**
- * The launcher. Documents, most recently edited first, because the top row is
- * almost always the thing you were in the middle of.
- */
-function StartWindow({
-  session,
-  durable,
-  onOpen,
-  onChange,
-}: {
-  session: Session
-  durable: boolean
-  onOpen: (id: string) => void
-  onChange: (next: Session) => void
-}) {
-  const rows = [...session.docs].sort((a, b) => b.updatedAt - a.updatedAt)
-  const create = (name: string, source: string): void => {
-    const id = crypto.randomUUID()
-    onChange({ docs: [...session.docs, newDoc(name, source, id, Date.now())], currentId: id })
-    onOpen(id)
+  const share = () => {
+    void encodeShare(doc.source)
+      .then((hash) => navigator.clipboard.writeText(`${location.origin}${location.pathname}#${hash}`))
+      .then(() => {
+        setShared(true)
+        setTimeout(() => setShared(false), 1500)
+      })
+      .catch(() => window.alert('Could not reach the clipboard.'))
   }
 
   return (
-    <div className="start">
-      <div className="start-card">
-        <h1>
-          Vibe3D
-          <img className="start-icon" src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" />
-        </h1>
-        <p className="start-tag">Prompt a parametric 3D model - with your own tokens.</p>
-
-        <ul className="start-list">
-          {rows.map((d) => (
-            <li key={d.id}>
-              <button type="button" className="start-open" onClick={() => onOpen(d.id)}>
-                <Thumb blob={d.thumb} />
-                <span className="start-name">{d.name}</span>
-                {d.versions.length > 1 && <span className="start-ver">v{d.versions.length}</span>}
-                <span className="start-when">{whenEdited(d.updatedAt)}</span>
+    <header className="topbar">
+      <button type="button" className="logo" aria-label="Vibe3D" title="All documents" onClick={onStart}>
+        V
+      </button>
+      <button type="button" className="back" aria-label="All documents" onClick={onStart}>
+        ‹
+      </button>
+      <span className="slash" aria-hidden="true">/</span>
+      <div className="doc-title">
+        <Menu className="doc-menu" title="Document" label={<><span className="doc-name">{doc.name}</span><span className="caret-down" aria-hidden="true">▾</span></>}>
+          {(close) => (
+            <>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  close()
+                  const id = crypto.randomUUID()
+                  onChange({ docs: [...session.docs, newDoc(UNTITLED, '', id, Date.now())], currentId: id })
+                }}
+              >
+                New document
+              </button>
+              <button type="button" role="menuitem" onClick={() => (close(), onStart())}>
+                All documents
               </button>
               <button
                 type="button"
-                className="start-del"
-                aria-label={`Delete ${d.name}`}
+                role="menuitem"
                 onClick={() => {
-                  if (!window.confirm(`Delete "${d.name}"? This cannot be undone.`)) return
-                  onChange(deleteDoc(session, d.id, crypto.randomUUID(), Date.now()))
+                  close()
+                  // ponytail: the platform's own dialog. A rename popover is UI to
+                  // maintain for something done once per document.
+                  const name = window.prompt('Name this document', doc.name)
+                  if (name !== null) onChange(renameDoc(session, doc.id, name))
                 }}
               >
-                ×
+                Rename…
               </button>
-            </li>
-          ))}
-        </ul>
-
-        {!durable && (
-          <p className="start-durability">
-            This browser may evict local data when it needs space. Export anything you want to
-            keep.
-          </p>
-        )}
-
-        <button type="button" className="start-new" onClick={() => create(UNTITLED, '')}>
-          New document
+              <button
+                type="button"
+                role="menuitem"
+                className="danger"
+                onClick={() => {
+                  close()
+                  if (!window.confirm(`Delete "${doc.name}"? This cannot be undone.`)) return
+                  onChange(deleteDoc(session, doc.id, crypto.randomUUID(), Date.now()))
+                  // What was open is gone; whichever neighbour became current was not
+                  // chosen by the user, so the start window is where to pick next.
+                  onStart()
+                }}
+              >
+                Delete…
+              </button>
+              <hr />
+              <button type="button" role="menuitem" onClick={() => (close(), fileRef.current?.click())}>
+                Import project…
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                title="One .json with the source, every version and the conversation — never the key"
+                onClick={() => {
+                  close()
+                  downloadBlob(new TextEncoder().encode(exportProject(doc)), `${fileName(doc.name)}.json`, 'application/json')
+                }}
+              >
+                Export project
+              </button>
+              {/* A phone's top bar has no room for these two: they live here instead. */}
+              <hr className="mobile-only" />
+              <button type="button" role="menuitem" className="mobile-only" onClick={() => (close(), share())}>
+                Copy share link
+              </button>
+              <button type="button" role="menuitem" className="mobile-only" onClick={() => (close(), onHelp())}>
+                Help
+              </button>
+            </>
+          )}
+        </Menu>
+        <button type="button" className="history-pill" title="Every turn, save and edit is a version" onClick={onHistory}>
+          <span className="mono">v{head.id}</span>
+          <span className="history-pill-label">{versionTitle(head)}</span>
+          <span className="history-pill-more">· History</span>
         </button>
-        <p className="start-examples">
-          Or start from an example:
-          {EXAMPLES.map((ex) => (
-            <button
-              type="button"
-              key={ex.name}
-              className="start-new"
-              onClick={() =>
-                create(suggestName(ex.source, session.docs.map((d) => d.name)), ex.source)
-              }
-            >
-              {ex.name}
-            </button>
-          ))}
-        </p>
-        <p className="start-footer">
-          <a
-            href={__APP_COMMIT__ ? `${REPO_URL}/commit/${__APP_COMMIT__}` : `${REPO_URL}/releases/tag/${__APP_VERSION__}`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {__APP_VERSION__}
-          </a>
-          {' · '}
-          <a href={REPO_URL} target="_blank" rel="noreferrer">
-            GitHub
-          </a>
-        </p>
       </div>
-    </div>
+      <div className="topbar-end">
+        <button
+          type="button"
+          className="ghost share"
+          title="Copy a link that opens this source as a new document — the source only, no conversation"
+          onClick={share}
+        >
+          {shared ? 'Link copied' : 'Share'}
+        </button>
+        <HelpButton onHelp={onHelp} />
+        <button type="button" className="btn primary" disabled={!canExport} onClick={onExport}>
+          Export
+        </button>
+      </div>
+      {importInput}
+    </header>
+  )
+}
+
+/** Hover (or focus) lists the commands; a click opens the manual. Pure CSS. */
+function HelpButton({ onHelp }: { onHelp: () => void }) {
+  return (
+    <span className="menu-help">
+      <button type="button" className="ghost" onClick={onHelp} title="Open the manual">
+        Help
+      </button>
+      <div className="help-pop" role="tooltip">
+        <b>Commands</b> — type them in the chat
+        <dl>
+          {COMMANDS.map((c) => (
+            <div key={c.usage}>
+              <dt>{c.usage}</dt>
+              <dd>{c.what}</dd>
+            </div>
+          ))}
+        </dl>
+        <span className="help-pop-hint">
+          Enter sends, Shift+Enter breaks a line. Click a part in the viewport to talk about it. Click Help for the manual.
+        </span>
+      </div>
+    </span>
   )
 }

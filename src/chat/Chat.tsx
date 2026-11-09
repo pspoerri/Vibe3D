@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Compiler, type CompileResult } from '../kernel/compile'
-import { completePkce, pkceAvailable, revokeUrl, startPkce } from '../llm/auth'
+import { completePkce, pkceAvailable, revokeUrl, startPkce, stashPrompt } from '../llm/auth'
 import { toDataUrl } from '../llm/images'
 import {
   contextLimit, DEFAULT_BASE_URL, defaultModel, fetchModels, llmHostOf, latestModels, streamChat, type ModelInfo, type Usage,
 } from '../llm/openrouter'
 import { loadKey, saveKey } from '../state/key'
 import {
-  loadSettings, parseBed, saveSettings, THINKING, thinkingOf, withThinking, type PortableSettings, type Thinking,
+  loadSettings, saveSettings, THINKING, thinkingOf, withThinking, type PortableSettings, type Thinking,
 } from '../state/settings'
 import type { DownloadFormat } from '../export/download'
 import type { Component } from '../state/documents'
@@ -25,6 +25,11 @@ import { partCount } from './parts'
 import { systemPromptFor, verifyMessage } from './prompt'
 import { renderSkill } from './skills'
 import { usesText } from '../kernel/fonts'
+import { diffLines } from '../state/diff'
+import { PRINTERS, printerOf } from '../state/printers'
+import { formatLength, lengthLabel, type Units } from '../state/units'
+import { Dialog } from '../ui'
+import { cardsOf, times, userHeads, type Card } from './cards'
 
 const REVOKE_HOME = 'https://openrouter.ai/settings/keys'
 /** What Other host starts at: Ollama's OpenAI-compatible endpoint, the commonest local server. */
@@ -32,6 +37,11 @@ const OTHER_BASE_URL = 'http://localhost:11434/v1'
 /** A plain cap, chosen over reasoning about 413 payload_too_large: OpenRouter
  *  documents no inline size limit and providers enforce their own. */
 const MAX_IMAGES = 4
+/** How the thinking levels read in the interface: what they do, not what they are. */
+const LEVEL: Record<Thinking, string> = { off: 'Off', low: 'Low', medium: 'Medium', high: 'High' }
+/** "Anthropic: Claude Sonnet 5" → "Claude Sonnet 5". */
+const shortName = (name: string): string => name.replace(/^[^:]{1,30}:\s*/, '')
+
 /** A picked or pasted image, or the viewport with the user's strokes — which the message names. */
 interface Attachment {
   url: string
@@ -46,6 +56,7 @@ export function Chat({
   onClearSelection,
   before,
   units,
+  onUnits,
   initialLog,
   onLogChange,
   onStreamSource,
@@ -54,6 +65,11 @@ export function Chat({
   onExport,
   onBusyChange,
   onPrompt,
+  autoPrompt,
+  onAutoPrompt,
+  connectToken,
+  onConnected,
+  onShowVersion,
   markup,
   onClearMarkup,
   construction,
@@ -78,20 +94,31 @@ export function Chat({
   /** OFF of the mesh on screen — what a turn's inspection compares against. null when nothing has compiled. */
   before: Uint8Array | null
   /** Display units. The source stays metric; this is how to READ the user. */
-  units: 'mm' | 'in'
+  units: Units
+  onUnits: (next: Units) => void
   /** The transcript this document had when it was opened. Read once. */
   initialLog: readonly ChatEvent[]
   /** Every change to the log, images included — the receiver strips them. */
   onLogChange: (log: readonly ChatEvent[]) => void
   onStreamSource: (partial: string | null) => void
   /** `label` is the user's words, for the version this turn becomes. */
-  onApply: (next: string, result: CompileResult, label: string) => void
+  /** Returns the version the turn became, for its result card. */
+  onApply: (next: string, result: CompileResult, label: string) => string | null
   /** Steps the document back one version; the note to show, or null when there is nothing to undo. */
   onUndo: () => string | null
   onExport: (format: DownloadFormat) => void
   onBusyChange: (busy: boolean) => void
   /** The user's words for the part. The document takes its name from the first. */
   onPrompt: (text: string) => void
+  /** A prompt from the start window: put in the composer and sent on mount. */
+  autoPrompt: { text: string; images: readonly string[] } | null
+  onAutoPrompt: () => void
+  /** Bumped by the start window's "Connect a model". */
+  connectToken: number
+  /** What a turn would talk to, for the top bar: null while nothing is connected. */
+  onConnected: (label: string | null) => void
+  /** A result card's Changes: open History at that version. */
+  onShowVersion: (id: string) => void
   /** The build volume changed in the settings: the viewport draws its plate from it. */
   onBed?: (bed: readonly [number, number, number]) => void
 }) {
@@ -121,12 +148,18 @@ export function Chat({
   /** The Other host URL last typed, so a trip to the OpenRouter tab and back keeps it. */
   const otherUrl = useRef(host === 'other' ? settings.baseUrl : OTHER_BASE_URL)
   const [models, setModels] = useState<readonly ModelInfo[]>([])
-  const [showSettings, setShowSettings] = useState(() => apiKey === '')
+  const [showSettings, setShowSettings] = useState(false)
+  /** First run: shown instead of sending when nothing is connected. */
+  const [connectOpen, setConnectOpen] = useState(false)
+  /** A key pasted in the connect form, saved on Save rather than per keystroke. */
+  const [draftKey, setDraftKey] = useState('')
+  /** Set when connecting finished with a message waiting in the composer. */
+  const [sendAfter, setSendAfter] = useState(false)
+  const [autoSend, setAutoSend] = useState(false)
   const [revoke, setRevoke] = useState(REVOKE_HOME)
   const [spend, setSpend] = useState<Spend>(ZERO_SPEND)
   /** The session's spend when the running turn began, so the status line can say what this turn has cost. */
   const [turnStart, setTurnStart] = useState<number | null>(null)
-  const [bedText, setBedText] = useState(() => loadSettings().bed.join(' × '))
   // Another host may be a keyless local server (Ollama, LM Studio), so an
   // empty key only blocks prompting against OpenRouter.
   const canPrompt = apiKey !== '' || host === 'other'
@@ -239,7 +272,10 @@ export function Chat({
         if (!minted) return
         saveKey(minted)
         setApiKey(minted)
-        setShowSettings(false)
+        setConnectOpen(false)
+        // A message stashed for the round trip is in the composer by now (App
+        // hands it over as the auto-prompt): it goes as soon as the key is in.
+        setSendAfter(true)
       })
       .catch((error: unknown) => setChatError(error instanceof Error ? error.message : String(error)))
   }, [])
@@ -248,7 +284,7 @@ export function Chat({
   // the only place a key can be entered, so the catalogue is loaded by the
   // time a turn could need contextLimit for auto-compact.
   useEffect(() => {
-    if (!showSettings && !canPrompt) return
+    if (!showSettings && !connectOpen && !canPrompt) return
     fetchModels(settings.baseUrl, apiKey)
       .then((list) => {
         setModels(list)
@@ -259,7 +295,41 @@ export function Chat({
         }
       })
       .catch(() => setModels([]))
-  }, [showSettings, canPrompt, settings.baseUrl, apiKey])
+  }, [showSettings, connectOpen, canPrompt, settings.baseUrl, apiKey])
+
+  useEffect(() => {
+    onConnected(canPrompt ? (host === 'openrouter' ? 'OpenRouter connected' : 'Local server') : null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canPrompt, host])
+
+  // Only a bump after mount: the pane remounts per document with the old value.
+  const firstToken = useRef(connectToken)
+  useEffect(() => {
+    if (connectToken !== firstToken.current) setConnectOpen(true)
+  }, [connectToken])
+
+  // The start window's prompt: into the composer, then sent on the render
+  // that has it, so send() reads the text and images from state like any send.
+  useEffect(() => {
+    if (!autoPrompt) return
+    setInput(autoPrompt.text)
+    setAttachments(autoPrompt.images.map((url) => ({ url })))
+    onAutoPrompt()
+    setAutoSend(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  useEffect(() => {
+    if (!autoSend) return
+    setAutoSend(false)
+    void send()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSend])
+  useEffect(() => {
+    if (!sendAfter || !canPrompt) return
+    setSendAfter(false)
+    if (input.trim() || attachments.length > 0) void send()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sendAfter, canPrompt])
 
   useEffect(() => {
     if (host !== 'openrouter' || !apiKey) return setRevoke(REVOKE_HOME)
@@ -294,19 +364,6 @@ export function Chat({
     setApiKey(next)
     saveKey(next, host)
   }
-
-  const keyField = (label: string, placeholder: string) => (
-    <label>
-      {label}
-      <input
-        type="password"
-        value={apiKey}
-        placeholder={placeholder}
-        autoComplete="off"
-        onChange={(e) => changeKey(e.target.value.trim())}
-      />
-    </label>
-  )
 
   // A markup from the viewport joins the tray like a picked file, flagged so
   // the message can say what it is. Consumed at once: App holds it only in transit.
@@ -365,6 +422,9 @@ export function Chat({
           break
         case 'clear':
           lines.push(head, '')
+          break
+        case 'result':
+          lines.push(`${head}: v${e.version} ${e.ok ? 'ok' : 'FAILED'} · +${e.added} −${e.removed}`, '')
       }
     }
     if (thinking) {
@@ -403,7 +463,8 @@ export function Chat({
         }
         return
       case 'key':
-        setShowSettings(true)
+        if (canPrompt) setShowSettings(true)
+        else setConnectOpen(true)
         return
       case 'think':
         if (command.level) {
@@ -458,6 +519,34 @@ export function Chat({
     else if (outcome.status === 'error') note(outcome.message, 'error')
   }
 
+  /** What a turn left: its version, size and parts when it compiled, and how many lines it moved. */
+  const resultCard = (at: number, version: string, next: string, result: CompileResult): ChatEvent => {
+    let size: [number, number, number] | undefined
+    let parts: number | undefined
+    if (result.ok) {
+      try {
+        const stats = meshStats(parseOff(new TextDecoder().decode(result.data)))
+        size = stats.size
+        parts = stats.parts
+      } catch {
+        // An unreadable OFF is already the HUD's error.
+      }
+    }
+    const lines = diffLines(source, next)
+    return {
+      id: crypto.randomUUID(),
+      ts: Date.now(),
+      turn: at,
+      kind: 'result',
+      version,
+      ok: result.ok,
+      ...(size ? { size } : {}),
+      ...(parts !== undefined ? { parts } : {}),
+      added: lines.filter((l) => l.kind === '+').length,
+      removed: lines.filter((l) => l.kind === '-').length,
+    }
+  }
+
   const send = async () => {
     if (busyRef.current) return
     // An image still normalising is not in the tray yet, so sending now would
@@ -484,8 +573,8 @@ export function Chat({
     }
 
     if (!canPrompt) {
-      setChatError('Connect OpenRouter or add an API key below to start.')
-      setShowSettings(true)
+      // The message stays in the composer, and goes once a model is connected.
+      setConnectOpen(true)
       return
     }
 
@@ -522,7 +611,8 @@ export function Chat({
       // Commit on final failure too: the user has to see the code to fix it,
       // and CodeMirror's history makes the whole-document replace undoable.
       if (outcome.status === 'committed' || outcome.status === 'failed') {
-        onApply(outcome.source, outcome.result, text)
+        const version = onApply(outcome.source, outcome.result, text)
+        if (version) append(resultCard(finished, version, outcome.source, outcome.result))
       }
       if (outcome.status === 'error') setChatError(outcome.message)
       // A paused turn: Continue re-enters it and lands back here.
@@ -682,8 +772,124 @@ export function Chat({
     await running(resume)
   }
 
+  const level = thinkingOf(settings)
+  const info = models.find((m) => m.id === settings.model)
+  const modelName = info ? shortName(info.name) : settings.model
+  const printer = printerOf(settings.bed)
+  const cards = useMemo(() => cardsOf(log), [log])
+
+  /** The host tabs and what each needs: shared by First run and Settings. `done` closes whichever holds it. */
+  const connectForm = (done: () => void) => (
+    <div className="connect-form">
+      <div className="seg wide" role="group" aria-label="Model host">
+        <button type="button" aria-pressed={host === 'openrouter'} onClick={() => host !== 'openrouter' && connectTo(DEFAULT_BASE_URL)}>
+          OpenRouter
+        </button>
+        <button type="button" aria-pressed={host === 'other'} onClick={() => host !== 'other' && connectTo(otherUrl.current)}>
+          Local server
+        </button>
+      </div>
+      {host === 'openrouter' ? (
+        <>
+          {/* Sign-in needs crypto.subtle, which a plain-http LAN address lacks. */}
+          {pkceAvailable() && (
+            <>
+              <button
+                type="button"
+                className="btn primary big"
+                onClick={() => {
+                  stashPrompt(input)
+                  void startPkce()
+                }}
+              >
+                Connect OpenRouter
+              </button>
+              <p className="hint center">Signs you in at openrouter.ai and makes a key just for Vibe3D, which you can revoke any time.</p>
+              <div className="or-rule">or paste a key</div>
+            </>
+          )}
+          <form
+            className="row"
+            onSubmit={(e) => {
+              e.preventDefault()
+              if (!draftKey.trim()) return
+              changeKey(draftKey.trim())
+              setDraftKey('')
+              done()
+            }}
+          >
+            <input
+              type="password"
+              aria-label="API key"
+              className="mono grow"
+              value={draftKey}
+              placeholder="sk-or-v1-…"
+              autoComplete="off"
+              onChange={(e) => setDraftKey(e.target.value)}
+            />
+            <button type="submit" className="btn" disabled={!draftKey.trim()}>
+              Save
+            </button>
+          </form>
+          <p className="hint">
+            Your own or a shared one, from{' '}
+            <a href={REVOKE_HOME} target="_blank" rel="noreferrer">openrouter.ai/settings/keys</a>.
+          </p>
+        </>
+      ) : (
+        <>
+          <label className="field">
+            Base URL
+            <input
+              className="mono"
+              value={settings.baseUrl}
+              placeholder={OTHER_BASE_URL}
+              onChange={(e) => {
+                otherUrl.current = e.target.value
+                connectTo(e.target.value)
+              }}
+            />
+          </label>
+          <label className="field">
+            API key (optional)
+            <input
+              type="password"
+              className="mono"
+              value={apiKey}
+              placeholder="none for a local server"
+              autoComplete="off"
+              onChange={(e) => changeKey(e.target.value.trim())}
+            />
+          </label>
+          <p className="hint">
+            Any OpenAI-compatible server: Ollama, LM Studio, vLLM. The hosted site can only reach OpenRouter; run Vibe3D
+            locally for anything else.
+          </p>
+          <button type="button" className="btn primary" onClick={done}>
+            Use this server
+          </button>
+        </>
+      )}
+    </div>
+  )
+
   return (
     <div className="chat">
+      <div className="chat-head">
+        <button type="button" className="chat-model" title={`${settings.model} — change in Settings`} onClick={() => setShowSettings(true)}>
+          {modelName} <span className="caret-down" aria-hidden="true">▾</span>
+        </button>
+        {/* Blank rather than a partial figure: usd goes null for the whole
+            session the moment one turn goes unpriced, and a number that has
+            silently stopped counting is worse than none. */}
+        <span className="chat-spend" title={`${formatTokens(spend.prompt + spend.completion)} tokens this session, at the model's list price`}>
+          {spend.usd === null ? 'cost unknown' : `${formatUsd(spend.usd)} this session`}
+        </span>
+        <button type="button" className="ghost" onClick={() => setShowSettings(true)}>
+          Settings
+        </button>
+      </div>
+
       <div
         className="chat-log"
         ref={logBoxRef}
@@ -694,13 +900,17 @@ export function Chat({
       >
         {log.length === 0 && (
           <p className="chat-empty">
-            Describe the part you want. The model rewrites the source, or edits a section of it;
-            it gets two attempts to fix a compile error before it hands the failure to you. Click
-            a part in the viewport to talk about that one.
+            Describe the part you want, or a change to it. The model rewrites the source, gets two tries to fix a
+            compile error, and checks its work at the level you pick. Click a part in the view to talk about that one.
           </p>
         )}
-        {log.map((event) => (
-          <ChatEventView key={event.id} event={event} />
+        {cards.map((card) => (
+          <CardView
+            key={card.kind === 'event' ? card.event.id : card.rounds[0]!.id}
+            card={card}
+            units={units}
+            onShowVersion={onShowVersion}
+          />
         ))}
         {thinking && (liveText || liveReasoning) && !showRaw && (
           <div className="msg msg-assistant">
@@ -763,18 +973,6 @@ export function Chat({
         </div>
       )}
 
-      {/* Only while the settings are closed: open, the link would do nothing. */}
-      {!canPrompt && !showSettings && (
-        <div className="chat-nokey">
-          No API access yet — connect OpenRouter or paste an API key in{' '}
-          <button type="button" onClick={() => setShowSettings(true)}>
-            settings
-          </button>{' '}
-          to start prompting.
-        </div>
-      )}
-
-
       <form
         className="chat-form"
         onSubmit={(e) => {
@@ -784,13 +982,13 @@ export function Chat({
       >
         {selection && (
           <div className="chat-selection">
-            <span className="chip">
-              <b>part {selection.part} of {selection.of}</b>
-              {selection.max.map((hi, i) => Math.round((hi - selection.min[i]!) * 10) / 10).join(' × ')} mm
+            <span className="part-chip">
+              About part {selection.part} ·{' '}
+              {selection.max.map((hi, i) => formatLength(hi - selection.min[i]!, units)).join(' × ')} {lengthLabel(units)}
+              <button type="button" onClick={onClearSelection} aria-label="Clear selection">
+                ×
+              </button>
             </span>
-            <button type="button" className="chat-note" onClick={onClearSelection} aria-label="Clear selection">
-              clear
-            </button>
           </div>
         )}
         {attachments.length > 0 && (
@@ -816,12 +1014,11 @@ export function Chat({
             rows={1}
             value={input}
             disabled={busy}
-            placeholder="Describe the part, or a change to it…"
+            aria-label="Message"
+            placeholder={source.trim() ? 'Describe a change…' : 'Describe the part…'}
             onChange={(e) => setInput(e.target.value)}
             onPaste={(e) => {
-              const files = [...e.clipboardData.files].filter((f) =>
-                f.type.startsWith('image/'),
-              )
+              const files = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/'))
               // Conditional: an unconditional preventDefault breaks text paste.
               if (files.length === 0) return
               e.preventDefault()
@@ -834,145 +1031,88 @@ export function Chat({
               }
             }}
           />
-          <label className="chat-attach" title="Attach images">
-            <span aria-hidden="true">▣</span>
-            {/* The label's only content is a decorative glyph, so aria-label is
-                what gives the control a name; the input stays focusable in CSS
-                rather than display:none, or Tab skips it entirely. */}
-            <input
-              type="file"
-              aria-label="Attach images"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              multiple
-              disabled={busy}
-              onChange={(e) => {
-                void attach([...(e.target.files ?? [])])
-                // So the same file can be picked twice in a row.
-                e.target.value = ''
-              }}
-            />
-          </label>
-          {busy ? (
-            <button type="button" className="chat-send stop" onClick={stop} aria-label="Stop">
-              ■
-            </button>
-          ) : (
-            <button
-              type="submit"
-              className="chat-send"
-              disabled={(!input.trim() && attachments.length === 0) || pending > 0}
-              aria-label="Send"
-            >
-              ↑
-            </button>
-          )}
+          <div className="chat-input-row">
+            <label className="chip-btn chat-attach" title="Attach images">
+              <span aria-hidden="true">+</span>
+              <span className="chat-attach-word">Image</span>
+              {/* The input stays focusable in CSS rather than display:none, or Tab skips it entirely. */}
+              <input
+                type="file"
+                aria-label="Attach images"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                multiple
+                disabled={busy}
+                onChange={(e) => {
+                  void attach([...(e.target.files ?? [])])
+                  // So the same file can be picked twice in a row.
+                  e.target.value = ''
+                }}
+              />
+            </label>
+            <label className="chip-btn chat-check" title="Thinking: how hard the model reasons, and whether it renders and measures each version before finishing">
+              Thinking
+              <select
+                aria-label="Thinking"
+                value={level}
+                onChange={(e) => persistSettings(withThinking(settings, e.target.value as Thinking))}
+              >
+                {THINKING.map((l) => (
+                  <option key={l} value={l}>
+                    {LEVEL[l]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {busy ? (
+              <button type="button" className="btn chat-send stop" onClick={stop} aria-label="Stop">
+                Stop
+              </button>
+            ) : (
+              <button
+                type="submit"
+                className="btn primary chat-send"
+                disabled={(!input.trim() && attachments.length === 0) || pending > 0}
+                aria-label="Send"
+              >
+                Send
+              </button>
+            )}
+          </div>
         </div>
       </form>
 
-      <div className="chat-meter">
-        <button type="button" onClick={() => setShowSettings((open) => !open)}>
-          {settings.model}
-          {thinkingOf(settings) !== 'off' && ` · ${thinkingOf(settings)}`}
+      <Dialog open={connectOpen} onClose={() => setConnectOpen(false)} label="Connect a model" className="connect">
+        <h2>Connect a model to start prompting</h2>
+        <p className="lede">Vibe3D runs on your own account. You pay the model host directly for what you use.</p>
+        {connectForm(() => {
+          setConnectOpen(false)
+          setSendAfter(true)
+        })}
+        <ul className="caveats">
+          <li className="ok">Your key stays in this browser and is only sent to the host you pick.</li>
+          <li className="warn">Set a spend limit in your OpenRouter settings. Vibe3D can't do that for you.</li>
+          <li className="ok">Parameters, code and export work without a key.</li>
+        </ul>
+        <button type="button" className="link center" onClick={() => setConnectOpen(false)}>
+          Skip for now
         </button>
-        <span className="sep">·</span>
-        <span title="Prompt + completion tokens this session">
-          {formatTokens(spend.prompt + spend.completion)} tok
-        </span>
-        <span className="sep">·</span>
-        {/* Blank rather than a partial figure: usd goes null for the whole
-            session the moment one turn goes unpriced, and a number that has
-            silently stopped counting is worse than none. */}
-        <span title="Spent this session, at the model's list price">
-          {spend.usd === null ? 'cost unknown' : formatUsd(spend.usd)}
-        </span>
-        <span className="sep">·</span>
-        <button
-          type="button"
-          title="Copy a debug report: settings, source and the whole transcript, raw. No key, no images."
-          onClick={() => void copyReport()}
-        >
-          {copied ? 'copied' : 'copy'}
-        </button>
-      </div>
+      </Dialog>
 
-      {showSettings && (
-        <div className="chat-settings">
-          <>
-            <div className="chat-tabs" role="group" aria-label="Model host">
-              <button
-                type="button"
-                aria-pressed={host === 'openrouter'}
-                onClick={() => host !== 'openrouter' && connectTo(DEFAULT_BASE_URL)}
-              >
-                OpenRouter
-              </button>
-              <button
-                type="button"
-                aria-pressed={host === 'other'}
-                onClick={() => host !== 'other' && connectTo(otherUrl.current)}
-              >
-                Other host
-              </button>
-            </div>
-            {host === 'openrouter' && (
-              <>
-                {apiKey ? (
-                  <div className="row chat-connected">
-                    <p className="chat-hint">
-                      <b>Connected.</b> Revoke the key or set a spend cap at{' '}
-                      <a href={revoke} target="_blank" rel="noreferrer">openrouter.ai</a> — this app cannot set one.
-                    </p>
-                    <button type="button" onClick={() => changeKey('')}>
-                      Disconnect
-                    </button>
-                  </div>
-                ) : (
-                  // Sign-in needs crypto.subtle, which a plain-http LAN address lacks.
-                  pkceAvailable() && (
-                    <>
-                      <button type="button" className="chat-primary" onClick={() => void startPkce()}>
-                        Connect OpenRouter
-                      </button>
-                      <p className="chat-hint">
-                        Signs you in at openrouter.ai and mints a key for this app alone, revocable any time.
-                      </p>
-                    </>
-                  )
-                )}
-                {/* Same slot in both states, so typing a key does not unmount the field under the cursor. */}
-                {keyField(apiKey || !pkceAvailable() ? 'API key' : 'Or paste a key', 'sk-or-…')}
-                {!apiKey && (
-                  <p className="chat-hint">
-                    Your own or a shared one, from{' '}
-                    <a href={REVOKE_HOME} target="_blank" rel="noreferrer">openrouter.ai/settings/keys</a>.
-                  </p>
-                )}
-              </>
-            )}
-            {host === 'other' && (
-              <>
-                <label>
-                  Base URL
-                  <input
-                    value={settings.baseUrl}
-                    placeholder={OTHER_BASE_URL}
-                    onChange={(e) => {
-                      otherUrl.current = e.target.value
-                      connectTo(e.target.value)
-                    }}
-                  />
-                </label>
-                {keyField('API key (optional)', 'none for a local server')}
-                <p className="chat-hint">
-                  Any OpenAI-compatible server — Ollama, LM Studio, vLLM. The hosted site can only reach
-                  OpenRouter; run Vibe3D locally for anything else.
-                </p>
-              </>
-            )}
-            <label>
-              Model
+      <Dialog open={showSettings} onClose={() => setShowSettings(false)} label="Settings" className="settings">
+        <div className="dialog-head">
+          <h2>Settings</h2>
+          <button type="button" className="dialog-x" aria-label="Close" onClick={() => setShowSettings(false)}>
+            ×
+          </button>
+        </div>
+        <div className="settings-body">
+          <label className="field">
+            Model
+            <span className="row">
               {models.length > 0 ? (
                 <select
+                  className="grow"
+                  aria-label="Model"
                   value={settings.model}
                   onChange={(e) => persistSettings({ ...settings, model: e.target.value })}
                 >
@@ -985,7 +1125,6 @@ export function Chat({
                       {latestModels(models).map((model) => (
                         <option key={model.id} value={model.id}>
                           {model.name}
-                          {model.vision ? ' · vision' : ''}
                         </option>
                       ))}
                     </optgroup>
@@ -994,56 +1133,125 @@ export function Chat({
                     {models.map((model) => (
                       <option key={model.id} value={model.id}>
                         {model.name}
-                        {model.vision ? ' · vision' : ''}
+                        {model.vision ? ' · reads images' : ''}
                       </option>
                     ))}
                   </optgroup>
                 </select>
               ) : (
-                <input
-                  value={settings.model}
-                  onChange={(e) => persistSettings({ ...settings, model: e.target.value })}
-                />
+                <input className="grow mono" aria-label="Model" value={settings.model} onChange={(e) => persistSettings({ ...settings, model: e.target.value })} />
               )}
-            </label>
-            <label>
-              Thinking
-              <select
-                value={thinkingOf(settings)}
-                onChange={(e) => persistSettings(withThinking(settings, e.target.value as Thinking))}
-              >
-                {THINKING.map((level) => (
-                  <option key={level} value={level}>
-                    {level}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Bed
-              <input
-                value={bedText}
-                placeholder="256 × 256 × 256"
-                title="The printer's build volume in mm: the plate outline, and a check the part fits"
-                onChange={(e) => {
-                  setBedText(e.target.value)
-                  const bed = parseBed(e.target.value)
-                  if (bed) persistSettings({ ...settings, bed })
-                }}
-              />
-            </label>
-            <p className="chat-hint">
-              Thinking <b>off</b> is one model call per message. Any other level is the model's
-              reasoning effort, and lets it look at what it built, ask for views and cuts, and
-              correct itself until it is satisfied. Remembered per model. The line under the transcript says what it
-              is doing; <b>Stop</b> ends it and keeps the last version that compiled.
+              {info?.vision && <span className="badge ok">Reads images</span>}
+            </span>
+          </label>
+
+          <div className="field">
+            <span id="check-label">Thinking</span>
+            <div className="seg wide" role="group" aria-labelledby="check-label">
+              {THINKING.map((l) => (
+                <button key={l} type="button" aria-pressed={level === l} onClick={() => persistSettings(withThinking(settings, l))}>
+                  {LEVEL[l]}
+                </button>
+              ))}
+            </div>
+            <p className="hint">
+              Off is one model call per message. Any other level is the model's reasoning effort, and lets it render and
+              measure what it built, ask for views and cuts, and correct itself until it is satisfied: slower and costs
+              more, catches wrong shapes. Remembered per model. Stop ends a turn and keeps the last version that compiled.
             </p>
-            <p className="chat-hint">
-              Keys are stored in this browser only, one per host, and sent nowhere but that host.
-            </p>
-          </>
+          </div>
+
+          <div className="field">
+            <label htmlFor="printer">Printer</label>
+            <select
+              id="printer"
+              value={printer ?? ''}
+              onChange={(e) => {
+                const preset = PRINTERS.find((p) => p.name === e.target.value)
+                if (preset) persistSettings({ ...settings, bed: [...preset.bed] })
+              }}
+            >
+              {printer === null && <option value="">Custom</option>}
+              {PRINTERS.map((p) => (
+                <option key={p.name} value={p.name}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <div className="bed" title="The printer's build volume in mm: the plate outline, and a check the part fits">
+              {(['X', 'Y', 'Z'] as const).map((axis, i) => (
+                <label key={axis}>
+                  <span>{axis}</span>
+                  <input
+                    type="number"
+                    min={1}
+                    aria-label={`Build volume ${axis}, mm`}
+                    value={settings.bed[i]}
+                    onChange={(e) => {
+                      const n = e.target.valueAsNumber
+                      if (!(n > 0)) return
+                      const bed = [...settings.bed] as [number, number, number]
+                      bed[i] = n
+                      persistSettings({ ...settings, bed })
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="field inline">
+            <span id="units-label">Units</span>
+            <div className="seg" role="group" aria-labelledby="units-label">
+              <button type="button" aria-pressed={units === 'mm'} onClick={() => onUnits('mm')}>
+                Millimetres
+              </button>
+              <button type="button" aria-pressed={units === 'in'} onClick={() => onUnits('in')}>
+                Inches
+              </button>
+            </div>
+          </div>
+
+          <div className="connection">
+            {host === 'openrouter' && apiKey ? (
+              <>
+                <div className="row">
+                  <span className="dot" aria-hidden="true" />
+                  <b>OpenRouter</b>
+                  <span className="mono muted">key …{apiKey.slice(-4)}</span>
+                  <button type="button" className="link danger push" onClick={() => changeKey('')}>
+                    Disconnect
+                  </button>
+                </div>
+                <div className="row spread">
+                  <span>Spent this session</span>
+                  <span className="mono">{spend.usd === null ? 'unknown' : formatUsd(spend.usd)}</span>
+                </div>
+                <a href={revoke} target="_blank" rel="noreferrer">
+                  Set a spend limit or revoke the key on OpenRouter ↗
+                </a>
+                <button type="button" className="link" onClick={() => connectTo(otherUrl.current)}>
+                  Use a local server instead
+                </button>
+              </>
+            ) : (
+              connectForm(() => setShowSettings(false))
+            )}
+          </div>
+
+          <div className="row spread">
+            <p className="hint">Keys are stored in this browser only, one per host, and sent nowhere but that host.</p>
+            <button
+              type="button"
+              className="btn"
+              title="Copy a debug report: settings, source and the whole transcript, raw. No key, no images."
+              onClick={() => void copyReport()}
+            >
+              {copied ? 'Copied' : 'Copy debug report'}
+            </button>
+          </div>
         </div>
-      )}
+      </Dialog>
     </div>
   )
 }
@@ -1109,11 +1317,43 @@ function Markdown({ text, caret }: { text: string; caret?: boolean }) {
   )
 }
 
-function ChatEventView({ event }: { event: ChatEvent }) {
+/** A transcript card: an event, or a turn's inspection rounds folded into one. */
+function CardView({ card, units, onShowVersion }: { card: Card; units: Units; onShowVersion: (id: string) => void }) {
+  if (card.kind === 'checks') {
+    const renders = card.rounds.filter((r) => r.image).length
+    return (
+      <details className="card checks">
+        <summary>
+          <span className="card-icon">{card.rounds.length}</span>
+          <span className="card-text">
+            <b>Checked its work {times(card.rounds.length)}</b>
+            <span>
+              Measured each version{renders > 0 ? ` and looked at ${renders === 1 ? 'a render' : `${renders} renders`}` : ''}
+            </span>
+          </span>
+          <span className="card-more" aria-hidden="true">▸</span>
+        </summary>
+        {card.rounds.map((round) => (
+          <div key={round.id} className="chat-inspect">
+            {round.image && <img src={round.image} alt="Before in green, after in magenta" />}
+            <pre>{round.text}</pre>
+          </div>
+        ))}
+      </details>
+    )
+  }
+  const event = card.event
   switch (event.kind) {
-    case 'user':
+    case 'user': {
+      const { part, markup, body } = userHeads(event.text)
       return (
         <div className="msg msg-user">
+          {(part || markup) && (
+            <span className="msg-heads">
+              {part && <span className="part-chip small">Part {part.n} · {part.size} mm</span>}
+              {markup && <span className="part-chip small">Sketch attached</span>}
+            </span>
+          )}
           {event.images && event.images.length > 0 && (
             <div className="msg-images">
               {event.images.map((url, i) => (
@@ -1121,9 +1361,10 @@ function ChatEventView({ event }: { event: ChatEvent }) {
               ))}
             </div>
           )}
-          {event.text}
+          {body}
         </div>
       )
+    }
     case 'assistant':
       return (
         <div className="msg msg-assistant">
@@ -1139,24 +1380,49 @@ function ChatEventView({ event }: { event: ChatEvent }) {
           {event.stopped && <span className="chat-note">stopped</span>}
         </div>
       )
+    case 'result':
+      return (
+        <div className={event.ok ? 'card result' : 'card result bad'}>
+          <span className="card-icon" aria-hidden="true">{event.ok ? '✓' : '!'}</span>
+          <span className="card-text">
+            <b>
+              {event.ok ? 'Model updated' : "Didn't compile"} · v{event.version}
+            </b>
+            <span>
+              {[
+                event.size && `${event.size.map((n) => formatLength(n, units)).join(' × ')} ${lengthLabel(units)}`,
+                event.parts !== undefined && `${event.parts} ${event.parts === 1 ? 'part' : 'parts'}`,
+                `+${event.added} −${event.removed} lines`,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </span>
+          </span>
+          <button type="button" className="link" onClick={() => onShowVersion(event.version)}>
+            Changes
+          </button>
+        </div>
+      )
     case 'compile':
       // Raw stderr, exactly what the model was handed — if the loop is
       // repairing against a bad diagnostic, the user should be able to see it.
       return event.ok ? (
         <span className="chip ok">compiled · {event.ms} ms</span>
       ) : (
-        <pre className="chat-stderr">{event.stderr}</pre>
+        <details className="card failed">
+          <summary>
+            <span className="card-icon" aria-hidden="true">!</span>
+            <span className="card-text">
+              <b>Didn't compile{event.attempt ? ` · try ${event.attempt}` : ''}</b>
+              <span>The model was shown this error</span>
+            </span>
+            <span className="card-more" aria-hidden="true">▸</span>
+          </summary>
+          <pre className="chat-stderr">{event.stderr}</pre>
+        </details>
       )
     case 'inspect':
-      return (
-        <div className="chat-inspect">
-          {event.image && <img src={event.image} alt="Before in green, after in magenta" />}
-          <details>
-            <summary className="chip">inspected</summary>
-            <pre>{event.text}</pre>
-          </details>
-        </div>
-      )
+      return null
     case 'note':
       return <div className={event.tone === 'error' ? 'chat-note bad' : 'chat-note'}>{event.text}</div>
     case 'skill':

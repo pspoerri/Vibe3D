@@ -34,13 +34,14 @@ export function Help({ onClose }: { onClose: () => void }) {
         <h2>Getting started</h2>
         <ul>
           <li>
-            <b>A key.</b> Open the settings from the model name under the chat. <b>Connect
-            OpenRouter</b> mints a key scoped to this app that you can revoke on its own; pasting a
+            <b>A key.</b> Send a first message and the app asks for one, or open <b>Settings</b> at
+            the top of the chat. <b>Connect OpenRouter</b> mints a key scoped to this app that you can revoke on its own; pasting a
             key works too. It is kept in this browser only and sent to exactly one host.
           </li>
           <li>
-            <b>A document.</b> The start window lists yours, newest first, with three examples to
-            start from. <b>New</b> in the menu bar makes an empty one.
+            <b>A document.</b> Type what you want to print on the start window and it becomes one.
+            The start window also lists yours, newest first, with three examples to start from;{' '}
+            <b>New document</b> in the menu under a document's name makes an empty one.
           </li>
           <li>
             <b>A part.</b> Describe it in the chat: what it is for, the dimensions that matter,
@@ -56,15 +57,16 @@ export function Help({ onClose }: { onClose: () => void }) {
           compiles it; a compile error goes back to the model verbatim for up to two repairs.
         </p>
         <p>
-          With thinking <b>off</b> — the default — that is the whole turn: one model call. Set
-          thinking to low, medium or high in the settings, or with <code>/think</code>, and the
-          model also gets a look at what it built — a measured report and, for vision models, a
+          With <b>Thinking</b> set to <b>Off</b> that is the whole turn: one model call. Set it
+          to Low, Medium or High — a model starts at High — under the composer, in Settings, or
+          with <code>/think</code>, and the model also gets a look at what it built — a measured report and, for vision models, a
           render — answers a few yes/no questions about your request, and may correct itself, ask
           for another angle or a cut through the part, and look again, until it is satisfied.
           The line under the transcript says what it is doing — <code>look 2 · compiling</code>{' '}
           — click it to see the model's raw output so far; the viewport shows each version that compiles as it goes (tagged <b>candidate</b>{' '}
           until it commits), and nothing interrupts it but <b>Stop</b>. Everything it saw sits in the transcript
-          behind the <b>inspected</b> chip. The model can also load a <b>skill</b> — fonts, views,
+          in the <b>Checked its work</b> card, and each turn ends in a card naming the version it
+          made, with <b>Changes</b> opening it in History. The model can also load a <b>skill</b> — fonts, views,
           parts, diff, bosl2 — reference it pulls in when it needs it, at any thinking level; a{' '}
           <b>skill · fonts</b> chip marks the moment. The status line also shows what the running
           turn has cost so far. The app grades the mechanical checks itself — rests on the plate,
@@ -73,16 +75,16 @@ export function Help({ onClose }: { onClose: () => void }) {
           and show under the viewport in amber.
         </p>
         <p>
-          <b>Stop</b> aborts the request. If a version had already compiled, you keep it. Prices
-          in the footer are OpenRouter's list prices for the session so far; <b>copy</b> beside
-          them puts a debug report on the clipboard — settings, source and the whole transcript,
+          <b>Stop</b> aborts the request. If a version had already compiled, you keep it. The chat's
+          header shows what the session has cost at OpenRouter's list prices; <b>Copy debug
+          report</b> in Settings puts a debug report on the clipboard — settings, source and the whole transcript,
           raw, with no key and no images — for a bug report.
         </p>
 
         <h2>The editor</h2>
         <p>
           Edit freely; a successful compile of your edits becomes a version. Assignments above the
-          first <code>{'{'}</code> with a Customizer annotation become controls under the editor —
+          first <code>{'{'}</code> with a Customizer annotation become controls on the <b>Parameters</b> tab —
           <code>wall = 2; // [1:0.5:5]</code> is a slider, <code>// [a, b, c]</code> a dropdown,{' '}
           <code>true</code> a checkbox. Dragging previews at a reduced <code>$fn</code> and writes
           the value into the source on release, with no model call. A compile error marks its line
@@ -99,34 +101,35 @@ export function Help({ onClose }: { onClose: () => void }) {
 
         <h2>The viewport</h2>
         <ul>
-          <li>Drag to orbit, wheel to zoom, right-drag to pan. The cube snaps to a standard view; <b>FIT</b> frames the part.</li>
+          <li>Drag to orbit, wheel to zoom, right-drag to pan. The cube snaps to a standard view; <b>Fit view</b> frames the part. The tools are in the dock at the bottom of the view.</li>
           <li>
-            The tags read size, triangle count, part count and volume off the mesh. <i>Not
-            watertight</i> means the mesh has an open edge and will trouble a slicer. The
-            <b> metric</b>/<b>imperial</b> toggle changes the readout only — the source is always
+            The line under the status reads size, part count and volume off the mesh, and whether it
+            fits your printer. <i>Not watertight</i> means the mesh has an open edge and will trouble
+            a slicer. The <b>mm</b>/<b>in</b> toggle changes the readout only — the source is always
             millimetres — and tells the model how to read your dimensions.
           </li>
           <li>
             <b>Click a part</b> to select it: it is highlighted, a chip appears above the composer,
             and your next message is headed by that part's number, size, position and colour, so
-            "make this taller" means that one. Click empty space or <b>clear</b> to deselect.
+            "make this taller" means that one. Click empty space or the chip's <b>×</b> to deselect.
           </li>
           <li>
-            <b>DRAW</b> turns the view into a sketchpad: drag to draw in red, <b>UNDO</b> and{' '}
-            <b>CLEAR</b> fix a stroke, <b>ATTACH</b> puts the marked-up view into your next message,
+            <b>Sketch</b> turns the view into a sketchpad: drag to draw in red, <b>Undo</b> and{' '}
+            <b>Clear</b> fix a stroke, <b>Attach to message</b> puts the marked-up view into your next message,
             where the model reads the strokes as "here". <kbd>Esc</kbd> leaves without attaching.
           </li>
           <li>
-            <b>CUT</b> opens the part along X, Y or Z; the slider moves the cut, so a pocket or a
-            wall thickness can be seen. <b>MEASURE</b> takes two clicks on the part and shows the
-            distance with its axis deltas. Click either again to leave.
+            <b>Section</b> opens the part along X, Y or Z; the slider moves the cut, so a pocket or a
+            wall thickness can be seen. <b>Measure</b> takes two clicks on the part and shows the
+            distance with its axis deltas. <b>Done</b>, <kbd>Esc</kbd> or <b>Select</b> leaves either.
           </li>
           <li>
-            The plate outline is the printer's build volume — a setting under the chat, 256 mm
-            cubed by default — and the model is told when the part does not fit it.
+            The plate outline is the printer's build volume — <b>Printer</b> in Settings, a preset or
+            your own numbers, 256 mm cubed by default — and the model is told when the part does not
+            fit it.
           </li>
           <li>
-            <b>Export 3MF</b> (carries units, one object per part, and every <code>color()</code> as a
+            <b>Export</b> offers <b>3MF</b> (carries units, one object per part, and every <code>color()</code> as a
             material — and, for Bambu Studio and PrusaSlicer, as painting: each colour region is
             a filament slot, the largest region filament 1), <b>STL</b> (colours per facet, the VisCAM/SolidView
             way — MeshLab reads them, slicers ignore them), or <b>OBJ</b> (a coloured model brings
@@ -134,8 +137,8 @@ export function Help({ onClose }: { onClose: () => void }) {
             Studio greets every 3MF it did not write itself — Fusion's and PrusaSlicer's included —
             with "invalid config, load geometry data only": click OK, the parts and colours all
             load. Only a full Bambu project file avoids it, and that would carry printer settings
-            this app should not choose for you. With a part selected, the buttons say so and write
-            that part alone.
+            this app should not choose for you. With a part selected, Export offers that part
+            alone.
           </li>
         </ul>
 
@@ -164,7 +167,7 @@ export function Help({ onClose }: { onClose: () => void }) {
 
         <h2>Imported meshes</h2>
         <p>
-          <b>Import mesh…</b> under the sliders takes an STL, OBJ, 3MF or OFF file. The kernel reads
+          <b>Import STL, OBJ, 3MF or OFF</b> on the Parameters tab takes a mesh file. The kernel reads
           and measures it; a file it cannot read is refused with its reason. From then on{' '}
           <code>import("name.stl")</code> works in the source, and the model sees the file with its
           bounding box so it can place it by numbers. Files stay with the document in this browser
@@ -176,19 +179,19 @@ export function Help({ onClose }: { onClose: () => void }) {
           Paste an image into the composer or pick one with the button beside it, up to four per
           message. They carry layout and intent; dimensions still have to come from your words. An
           image is sent with the turn it belongs to and never again, and it is not saved. A view
-          attached from <b>DRAW</b> travels the same way, headed so the model knows it is this app's
+          attached from <b>Sketch</b> travels the same way, headed so the model knows it is this app's
           own render with your strokes on it.
         </p>
 
         <h2>Versions and documents</h2>
         <p>
           Every turn, every <b>Save version</b> and every successful compile of your own edits is a
-          version; nothing is deleted. The picker in the menu bar steps to any of them,{' '}
-          <code>/undo</code> steps back one, <b>Diff</b> shows what the current one changed against
-          the version it was made from, and a change made from an older version simply becomes
-          the next. <b>Share</b> copies a link with the source in it; whoever opens it gets a new
+          version; nothing is deleted. <b>History</b>, the <code>v7</code> pill beside the document's
+          name, lists them: open one to see what it changed against the version it was made from,
+          and <b>Restore</b> it or read the <b>Full diff</b>. <code>/undo</code> steps back one, and a
+          change made from an older version simply becomes the next. <b>Share</b> copies a link with the source in it; whoever opens it gets a new
           document with that source and no conversation. The start window shows a thumbnail of
-          each document's last compile. <b>Export project</b> writes one <code>.json</code> with source, versions,
+          each document's last compile. <b>Export project</b>, in the menu under the document's name, writes one <code>.json</code> with source, versions,
           conversation and meshes — never the key; <b>Import project</b> reads it back as a new
           document. Documents live in this browser's storage, which a browser may evict when it
           needs space: export what you want to keep.
