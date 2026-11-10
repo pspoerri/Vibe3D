@@ -84,6 +84,21 @@ test('without a key the prompt waits in the composer, and goes once a key is sav
   await expect(page.locator('.tag', { hasText: '11.0 × 11.0 × 11.0 mm' })).toBeVisible({ timeout: 90_000 })
 })
 
+test('without a key nothing asks OpenRouter for its models', async ({ page }) => {
+  const asked: string[] = []
+  page.on('request', (request) => {
+    if (request.url().startsWith('https://openrouter.ai/')) asked.push(request.url())
+  })
+  await stubModel(page)
+  await page.goto('/')
+  await create(page, 'a small cube')
+  await expect(page.getByRole('dialog', { name: 'Connect a model' })).toBeVisible({ timeout: 90_000 })
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible()
+  expect(asked).toEqual([])
+})
+
 test('a message waiting when sign-in leaves the page goes once the key is minted', async ({ page }) => {
   await stubModel(page)
   await page.route('https://openrouter.ai/auth**', (route) => route.abort())
