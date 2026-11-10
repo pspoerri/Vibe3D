@@ -855,7 +855,7 @@ function TopBar({
   if (!doc || !session || !head) {
     return (
       <header className="topbar">
-        <span className="logo" aria-hidden="true">V</span>
+        <img className="logo" src="favicon.svg" alt="" />
         <span className="brand-name">Vibe3D</span>
         <div className="topbar-end">
           <button type="button" className="ghost" disabled={!session} onClick={() => fileRef.current?.click()}>
@@ -891,7 +891,7 @@ function TopBar({
   return (
     <header className="topbar">
       <button type="button" className="logo" aria-label="Vibe3D" title="All documents" onClick={onStart}>
-        V
+        <img src="favicon.svg" alt="" />
       </button>
       <button type="button" className="back" aria-label="All documents" onClick={onStart}>
         ‹
