@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Chat } from './chat/Chat'
 import { COMMANDS } from './chat/commands'
-import { constructionSource } from './chat/parts'
+import { constructionSource, withImport } from './chat/parts'
 import { Help } from './help/Help'
 import { Compiler, type CompileResult } from './kernel/compile'
 import { kernelWarnings } from './kernel/noise'
@@ -599,7 +599,15 @@ export function App() {
                   components={components}
                   units={units}
                   disabled={chatBusy}
-                  onAdd={(c) => setSession((s) => (s ? addComponent(s, c, Date.now()) : s))}
+                  onAdd={(c) => {
+                    // Placed at once, so the mesh shows; the line is the user's to move or delete.
+                    // One functional update, so several files picked together each land.
+                    setSession((s) => {
+                      if (!s) return s
+                      const added = addComponent(s, c, Date.now())
+                      return updateSource(added, withImport(currentDoc(added).source, c.name), Date.now())
+                    })
+                  }}
                   onRemove={(name) => setSession((s) => (s ? removeComponent(s, name, Date.now()) : s))}
                 />
               )}

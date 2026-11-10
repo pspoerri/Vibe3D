@@ -84,12 +84,16 @@ export function ComponentsPanel({
           type="file"
           aria-label="Import mesh"
           accept=".stl,.obj,.3mf,.off"
+          multiple
           disabled={disabled || reading !== null}
           onChange={(e) => {
-            const file = e.target.files?.[0]
+            const picked = [...(e.target.files ?? [])]
             // So the same file can be picked twice in a row.
             e.target.value = ''
-            if (file) void attach(file)
+            // One at a time: each is its own kernel run.
+            void (async () => {
+              for (const file of picked) await attach(file)
+            })()
           }}
         />
       </label>

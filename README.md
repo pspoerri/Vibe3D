@@ -96,8 +96,8 @@ Click a part in the viewport to select it. The next message you send starts with
 number, bounding box and colour, so "make this 2 mm taller" means the part you clicked.
 
 You can bring meshes you already have. **Import STL, OBJ, 3MF or OFF** on the **Parameters** tab
-takes a file, and the kernel reads and measures it. From then on `import("name.stl")` works in
-the source. The model sees the list of files with each one's bounding box and places it by those
+takes a file, and the kernel reads and measures it. The mesh is placed in the source as a new
+PART with `import("name.stl")`, so it shows at once. The model sees the list of files with each one's bounding box and places it by those
 numbers. The files are stored with the document in this browser and are included in the project
 file.
 

@@ -88,6 +88,19 @@ function sections(lines: readonly string[]): Map<number, Span> {
 /** How many PART sections the source has — what the mesh's solid count is checked against. */
 export const partCount = (source: string): number => sections(source.split('\n')).size
 
+/**
+ * The source with an imported mesh placed as a new PART section, before any
+ * CONSTRUCTION section. Unchanged when the source already imports the file.
+ */
+export function withImport(source: string, name: string): string {
+  if (source.includes(`import("${name}")`)) return source
+  const n = Math.max(0, ...sections(source.split('\n')).keys()) + 1
+  const section = `${openMarker(n)}\nimport("${name}");\n${closeMarker(n)}\n`
+  const at = source.indexOf(CONSTRUCTION_OPEN)
+  if (at >= 0) return `${source.slice(0, at)}${section}\n${source.slice(at)}`
+  return source.trim() ? `${source.trimEnd()}\n\n${section}` : section
+}
+
 /** Each PART section's number and its top-level call, first line, for a listing. */
 export function partSections(source: string): { part: number; call: string }[] {
   const lines = source.split('\n')

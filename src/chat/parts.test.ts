@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { expect, test } from 'vitest'
-import { applyParts, checkParts, constructionSource, parsePartBlocks } from './parts'
+import { applyParts, checkParts, constructionSource, parsePartBlocks, withImport } from './parts'
 
 const SRC = [
   'wall = 2;',
@@ -248,4 +248,13 @@ test('construction: the section is replaced, deleted or added by name, and check
   expect(checkParts(unguarded.source)).toEqual([
     'CONSTRUCTION lines 10, 11 lack the % modifier, so that geometry would print. Every construction statement starts with %.',
   ])
+})
+
+test('withImport places a mesh as the next PART, before CONSTRUCTION, once', () => {
+  const one = '// ---- PART 1 ----\ncube(1);\n// ---- PART 1 END ----\n'
+  const placed = withImport(`${one}\n// ---- CONSTRUCTION ----\n%cube(2);\n// ---- CONSTRUCTION END ----\n`, 'a.stl')
+  expect(placed).toContain('// ---- PART 2 ----\nimport("a.stl");\n// ---- PART 2 END ----\n\n// ---- CONSTRUCTION ----')
+  expect(withImport(placed, 'a.stl')).toBe(placed)
+  expect(withImport('', 'a.stl')).toBe('// ---- PART 1 ----\nimport("a.stl");\n// ---- PART 1 END ----\n')
+  expect(checkParts(withImport(one, 'a.stl'))).toEqual([])
 })
