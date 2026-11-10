@@ -26,32 +26,38 @@ export function Help({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <p className="help-lede">
-          A chat, a source editor and a 3D viewport over one OpenSCAD document. Everything runs in
-          this browser; the only thing that leaves it is the chat request to the model host you
-          connect, with your key.
+          Vibe3D turns a description into a 3D-printable part. You chat with a model, it writes
+          OpenSCAD, and this browser compiles and shows the result. Nothing leaves the browser
+          except the chat request to the model host you connect, sent with your key.
         </p>
 
         <h2>Getting started</h2>
-        <ul>
+        <ol>
           <li>
-            <b>A key.</b> Send a first message and the app asks for one, or open <b>Settings</b> at
-            the top of the chat. <b>Connect OpenRouter</b> mints a key scoped to this app that you
-            can revoke on its own; pasting a key works too. <b>Local server</b> takes the address of
-            an OpenAI-compatible server on your machine (Ollama, LM Studio) instead — that one needs
-            the app run from source with <code>pnpm dev</code>, because a built copy, the hosted site
-            included, may only talk to OpenRouter.
-            A key is kept in this browser only and sent to exactly one host.
-          </li>
-          <li>
-            <b>A document.</b> Type what you want to print on the start window and it becomes one.
-            The start window also lists yours, newest first, with three examples to start from;{' '}
+            <b>Describe what you want to print.</b> Type it on the start window and it becomes a
+            document. Say what the part is for, the dimensions that matter and what it mates
+            with; the model guesses any dimension you leave out, and says which. The start window
+            also lists your documents, newest first, and three examples to start from;{' '}
             <b>New document</b> in the menu under a document's name makes an empty one.
           </li>
           <li>
-            <b>A part.</b> Describe it in the chat: what it is for, the dimensions that matter,
-            what it mates with. Unstated dimensions are the model's guess — it will say which.
+            <b>Connect a model.</b> Your first message asks for a key; <b>Settings</b> at the top
+            of the chat does the same later. <b>Connect OpenRouter</b> mints a key scoped to this
+            app that you can revoke on its own, or you can paste one. The key stays in this
+            browser and is sent to exactly one host.
           </li>
-        </ul>
+          <li>
+            <b>Refine the part.</b> Ask for changes in the chat, drag the sliders on the{' '}
+            <b>Parameters</b> tab, or edit the code yourself. <b>Export</b> writes a file for your
+            slicer.
+          </li>
+        </ol>
+        <p>
+          To use a model on your own machine, pick <b>Local server</b> in Settings and enter the
+          address of an OpenAI-compatible server (Ollama, LM Studio). This needs the app run from
+          source with <code>pnpm dev</code>, because a built copy, the hosted site included, may
+          only talk to OpenRouter.
+        </p>
 
         <h2>What happens on a turn</h2>
         <p>
@@ -67,24 +73,24 @@ export function Help({ onClose }: { onClose: () => void }) {
         </p>
         <ul>
           <li>
-            <b>It looks.</b> After each compile it gets a measured report and, for vision models, a
+            <b>The model looks at the part.</b> After each compile it gets a measured report and, for vision models, a
             render. It answers a few yes/no questions about your request, and may correct itself,
             ask for another angle or a cut through the part, and look again, until it is satisfied.
           </li>
           <li>
-            <b>The app grades the mechanics</b> itself — rests on the plate, one solid per PART, no
+            <b>The app checks the mechanics</b> itself — rests on the plate, one solid per PART, no
             sealed voids, watertight, overhangs past 45°, fits the bed, lettering in its own
             colour — and hands the model the verdicts. Kernel warnings from a compile that
             succeeded go to it too, and show under the viewport in amber.
           </li>
           <li>
-            <b>You can watch.</b> The line under the transcript says what it is doing —{' '}
+            <b>You can follow along.</b> The line under the transcript says what it is doing —{' '}
             <code>look 2 · compiling</code> — and what the turn has cost so far; click it for the
             model's raw output. The viewport shows each version that compiles, tagged{' '}
             <b>candidate</b> until it commits.
           </li>
           <li>
-            <b>It is all kept.</b> What it saw sits in the transcript in the <b>Checked its work</b>{' '}
+            <b>Everything is kept.</b> What the model saw sits in the transcript in the <b>Checked its work</b>{' '}
             card, and each turn ends in a card naming the version it made, with <b>Changes</b>{' '}
             opening it in History.
           </li>
