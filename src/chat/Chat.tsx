@@ -259,11 +259,12 @@ export function Chat({
     if (box && reasoningStickRef.current) box.scrollTop = box.scrollHeight
   }, [liveReasoning])
 
-  // Grow to the content, capped in CSS. Reset to auto first or scrollHeight
-  // only ever reports the taller of the two and the box can never shrink back.
+  // Grow to the content, capped in CSS. `field-sizing: content` does it where
+  // supported, and keeps up with a resize; this is the fallback (Firefox).
+  // Reset to auto first or scrollHeight only ever reports the taller of the two.
   useEffect(() => {
     const field = inputRef.current
-    if (!field) return
+    if (!field || globalThis.CSS?.supports?.('field-sizing', 'content')) return
     field.style.height = 'auto'
     field.style.height = `${field.scrollHeight}px`
   }, [input])
