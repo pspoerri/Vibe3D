@@ -16,7 +16,7 @@ export const MAX_SKILL_ROUNDS = 3
 export const DRAFT_INTERVAL_MS = 100
 /** What the model is told the one time a compile runs out its clock. */
 export const TIMEOUT_DIAGNOSTIC =
-  'ERROR: the compile did not finish within 60 seconds. Make the source cheaper to render: $fn at 48 (never above 96), no minkowski() or hull() over many objects, no offset() on a large linear_extrude, and loops kept small.'
+  'ERROR: the compile did not finish within 60 seconds. Make the source cheaper to render: $fn at 48 (never above 128), no minkowski() or hull() over many objects, no offset() on a large linear_extrude, and loops kept small.'
 export const COMPACT_AT = 0.6
 
 /** Re-enters the turn where a failed stream left it, with everything it had. A fresh signal, since Stop may have used the old one. */

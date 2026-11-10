@@ -65,8 +65,7 @@ thing.
    Only assignments above the first \`{\` become sliders, so every knob belongs there.
 2. Then shared modules and functions.
 3. Then the parts, each in its own section between marker comments, with the
-   modules only it uses and ONE top-level call per part — one call for most
-   parts; see PARTS:
+   modules only it uses and ONE top-level call per part (see PARTS):
        // ---- PART 1 ----
        module hook() { ... }
        hook();
@@ -141,7 +140,7 @@ text() has the Liberation family and nothing else — \`font = "Liberation Sans:
 any other name silently gets the nearest face. The fonts skill lists every face and style.
 
 LIBRARIES
-BOSL2 is installed: \`include <BOSL2/std.scad>\` on the first line after the title gives you
+BOSL2 is installed: \`include <BOSL2/std.scad>\` after the title comment, before the parameters, gives you
 cuboid() with rounding and chamfer, cyl(), tube(), prismoid(), attachments and anchors,
 rounding and offset_sweep; \`include <BOSL2/threading.scad>\`, \`<BOSL2/gears.scad>\` and
 \`<BOSL2/screws.scad>\` add threads, gears and screw holes. Use it for fillets, threads and
@@ -149,10 +148,10 @@ gears rather than hand-rolling them; plain OpenSCAD is fine for everything else.
 BOSL2 family is available — no MCAD, no other library. The bosl2 skill has the calls.
 
 SKILLS
-Reference to load when it changes what you will do next. Reply with ONLY a \`\`\`skill
-block whose body is the name; the text arrives in the next message and stays for the
-session. Beside a source, an edit or a view request the block is honoured too, and the
-reply goes ahead.
+Reference to load when it changes what you will do next. Reply with a \`\`\`skill block
+whose body is the name; the text arrives in the next message and stays for the session.
+Send the block alone when you need the reference before you write. Beside a source, an
+edit or a view request it is honoured too, and that reply goes ahead as well.
     \`\`\`skill
     fonts
     \`\`\`
@@ -285,8 +284,8 @@ figure they asked for, with the millimetre value in brackets.`
  * "Unclear" permitted, then a correction or a confirmation. The bare "does
  * this look right" is the measured −20% regression and never goes out.
  *
- * `checks` are the app's own verdicts (meshChecks): Z=0, solid count against
- * the PART sections, voids, watertightness, genus. Graded here so the model
+ * `checks` are the app's own verdicts (meshChecks): Z=0, bed fit, solid count
+ * against the PART sections, voids, watertightness, overhangs, lettering colour, genus changes. Graded here so the model
  * spends its questions on the request rather than re-deriving them — and,
  * for the void, so it learns which shell the bare count could never name.
  */
@@ -316,9 +315,9 @@ Check the part against the request:
 1. The checks above are settled: do not re-ask them, and fix every one marked NO. Write 2 to 5 yes/no questions the REQUEST implies — the features it named, their sizes, and where they sit relative to each other${fromRender}.
 2. Answer each Yes, No or Unclear, with one line of reasoning from the report or the render.
 3. If any check or answer is No, reply with the correction: openscad-edit blocks for a change of a few lines, openscad-part blocks for whole parts or modules, the complete source only when most of the file changes.
-   If every answer is Yes or Unclear, reply with one sentence and NO code block — the source on screen stays as it is.${
+${
      looks
-       ? '\n   If an answer is Unclear because this angle cannot show it, reply with ONLY a ```view block asking for the angle or cut that would.'
-       : ''
-   }`
+       ? '   If nothing is No but an answer is Unclear because this angle cannot show it, reply with ONLY a ```view block asking for the angle or cut that would.\n   Otherwise'
+       : '   If every answer is Yes or Unclear'
+   }, reply with one sentence and NO code block — the source on screen stays as it is.`
 }

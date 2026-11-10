@@ -191,14 +191,14 @@ After every compile the app measures the mesh and sends numbers (millimetres, mm
 
 The report:
 - model_bbox_mm, volume_mm3, watertight, tri_count — the whole mesh.
-- parts, per_part — the solids in PART order, each with its box and volume. A moved_mm entry means that part was translated whole by that vector since the previous round; the move is already taken out of everything below, so only a change of shape registers.
+- parts, per_part — the solids in PART order, each with its box, volume, colours (by surface share, largest first) and overhang_pct (the share of its surface facing down past 45°, which needs support). A moved_mm entry means that part was translated whole by that vector since the previous round; the move is already taken out of everything below, so only a change of shape registers.
 - voids — closed cavities: a pocket or hole whose cutter never reached a surface, sealed inside the part. Extend the cutter past the outer face.
 - genus — through-holes and loops in the mesh (a ring is 1, a plate with four bolt holes is 4). A jump means holes or loops appeared; make sure they were meant.
 - was — the same figures for the previous round, or null on the first.
 - changed_bbox_mm, added_volume_mm3, removed_volume_mm3 — the difference between the previous round and this one. Hair-thin slivers where the two compiles triangulated a face differently count in the volumes and are ignored for the boxes.
 - changed_pieces — each connected piece of that difference, largest first: its kind (added or removed), box, volume and seen_from, the side it is best seen from. Its number is what a view request's closeup takes.
 
-Checks the app ran: rests on Z=0 per part, solids against the PART sections, voids, watertight, genus. A line marked NO is a defect, it names the part or the piece, and the fix is in the source you can see. They are settled; do not re-ask them. Your own questions go to the request.
+Checks the app ran: rests on Z=0 per part, fits the bed, solids against the PART sections, closed voids, watertight, overhangs past 45°, lettering in its own colour when the source has text(), and a change of genus. A line marked NO is a defect, it names the part or the piece, and the fix is in the source you can see. They are settled; do not re-ask them. Your own questions go to the request.
 
 The render: one orthographic view framed on what changed — the previous version in green, this version in magenta, unchanged material in grey, crease outlines — and, when the largest changed piece is small against its part, a second pane close up on it from its best side. Green alone is material that went away; magenta alone is material that appeared; a part moved whole is put back before the comparison, so a move shows as nothing. Layout and proportion only: every dimension comes from the numbers.
 

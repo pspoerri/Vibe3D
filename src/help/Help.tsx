@@ -27,16 +27,20 @@ export function Help({ onClose }: { onClose: () => void }) {
         </div>
         <p className="help-lede">
           A chat, a source editor and a 3D viewport over one OpenSCAD document. Everything runs in
-          this browser; the only thing that leaves it is the chat request to OpenRouter, with your
-          key.
+          this browser; the only thing that leaves it is the chat request to the model host you
+          connect, with your key.
         </p>
 
         <h2>Getting started</h2>
         <ul>
           <li>
             <b>A key.</b> Send a first message and the app asks for one, or open <b>Settings</b> at
-            the top of the chat. <b>Connect OpenRouter</b> mints a key scoped to this app that you can revoke on its own; pasting a
-            key works too. It is kept in this browser only and sent to exactly one host.
+            the top of the chat. <b>Connect OpenRouter</b> mints a key scoped to this app that you
+            can revoke on its own; pasting a key works too. <b>Local server</b> takes the address of
+            an OpenAI-compatible server on your machine (Ollama, LM Studio) instead — that one needs
+            the app run from source with <code>pnpm dev</code>, because a built copy, the hosted site
+            included, may only talk to OpenRouter.
+            A key is kept in this browser only and sent to exactly one host.
           </li>
           <li>
             <b>A document.</b> Type what you want to print on the start window and it becomes one.
@@ -59,29 +63,50 @@ export function Help({ onClose }: { onClose: () => void }) {
         <p>
           With <b>Thinking</b> set to <b>Off</b> that is the whole turn: one model call. Set it
           to Low, Medium or High — a model starts at High — under the composer, in Settings, or
-          with <code>/think</code>, and the model also gets a look at what it built — a measured report and, for vision models, a
-          render — answers a few yes/no questions about your request, and may correct itself, ask
-          for another angle or a cut through the part, and look again, until it is satisfied.
-          The line under the transcript says what it is doing — <code>look 2 · compiling</code>{' '}
-          — click it to see the model's raw output so far; the viewport shows each version that compiles as it goes (tagged <b>candidate</b>{' '}
-          until it commits), and nothing interrupts it but <b>Stop</b>. Everything it saw sits in the transcript
-          in the <b>Checked its work</b> card, and each turn ends in a card naming the version it
-          made, with <b>Changes</b> opening it in History. The model can also load a <b>skill</b> — fonts, views,
-          parts, diff, bosl2 — reference it pulls in when it needs it, at any thinking level; a{' '}
-          <b>skill · fonts</b> chip marks the moment. The status line also shows what the running
-          turn has cost so far. The app grades the mechanical checks itself — rests on the plate,
-          one solid per PART, no sealed voids, watertight, overhangs past 45°, fits the bed — and
-          hands the model the verdicts; kernel warnings from a compile that succeeded go to it too,
-          and show under the viewport in amber.
+          with <code>/think</code>, and the model also checks its work before the turn commits:
+        </p>
+        <ul>
+          <li>
+            <b>It looks.</b> After each compile it gets a measured report and, for vision models, a
+            render. It answers a few yes/no questions about your request, and may correct itself,
+            ask for another angle or a cut through the part, and look again, until it is satisfied.
+          </li>
+          <li>
+            <b>The app grades the mechanics</b> itself — rests on the plate, one solid per PART, no
+            sealed voids, watertight, overhangs past 45°, fits the bed, lettering in its own
+            colour — and hands the model the verdicts. Kernel warnings from a compile that
+            succeeded go to it too, and show under the viewport in amber.
+          </li>
+          <li>
+            <b>You can watch.</b> The line under the transcript says what it is doing —{' '}
+            <code>look 2 · compiling</code> — and what the turn has cost so far; click it for the
+            model's raw output. The viewport shows each version that compiles, tagged{' '}
+            <b>candidate</b> until it commits.
+          </li>
+          <li>
+            <b>It is all kept.</b> What it saw sits in the transcript in the <b>Checked its work</b>{' '}
+            card, and each turn ends in a card naming the version it made, with <b>Changes</b>{' '}
+            opening it in History.
+          </li>
+        </ul>
+        <p>
+          At any thinking level the model can load a <b>skill</b> — fonts, views, parts, diff,
+          bosl2 — reference it pulls in when it needs it; a <b>skill · fonts</b> chip marks the
+          moment.
         </p>
         <p>
-          <b>Stop</b> aborts the request. If a version had already compiled, you keep it. The chat's
-          header shows what the session has cost at OpenRouter's list prices; <b>Copy debug
-          report</b> in Settings puts a debug report on the clipboard — settings, source and the whole transcript,
-          raw, with no key and no images — for a bug report.
+          <b>Stop</b> aborts the request, and is the only thing that interrupts a turn. If a version
+          had already compiled, you keep it. The chat's header shows what the session has cost at
+          the model's list price. <b>Copy debug report</b> in Settings puts settings, source and the
+          whole raw transcript on the clipboard — no key, no images — for a bug report.
         </p>
 
         <h2>The editor</h2>
+        <p>
+          The edit pane holds <b>Parameters</b> and <b>Code</b> as two tabs. It starts closed, opens
+          from the button at the viewport's edge, resizes by dragging that edge, and stays as you
+          left it. On a phone the three panes are tabs: Model, Chat and Edit.
+        </p>
         <p>
           Edit freely; a successful compile of your edits becomes a version. Assignments above the
           first <code>{'{'}</code> with a Customizer annotation become controls on the <b>Parameters</b> tab —
@@ -103,7 +128,7 @@ export function Help({ onClose }: { onClose: () => void }) {
         <ul>
           <li>Drag to orbit, wheel to zoom, right-drag to pan. The cube snaps to a standard view; <b>Fit view</b> frames the part. The tools are in the dock at the bottom of the view.</li>
           <li>
-            The line under the status reads size, part count and volume off the mesh, and whether it
+            The readout at the top of the view gives the mesh's size, part count and volume, and whether it
             fits your printer. <i>Not watertight</i> means the mesh has an open edge and will trouble
             a slicer. The <b>mm</b>/<b>in</b> toggle changes the readout only — the source is always
             millimetres — and tells the model how to read your dimensions.
@@ -145,7 +170,7 @@ export function Help({ onClose }: { onClose: () => void }) {
         <h2>Parts</h2>
         <p>
           Every top-level statement in the source is a part of its own: shown together, counted in
-          the tags, and a separate object in the 3MF — a box and its lid arrive in the slicer as two
+          the readout, and a separate object in the 3MF — a box and its lid arrive in the slicer as two
           things. The model is told to lay parts out side by side on the plate, never overlapping,
           and to keep a single solid's union inside a module.
         </p>
@@ -161,7 +186,7 @@ export function Help({ onClose }: { onClose: () => void }) {
           clearance zone — lives in a <code>// ---- CONSTRUCTION ----</code> section after the
           parts, every statement prefixed with OpenSCAD's <code>%</code> modifier. It shows as a
           translucent blue ghost in the viewport and in the model's own looks, and it is never in
-          the tags, the exports or a print. Ask for it: "the bracket hangs on a 18 mm shelf — show
+          the readout, the exports or a print. Ask for it: "the bracket hangs on a 18 mm shelf — show
           the shelf".
         </p>
 
@@ -213,7 +238,7 @@ export function Help({ onClose }: { onClose: () => void }) {
         <h2>Keys</h2>
         <ul>
           <li><kbd>Enter</kbd> sends, <kbd>Shift</kbd>+<kbd>Enter</kbd> breaks a line.</li>
-          <li><kbd>Esc</kbd> closes this page, and leaves draw mode.</li>
+          <li><kbd>Esc</kbd> closes this page, and leaves Sketch, Section and Measure.</li>
           <li>The editor has its own undo; a turn's rewrite is one step of it.</li>
         </ul>
       </article>
