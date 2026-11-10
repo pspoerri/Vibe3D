@@ -18,6 +18,16 @@ request to the model host you configured.
 
 Design: [docs/design.md](docs/design.md) · Plans: [docs/superpowers/plans](docs/superpowers/plans)
 
+## Quick start
+
+1. Open the app and type what you want to print: what it is for, the dimensions that matter, what
+   it mates with.
+2. The first message asks for a key: **Connect OpenRouter**, or paste one.
+3. Orbit the result, drag its sliders on the **Parameters** tab, ask for changes, then **Export**
+   a 3MF for your slicer.
+
+**Help** in the top bar is the manual; the sections below say the same in more detail.
+
 ## Bring your own tokens
 
 The model runs on your key. The first message you send without one asks for it; **Settings**, at
@@ -38,7 +48,8 @@ settings. The chat's header shows what the session has cost so far, at the model
 Any script running on the page could read the key; that is inherent to browser storage, not a
 choice this app made. The mitigation is a strict Content-Security-Policy whose `connect-src`
 allows only OpenRouter, plus keeping the dependency list short. That allowlist is also why only
-OpenRouter works as a host in the deployed build; run it locally for anything else.
+OpenRouter works as a host in any build, the deployed one included; run `pnpm dev` for a local
+server.
 
 One honest note about **Stop**: aborting the request stops billing on OpenAI, Anthropic, DeepSeek
 and xAI, but not on Google, Groq or Mistral, which bill the whole completion once it starts.
@@ -61,12 +72,12 @@ the model puts on the first line of the file; **Rename** makes a title yours for
 
 ## Parts and imported meshes
 
-Every top-level statement in the source is a part of its own: they are shown together, the HUD
-counts them, and the 3MF carries each as a separate object — with its `color()` — so the slicer
+Every top-level statement in the source is a part of its own: they are shown together, the viewport's
+readout counts them, and the 3MF carries each as a separate object — with its `color()` — so the slicer
 sees a box and its lid as two things. The model is told to lay parts out side by side on the plate
 and never to let two top-level statements overlap; a single solid keeps its union inside a module.
 
-Meshes you already have go in under the sliders: **Import mesh…** takes an STL, OBJ, 3MF or OFF,
+Meshes you already have go in on the **Parameters** tab: **Import STL, OBJ, 3MF or OFF** takes a file,
 the kernel reads and measures it, and from then on `import("name.stl")` works in the source. The
 model sees the list with each file's bounding box and places it by those numbers. The files live
 with the document in this browser and travel in the project file.
@@ -82,7 +93,7 @@ number, bounding box and colour, so "make this 2 mm taller" means the one you cl
 **Construction geometry** — the shelf a bracket hangs on, the box a lid must fit — goes in a
 `// ---- CONSTRUCTION ----` section, every statement prefixed with OpenSCAD's `%` modifier. It
 shows as a translucent blue ghost in the viewport and in the model's own looks, and is never in
-the tags, the exports or a print; the chat notes a construction statement that forgot its `%`.
+the readout, the exports or a print; the chat notes a construction statement that forgot its `%`.
 
 **Sketch** turns the viewport into a sketchpad: drag to draw in red, then **Attach to message** to put the
 marked-up view into your next message — the model reads the strokes as "here", and your words say
@@ -136,8 +147,9 @@ Valid code of the wrong shape is the failure that actually happens, so at **Low*
 **High** (also the reasoning effort the model is asked for; a model starts at High) every source that
 compiles gets a look before the turn commits: a measured report (bounding box, volume, part
 count, genus, overhang share, whether it fits the bed, and what was added and removed compared
-with the part that was on screen) and —
-for models that can read an image — a before/after render, green over magenta. The model answers
+with the part that was on screen), the app's own verdicts on the mechanics (rests on the plate,
+one solid per PART, no sealed voids, watertight, overhangs, bed fit, lettering in its own colour)
+and — for models that can read an image — a before/after render, green over magenta. The model answers
 a few yes/no questions about your request from those numbers and may correct itself, ask for
 another angle or a cut through the part, and look again, until it says the part is right. A
 status line under the transcript says what it is doing — `look 2 · rendering front view, cut at
