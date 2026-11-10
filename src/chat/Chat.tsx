@@ -37,6 +37,8 @@ const OTHER_BASE_URL = 'http://localhost:11434/v1'
 /** A plain cap, chosen over reasoning about 413 payload_too_large: OpenRouter
  *  documents no inline size limit and providers enforce their own. */
 const MAX_IMAGES = 4
+/** The picker's "Other model…" entry; no model id is empty. */
+const OTHER = ''
 /** How the thinking levels read in the interface: what they do, not what they are. */
 const LEVEL: Record<Thinking, string> = { off: 'Off', low: 'Low', medium: 'Medium', high: 'High' }
 /** "Anthropic: Claude Sonnet 5" → "Claude Sonnet 5". */
@@ -149,6 +151,7 @@ export function Chat({
   const otherUrl = useRef(host === 'other' ? settings.baseUrl : OTHER_BASE_URL)
   const [models, setModels] = useState<readonly ModelInfo[]>([])
   const [showSettings, setShowSettings] = useState(false)
+  const [typingModel, setTypingModel] = useState(false)
   /** First run: shown instead of sending when nothing is connected. */
   const [connectOpen, setConnectOpen] = useState(false)
   /** A key pasted in the connect form, saved on Save rather than per keystroke. */
@@ -280,11 +283,10 @@ export function Chat({
       .catch((error: unknown) => setChatError(error instanceof Error ? error.message : String(error)))
   }, [])
 
-  // Lazily, and only when the panel that needs them is open — which is also
-  // the only place a key can be entered, so the catalogue is loaded by the
-  // time a turn could need contextLimit for auto-compact.
+  // Only from the host in use: OpenRouter once it has a key, a local server
+  // once chosen. Nobody who has not picked OpenRouter talks to it.
   useEffect(() => {
-    if (!showSettings && !connectOpen && !canPrompt) return
+    if (!canPrompt) return
     fetchModels(settings.baseUrl, apiKey)
       .then((list) => {
         setModels(list)
@@ -295,7 +297,7 @@ export function Chat({
         }
       })
       .catch(() => setModels([]))
-  }, [showSettings, connectOpen, canPrompt, settings.baseUrl, apiKey])
+  }, [canPrompt, settings.baseUrl, apiKey])
 
   useEffect(() => {
     onConnected(canPrompt ? (host === 'openrouter' ? 'OpenRouter connected' : 'Local server') : null)
@@ -774,6 +776,12 @@ export function Chat({
 
   const level = thinkingOf(settings)
   const info = models.find((m) => m.id === settings.model)
+  // OpenRouter lists hundreds of models; the picker offers its rolling aliases, and Other takes any id.
+  const pickable = host === 'openrouter' ? latestModels(models) : models
+  const closeSettings = () => {
+    setShowSettings(false)
+    setTypingModel(false)
+  }
   const modelName = info ? shortName(info.name) : settings.model
   const printer = printerOf(settings.bed)
   const cards = useMemo(() => cardsOf(log), [log])
@@ -1098,10 +1106,10 @@ export function Chat({
         </button>
       </Dialog>
 
-      <Dialog open={showSettings} onClose={() => setShowSettings(false)} label="Settings" className="settings">
+      <Dialog open={showSettings} onClose={closeSettings} label="Settings" className="settings">
         <div className="dialog-head">
           <h2>Settings</h2>
-          <button type="button" className="dialog-x" aria-label="Close" onClick={() => setShowSettings(false)}>
+          <button type="button" className="dialog-x" aria-label="Close" onClick={closeSettings}>
             ×
           </button>
         </div>
@@ -1109,37 +1117,35 @@ export function Chat({
           <label className="field">
             Model
             <span className="row">
-              {models.length > 0 ? (
+              {models.length > 0 && !typingModel ? (
                 <select
                   className="grow"
                   aria-label="Model"
                   value={settings.model}
-                  onChange={(e) => persistSettings({ ...settings, model: e.target.value })}
+                  onChange={(e) =>
+                    e.target.value === OTHER ? setTypingModel(true) : persistSettings({ ...settings, model: e.target.value })
+                  }
                 >
                   {/* A model id from another host would otherwise show as the first option while the stale id is sent. */}
-                  {!models.some((model) => model.id === settings.model) && (
-                    <option value={settings.model}>{settings.model} · not on this host</option>
+                  {!pickable.some((model) => model.id === settings.model) && (
+                    <option value={settings.model}>{info ? info.name : `${settings.model} · not on this host`}</option>
                   )}
-                  {host === 'openrouter' && (
-                    <optgroup label="Latest">
-                      {latestModels(models).map((model) => (
-                        <option key={model.id} value={model.id}>
-                          {model.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  <optgroup label="All models">
-                    {models.map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.name}
-                        {model.vision ? ' · reads images' : ''}
-                      </option>
-                    ))}
-                  </optgroup>
+                  {pickable.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name}
+                      {model.vision ? ' · reads images' : ''}
+                    </option>
+                  ))}
+                  <option value={OTHER}>Other model…</option>
                 </select>
               ) : (
-                <input className="grow mono" aria-label="Model" value={settings.model} onChange={(e) => persistSettings({ ...settings, model: e.target.value })} />
+                <input
+                  className="grow mono"
+                  aria-label="Model"
+                  placeholder="vendor/model-id"
+                  value={settings.model}
+                  onChange={(e) => persistSettings({ ...settings, model: e.target.value })}
+                />
               )}
               {info?.vision && <span className="badge ok">Reads images</span>}
             </span>

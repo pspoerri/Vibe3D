@@ -1388,7 +1388,10 @@ test('switching the model applies to the meter and to the next request', async (
   // has no stored level and so sits at the default, high.
   await check.getByRole('button', { name: 'Low' }).click()
   await expect(composerCheck).toHaveValue('low')
-  await modelSelect.selectOption('qwen/qwen3-coder')
+  // The list is only the rolling aliases; any other id goes through Other.
+  await expect(modelSelect.locator('option')).toHaveText(['Claude Sonnet Latest · reads images', 'Other model…'])
+  await modelSelect.selectOption({ label: 'Other model…' })
+  await settings.getByLabel('Model', { exact: true }).fill('qwen/qwen3-coder')
   await expect(page.locator('.chat-model')).toHaveAttribute('title', /^qwen\/qwen3-coder/)
   await expect(check.getByRole('button', { name: 'High' })).toHaveAttribute('aria-pressed', 'true')
   await expect(composerCheck).toHaveValue('high')
@@ -1402,7 +1405,10 @@ test('switching the model applies to the meter and to the next request', async (
   expect(body.reasoning).toEqual({ effort: 'high' })
 
   // And Sonnet still remembers its own level.
+  // Reopened, the typed id shows by its catalogue name, beside the aliases.
   await openSettings(page)
+  await expect(modelSelect).toHaveValue('qwen/qwen3-coder')
+  await expect(modelSelect.locator('option:checked')).toHaveText('Qwen3 Coder')
   await modelSelect.selectOption('~anthropic/claude-sonnet-latest')
   await expect(check.getByRole('button', { name: 'Low' })).toHaveAttribute('aria-pressed', 'true')
   await expect(composerCheck).toHaveValue('low')

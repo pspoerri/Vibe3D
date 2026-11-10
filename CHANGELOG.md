@@ -4,6 +4,9 @@
 
 - **Claude Sonnet is the default model**, through OpenRouter's rolling `~anthropic/claude-sonnet-latest`
   alias (was Gemini Flash Latest). A browser that already saved settings keeps its model.
+- **The model picker lists OpenRouter's rolling "latest" models only**, not the whole catalogue;
+  **Other model…** takes any id. The catalogue is fetched only once OpenRouter is connected, so
+  nothing asks openrouter.ai for anything before you choose it.
 - **Redesign: warmer, fewer controls, the same instrument.** Warm paper and one amber, set in
   Instrument Sans and IBM Plex Mono, bundled with the app.
 - **Start window: the prompt comes first.** "What do you want to print?" — typing creates the
