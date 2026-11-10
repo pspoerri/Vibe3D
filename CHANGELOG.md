@@ -9,7 +9,7 @@
   nothing asks openrouter.ai for anything before you choose it.
 - **Redesign: warmer, fewer controls, the same instrument.** Warm paper and one amber, set in
   Instrument Sans and IBM Plex Mono, bundled with the app.
-- **Start window: the prompt comes first.** "What do you want to print?" — typing creates the
+- **Start window: the prompt comes first.** "What do you want to create?" — typing creates the
   document and sends the message, with an optional reference image. Documents show their
   thumbnail and a ⋯ menu (Rename, Export project, Delete); the examples show renders.
 - **First run asks for a model when it is needed.** Sending without a key opens a Connect dialog

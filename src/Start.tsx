@@ -77,7 +77,7 @@ export function StartWindow({
     <div className="start">
       <div className="start-card">
         <section className="start-hero">
-          <h1>What do you want to print?</h1>
+          <h1>What do you want to create?</h1>
           <form
             className="start-prompt"
             onSubmit={(e) => {
