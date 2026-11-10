@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.6.0 — 2026-11-10
 
 - **Claude Sonnet is the default model**, through OpenRouter's rolling `~anthropic/claude-sonnet-latest`
   alias (was Gemini Flash Latest). A browser that already saved settings keeps its model.
@@ -28,6 +28,13 @@
   the session's spend.
 - **Mobile: Model, Chat and Edit tabs**, each full height. Parameters and code are no longer
   desktop-only, the composer floats over the model, and controls are 44 px targets.
+
+- **The plant icon replaces the V badge** in the top bar.
+- **Help and README rewritten for the redesign.** Help opens with numbered first steps and
+  covers the local server, the edit pane and the phone tabs; both read as complete sentences.
+- **Prompts agree with the app.** An Unclear answer asks for another view before the model
+  confirms, a skill request may ride beside a reply, and the `$fn` ceiling, the BOSL2 include
+  position and the diff skill's list of checks match what the app really does.
 
 ## v0.5.5 — 2026-10-24
 
