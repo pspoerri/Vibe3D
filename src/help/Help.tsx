@@ -199,9 +199,10 @@ export function Help({ onClose }: { onClose: () => void }) {
         <h2>Imported meshes</h2>
         <p>
           <b>Import STL, OBJ, 3MF or OFF</b> on the Parameters tab takes a mesh file. The kernel reads
-          and measures it; a file it cannot read is refused with its reason. From then on{' '}
-          <code>import("name.stl")</code> works in the source, and the model sees the file with its
-          bounding box so it can place it by numbers. Files stay with the document in this browser
+          and measures it; a file it cannot read is refused with its reason. The mesh is placed
+          in the source as a new PART with <code>import("name.stl")</code>, so it shows at once; move
+          or delete that line as you like. The model sees the file with its bounding box so it can
+          place it by numbers. Files stay with the document in this browser
           and travel in the project file.
         </p>
 

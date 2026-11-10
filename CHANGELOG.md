@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **An imported mesh shows at once.** Importing a file now also places it in the source as a new
+  PART with `import("name")`; before, nothing appeared until you or the model wrote that line.
+  Several files can be picked in one go, and each becomes its own PART.
+
 ## v0.6.0 — 2026-11-10
 
 - **Claude Sonnet is the default model**, through OpenRouter's rolling `~anthropic/claude-sonnet-latest`
