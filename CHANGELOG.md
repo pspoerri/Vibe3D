@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.6.1 — 2026-11-10
 
 - **An imported mesh shows at once.** Importing a file now also places it in the source as a new
   PART with `import("name")`; before, nothing appeared until you or the model wrote that line.
