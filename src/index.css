@@ -655,6 +655,7 @@ details.card > :not(summary) { margin: 0 12px 12px; }
 .chat-input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .chat-input textarea {
   border: 0; outline: 0; resize: none; background: transparent; font-size: 14px; line-height: 1.5; padding: 0; max-height: 38vh;
+  field-sizing: content; min-height: 1.5em;
 }
 .chat-input textarea::placeholder { color: var(--faint); }
 .chat-input-row { display: flex; align-items: center; gap: 6px; }
@@ -819,7 +820,7 @@ details.card > :not(summary) { margin: 0 12px 12px; }
   .app[data-tab='model'] .chat-form { border: 0; padding: 0 12px 12px; pointer-events: auto; }
   .app[data-tab='model'] .chat-error { pointer-events: auto; margin: 0 12px 8px; }
   .app[data-tab='model'] .chat-input { flex-direction: row; align-items: flex-end; padding: 6px 6px 6px 14px; border-radius: 14px; box-shadow: 0 6px 20px rgba(60, 45, 20, .12); }
-  .app[data-tab='model'] .chat-input textarea { padding: 9px 0; font-size: 15px; }
+  .app[data-tab='model'] .chat-input textarea { flex: 1; min-width: 0; padding: 9px 0; font-size: 15px; }
   .app[data-tab='model'] .chat-input-row { flex: none; }
   .app[data-tab='model'] .dock-wrap { bottom: 84px; }
   .app[data-tab='model'] .seg.units, .app[data-tab='model'] .view-cube button { display: none; }
@@ -848,6 +849,7 @@ details.card > :not(summary) { margin: 0 12px 12px; }
   .dock button { font-size: 14px; padding: 12px 13px; }
   .tool-options { gap: 8px; padding: 8px 10px; }
   .tool-options input[type='range'] { width: 120px; }
+  .tool-hint { display: none; }
   .param { font-size: 15px; }
   .param input[type='range'] { height: 28px; }
   .chat-input-row .chip-btn, .chat-send { min-height: 40px; }
